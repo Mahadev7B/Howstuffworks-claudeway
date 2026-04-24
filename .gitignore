@@ -9,3 +9,5 @@ media_store/
 .vscode/
 .idea/
 .claude/
+preview_*.png
+preview_*.gif

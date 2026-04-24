@@ -299,7 +299,13 @@ button {
   border-radius: var(--radius-sm);
   padding: 1rem;
 }
-.illustration svg { max-width: 100%; height: auto; }
+.illustration svg,
+.illustration .slide-image { max-width: 100%; height: auto; display: block; border-radius: 6px; }
+.slide-image-missing {
+  padding: 2rem;
+  color: var(--ink-soft);
+  font-style: italic;
+}
 
 .explanation {
   font-size: 1.05rem;

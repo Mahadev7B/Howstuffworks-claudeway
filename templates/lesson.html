@@ -45,7 +45,11 @@
           </div>
 
           <div class="illustration">
-            {{ slide.svg|safe }}
+            {% if slide.image_data_url %}
+              <img src="{{ slide.image_data_url }}" alt="{{ slide.title }}" class="slide-image">
+            {% else %}
+              <div class="slide-image-missing">Illustration unavailable</div>
+            {% endif %}
           </div>
 
           <p class="explanation">{{ slide.explanation }}</p>

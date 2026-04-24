@@ -7,6 +7,7 @@ Powered by Claude (single API call per lesson).
 Images: Claude-generated SVG (free).
 Voiceover: browser Web Speech API (free).
 """
+import base64
 import logging
 import time
 
@@ -30,6 +31,7 @@ from lesson_platform import (
     ip_calls_last_hour,
     load_settings,
     record_api_call,
+    render_spec,
     save_cached_lesson,
     save_feedback,
     synthesize,
@@ -57,6 +59,31 @@ EXAMPLE_QUESTIONS = [
 ]
 
 LESSON_ENDPOINTS = ("/lesson", "/api/lesson")
+
+
+def _attach_slide_images(lesson: dict) -> None:
+    """Render each slide's spec to bytes and attach as an inline data URL.
+
+    Mutates the lesson in place. Swallows render errors per-slide so a bad
+    slide doesn't break the whole lesson.
+    """
+    rendered = 0
+    for slide in lesson.get("slides", []):
+        spec = slide.get("spec")
+        if not isinstance(spec, dict):
+            continue
+        if slide.get("image_data_url"):
+            continue  # already rendered (e.g., cache hit)
+        try:
+            img_bytes, mime = render_spec(spec)
+            b64 = base64.b64encode(img_bytes).decode("ascii")
+            slide["image_data_url"] = f"data:{mime};base64,{b64}"
+            slide["image_bytes"] = len(img_bytes)
+            rendered += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Slide render failed: %s", exc)
+            slide["image_data_url"] = None
+    logger.info("Rendered %d of %d slides", rendered, len(lesson.get("slides", [])))
 
 
 def _client_context() -> dict:
@@ -105,6 +132,8 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
             **ctx,
         )
         logger.info("Cache hit for question: %s", question)
+        # Cache may or may not have rendered images embedded; ensure they exist.
+        _attach_slide_images(cached)
         return cached, None
 
     blocked = _guardrail_check(ctx)
@@ -149,8 +178,13 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
         lesson=data,
         **ctx,
     )
+    # Cache the Claude output (spec only, no rendered images — they're cheap to re-render)
     if db_enabled:
         save_cached_lesson(question, data)
+    # Render images into the lesson being returned to the client
+    render_started = time.time()
+    _attach_slide_images(data)
+    logger.info("Image rendering took %dms", int((time.time() - render_started) * 1000))
     return data, None
 
 

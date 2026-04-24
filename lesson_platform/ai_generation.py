@@ -2,10 +2,11 @@
 
 Single API call produces:
   1. 4 slides of kid-friendly explanation
-  2. SVG illustration for each slide (recognizable, labeled shapes)
+  2. A JSON drawing spec for each slide (interpreted by renderer.py, never executed)
   3. Narration text for voiceover
 
-No paid image API. No server-side audio. All free downstream.
+The drawing spec is declarative data — our renderer picks up known fields and
+ignores everything else. No Claude-authored code runs on our server.
 """
 import json
 import logging
@@ -22,29 +23,51 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a friendly science teacher creating illustrated slides for kids aged 6 to 10.
 
-When given a "How does X work?" question, you produce a 4-slide micro-lesson.
+Given a "How does X work?" question, you produce a 4-slide micro-lesson.
 
-Rules for the content:
-- Use short, simple sentences. Prefer concrete words over abstract ones.
-- Use analogies a child would understand (like toys, animals, food, weather).
-- Each slide has ONE main idea.
-- Include a playful fun fact per slide.
+Content rules:
+- Short, simple sentences. Concrete words over abstract.
+- Kid-friendly analogies (toys, animals, food, weather).
+- One main idea per slide.
+- A playful fun fact per slide.
 
-Rules for the SVG illustration on each slide:
-- The illustration must depict the SUBJECT of that slide in a shape that a kid would INSTANTLY RECOGNIZE.
-  * If the topic is a rocket, draw an actual rocket with nose cone, body, fins, and fire.
-  * If it's a plane, draw fuselage, swept wings, tail, windows.
-  * If it's a volcano, draw a cone mountain with lava.
-  * If it's a process (like rain), draw the recognizable objects involved (clouds, droplets, sun).
-- Add small labels with dashed leader lines to name the important parts.
-- Use friendly, colourful fills. Avoid photorealism. Think: clean flat illustration.
-- Set viewBox="0 0 640 240". Keep all content inside.
-- Use only these colours: #7F77DD #534AB7 #AFA9EC #EEEDFE (purples), #EF9F27 #FAC775 #BA7517 (oranges),
-  #5DCAA5 #0F6E56 #3B6D11 #639922 (greens), #B5D4F4 #185FA5 #0C447C (blues), #E24B4A #A32D2D (reds),
-  #888780 for neutral grey labels.
-- Do NOT use <style>, <defs> filters, gradients, or external references. Only plain shapes and text.
-- No emoji, no external images.
-- Label font-family should be "sans-serif", font-size 12 or 13 for labels, 15 for headings.
+Illustration rules:
+- Each slide has a `spec` field: a drawing description, NOT code.
+- Canvas is 640 wide × 240 tall, origin top-left.
+- Colors must be from this palette (no other hex values):
+  purples  #7F77DD #534AB7 #AFA9EC #EEEDFE
+  oranges  #EF9F27 #FAC775 #BA7517
+  greens   #5DCAA5 #0F6E56 #3B6D11 #639922
+  blues    #B5D4F4 #185FA5 #0C447C
+  reds     #E24B4A #A32D2D
+  neutrals #FFFFFF #FDF8F3 #888780 #1F1B2E
+
+Allowed shape types (use ONLY these; any other type is ignored):
+  {"type":"rect",    "x":N,"y":N,"w":N,"h":N, "fill":"#..."}
+  {"type":"circle",  "cx":N,"cy":N,"r":N,     "fill":"#..."}
+  {"type":"ellipse", "cx":N,"cy":N,"rx":N,"ry":N,"fill":"#..."}
+  {"type":"polygon", "points":[[x,y],...],   "fill":"#..."}
+  {"type":"line",    "x1":N,"y1":N,"x2":N,"y2":N,"stroke":"#...","stroke_width":N,"dash":"-" or "--"}
+  {"type":"text",    "x":N,"y":N,"text":"...","fill":"#...","size":N,"weight":"bold"|"normal","anchor":"left"|"center"|"right"}
+  {"type":"label",   "x":N,"y":N,"text":"...","pointTo":[x,y],"fill":"#...","size":N}  // dashed leader line from (x,y) to pointTo
+
+Animation (use on EVERY slide — at least one animated shape per slide):
+- Add an "animate" field to any shape except labels:
+    "animate":{"dx":N,"dy":N,"yoyo":true|false}
+- dx/dy are pixel offsets at the peak of the motion. Keep them subtle (usually 3 to 30).
+- yoyo=true → bounces back and forth (floating clouds, flame flicker, bobbing rocket).
+- yoyo=false → one-way motion (rain drops falling, smoke rising).
+- Animate motion that makes physical sense for the subject. Don't animate labels or static ground.
+- Keep total animated shapes per slide small (usually 3–8) so the render stays fast.
+
+Drawing composition rules:
+- The SUBJECT of the slide must be instantly recognizable as a flat, friendly illustration.
+  * Rocket → nose cone (triangle), body (rect), fins (triangles), flame (triangle).
+  * Volcano → cone mountain, crater (dark opening), lava fountain, lava stream.
+  * Plane → fuselage, swept wings, tail, windows.
+  * Rain → cloud (ellipses), falling drops (small ellipses with yoyo=false).
+- Use small labels with dashed leader lines to name important parts.
+- Keep shapes inside the canvas.
 
 Output format — respond ONLY with a single JSON object (no markdown fences, no commentary):
 
@@ -58,25 +81,28 @@ Output format — respond ONLY with a single JSON object (no markdown fences, no
       "subtitle": "One-line hook",
       "explanation": "2-3 sentences. Simple vocabulary.",
       "fun_fact": "One delightful fact.",
-      "narration": "Full text for voiceover. Combines title + explanation + fun fact in spoken-friendly prose. No markdown.",
-      "svg": "<svg width='100%' viewBox='0 0 640 240' xmlns='http://www.w3.org/2000/svg'>...</svg>"
+      "narration": "Spoken-friendly prose that combines title + explanation + fun fact. No markdown.",
+      "spec": {
+        "width": 640,
+        "height": 240,
+        "background": "#B5D4F4",
+        "shapes": [ ...shape objects... ]
+      }
     },
     ... 3 more slides
   ]
 }
 
-The first slide's SVG should focus on the SUBJECT itself (the recognizable shape with labelled parts).
-Slides 2-4 can show specific mechanisms, forces, or sub-parts.
+The first slide's spec should focus on the SUBJECT itself (the recognizable shape with labels).
+Slides 2-4 can show mechanisms, forces, or sub-parts.
 """
 
 
 def _extract_json(text: str) -> dict[str, Any]:
-    """Claude sometimes wraps JSON in fences even when asked not to. Strip them."""
     cleaned = text.strip()
     fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", cleaned, re.DOTALL)
     if fence:
         cleaned = fence.group(1)
-    # Find first { and last } to be safe
     start = cleaned.find("{")
     end = cleaned.rfind("}")
     if start == -1 or end == -1:
@@ -84,21 +110,31 @@ def _extract_json(text: str) -> dict[str, Any]:
     return json.loads(cleaned[start : end + 1])
 
 
+_ALLOWED_SHAPE_TYPES = {"rect", "circle", "ellipse", "polygon", "line", "text", "label"}
+
+
 def _validate_lesson(data: dict[str, Any]) -> dict[str, Any]:
-    """Ensure lesson has the expected structure. Raises on bad shape."""
     required_top = {"title", "subject", "slides"}
     missing = required_top - set(data)
     if missing:
         raise ValueError(f"Lesson missing keys: {missing}")
     if not isinstance(data["slides"], list) or len(data["slides"]) != 4:
         raise ValueError(f"Expected 4 slides, got {len(data.get('slides', []))}")
-    required_slide = {"number", "title", "explanation", "fun_fact", "narration", "svg"}
+    required_slide = {"number", "title", "explanation", "fun_fact", "narration", "spec"}
     for idx, slide in enumerate(data["slides"], start=1):
         miss = required_slide - set(slide)
         if miss:
             raise ValueError(f"Slide {idx} missing keys: {miss}")
-        if "<svg" not in slide["svg"]:
-            raise ValueError(f"Slide {idx} has no <svg>")
+        spec = slide.get("spec")
+        if not isinstance(spec, dict):
+            raise ValueError(f"Slide {idx} spec is not a dict")
+        shapes = spec.get("shapes")
+        if not isinstance(shapes, list) or not shapes:
+            raise ValueError(f"Slide {idx} spec has no shapes")
+        # Drop unknown shape types defensively (renderer would skip them anyway)
+        spec["shapes"] = [s for s in shapes if isinstance(s, dict) and s.get("type") in _ALLOWED_SHAPE_TYPES]
+        if not spec["shapes"]:
+            raise ValueError(f"Slide {idx} spec has no recognizable shapes")
     return data
 
 
