@@ -25,6 +25,12 @@ services:
         value: tts-1
       - key: OPENAI_TTS_VOICE
         value: nova
+      - key: DAILY_BUDGET_USD
+        value: "5.00"
+      - key: MAX_COST_PER_LESSON_USD
+        value: "0.15"
+      - key: PER_IP_HOURLY_LIMIT
+        value: "20"
       - key: FLASK_SECRET_KEY
         generateValue: true
       - key: DATABASE_URL

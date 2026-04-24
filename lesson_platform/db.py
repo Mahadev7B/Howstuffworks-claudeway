@@ -1,7 +1,8 @@
-"""Postgres storage — feedback and API call telemetry."""
+"""Postgres storage — feedback, API call telemetry, cached lessons, guardrails."""
+import hashlib
 import logging
 import os
-
+import re
 from typing import Any
 
 from psycopg.types.json import Jsonb
@@ -47,6 +48,16 @@ CREATE TABLE IF NOT EXISTS api_calls (
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS api_calls_created_at_idx ON api_calls (created_at DESC);
+CREATE INDEX IF NOT EXISTS api_calls_ip_created_idx  ON api_calls (ip_address, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS cached_lessons (
+  question_hash TEXT PRIMARY KEY,
+  question      TEXT NOT NULL,
+  lesson        JSONB NOT NULL,
+  hit_count     INTEGER NOT NULL DEFAULT 0,
+  last_hit_at   TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
 -- Idempotent column adds for pre-existing tables
 ALTER TABLE feedback  ADD COLUMN IF NOT EXISTS ip_address TEXT;
@@ -177,3 +188,101 @@ def record_api_call(
             )
     except Exception:
         logger.exception("Failed to record api_call")
+
+
+def _normalize_question(q: str) -> str:
+    q = q.lower().strip()
+    q = re.sub(r"[^\w\s]", "", q)
+    q = re.sub(r"\s+", " ", q)
+    return q
+
+
+def question_hash(question: str) -> str:
+    return hashlib.sha256(_normalize_question(question).encode("utf-8")).hexdigest()
+
+
+def get_cached_lesson(question: str) -> dict[str, Any] | None:
+    if _pool is None:
+        return None
+    qhash = question_hash(question)
+    try:
+        with _pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT lesson FROM cached_lessons WHERE question_hash = %s", (qhash,)
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            cur.execute(
+                """
+                UPDATE cached_lessons
+                SET hit_count = hit_count + 1, last_hit_at = NOW()
+                WHERE question_hash = %s
+                """,
+                (qhash,),
+            )
+            return row[0]
+    except Exception:
+        logger.exception("Cache read failed")
+        return None
+
+
+def save_cached_lesson(question: str, lesson: dict[str, Any]) -> None:
+    if _pool is None:
+        return
+    qhash = question_hash(question)
+    try:
+        with _pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO cached_lessons (question_hash, question, lesson)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (question_hash) DO NOTHING
+                """,
+                (qhash, question[:500], Jsonb(lesson)),
+            )
+    except Exception:
+        logger.exception("Cache write failed")
+
+
+def today_spend_usd() -> float:
+    """Sum of cost_usd across all api_calls in the last 24h. 0.0 on failure."""
+    if _pool is None:
+        return 0.0
+    try:
+        with _pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(cost_usd), 0)
+                FROM api_calls
+                WHERE created_at > NOW() - INTERVAL '1 day'
+                """
+            )
+            row = cur.fetchone()
+            return float(row[0]) if row and row[0] is not None else 0.0
+    except Exception:
+        logger.exception("Budget query failed")
+        return 0.0
+
+
+def ip_calls_last_hour(ip: str | None, endpoints: tuple[str, ...]) -> int:
+    """Count of api_calls from this IP hitting given endpoints in the last hour."""
+    if _pool is None or not ip:
+        return 0
+    try:
+        with _pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*)
+                FROM api_calls
+                WHERE ip_address = %s
+                  AND endpoint = ANY(%s)
+                  AND created_at > NOW() - INTERVAL '1 hour'
+                """,
+                (ip, list(endpoints)),
+            )
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
+    except Exception:
+        logger.exception("IP rate-limit query failed")
+        return 0

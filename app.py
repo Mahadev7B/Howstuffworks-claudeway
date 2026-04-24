@@ -25,11 +25,15 @@ from flask import (
 from lesson_platform import (
     extract_and_lookup,
     generate_lesson,
+    get_cached_lesson,
     init_db,
+    ip_calls_last_hour,
     load_settings,
     record_api_call,
+    save_cached_lesson,
     save_feedback,
     synthesize,
+    today_spend_usd,
 )
 
 load_dotenv()
@@ -52,6 +56,8 @@ EXAMPLE_QUESTIONS = [
     "How do plants eat sunlight?",
 ]
 
+LESSON_ENDPOINTS = ("/lesson", "/api/lesson")
+
 
 def _client_context() -> dict:
     ip, city, region, country = extract_and_lookup(
@@ -66,8 +72,45 @@ def _client_context() -> dict:
     }
 
 
+def _guardrail_check(ctx: dict) -> str | None:
+    """Return an error message if a guardrail blocks the request, else None."""
+    spent = today_spend_usd()
+    if spent >= settings.daily_budget_usd:
+        logger.warning("Daily budget exceeded: $%.4f >= $%.2f", spent, settings.daily_budget_usd)
+        return (
+            "Daily lesson budget reached. Cached lessons still work — try one of the examples."
+        )
+    hits = ip_calls_last_hour(ctx.get("ip_address"), LESSON_ENDPOINTS)
+    if hits >= settings.per_ip_hourly_limit:
+        logger.warning("IP rate limit hit: %s (%d calls/hour)", ctx.get("ip_address"), hits)
+        return (
+            f"You've asked {hits} questions in the last hour. "
+            "Please wait a bit before asking another one."
+        )
+    return None
+
+
 def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None, str | None]:
-    """Generate a lesson, record the API call. Returns (lesson_or_None, error_or_None)."""
+    """Serve from cache if possible; otherwise generate, record, and cache."""
+    cached = get_cached_lesson(question) if db_enabled else None
+    if cached is not None:
+        cached.setdefault("meta", {})["from_cache"] = True
+        record_api_call(
+            endpoint=endpoint,
+            question=question,
+            model=cached.get("meta", {}).get("model", "cache"),
+            duration_ms=0,
+            cost_usd=0.0,
+            success=True,
+            **ctx,
+        )
+        logger.info("Cache hit for question: %s", question)
+        return cached, None
+
+    blocked = _guardrail_check(ctx)
+    if blocked is not None:
+        return None, blocked
+
     started = time.time()
     try:
         data = generate_lesson(question, settings)
@@ -86,18 +129,28 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
         return None, str(exc)
 
     meta = data.get("meta", {})
+    cost = meta.get("estimated_cost_usd", 0.0)
+    if cost > settings.max_cost_per_lesson_usd:
+        logger.warning(
+            "Lesson cost $%.4f exceeded cap $%.2f — still served but flagged",
+            cost,
+            settings.max_cost_per_lesson_usd,
+        )
+
     record_api_call(
         endpoint=endpoint,
         question=question,
         model=meta.get("model", settings.anthropic_model),
         input_tokens=meta.get("input_tokens", 0),
         output_tokens=meta.get("output_tokens", 0),
-        cost_usd=meta.get("estimated_cost_usd", 0.0),
+        cost_usd=cost,
         duration_ms=meta.get("generation_time_ms", 0),
         success=True,
         lesson=data,
         **ctx,
     )
+    if db_enabled:
+        save_cached_lesson(question, data)
     return data, None
 
 
@@ -164,6 +217,11 @@ def api_tts():
         text = text[:4096]
 
     ctx = _client_context()
+    # Budget check applies to TTS too — same pool
+    spent = today_spend_usd()
+    if spent >= settings.daily_budget_usd:
+        return jsonify({"ok": False, "error": "Daily budget reached"}), 503
+
     started = time.time()
     try:
         audio_bytes, cost = synthesize(text, settings)
@@ -207,6 +265,8 @@ def healthz():
         "model": settings.anthropic_model,
         "db": db_enabled,
         "tts": bool(settings.openai_api_key),
+        "today_spend_usd": round(today_spend_usd(), 4),
+        "daily_budget_usd": settings.daily_budget_usd,
     }
 
 
