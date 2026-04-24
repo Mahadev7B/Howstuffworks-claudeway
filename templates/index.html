@@ -44,8 +44,8 @@
   <div class="loading" id="loading" hidden>
     <div class="loading-inner">
       <div class="spinner"></div>
-      <p>Drawing your lesson…</p>
-      <p class="muted">This takes about 10–20 seconds</p>
+      <p id="loadingMsg">Drawing your lesson…</p>
+      <p class="muted">Illustrations take up to a minute. <span id="elapsed">0s</span></p>
     </div>
   </div>
 
@@ -53,6 +53,8 @@
     const form = document.getElementById('askForm');
     const input = document.getElementById('question');
     const loading = document.getElementById('loading');
+    const loadingMsg = document.getElementById('loadingMsg');
+    const elapsed = document.getElementById('elapsed');
 
     document.querySelectorAll('.chip').forEach(chip => {
       chip.addEventListener('click', () => {
@@ -63,6 +65,15 @@
 
     form.addEventListener('submit', () => {
       loading.hidden = false;
+      const start = Date.now();
+      setInterval(() => {
+        const s = Math.floor((Date.now() - start) / 1000);
+        elapsed.textContent = s + 's';
+        if (s === 15) loadingMsg.textContent = 'Sketching the scene…';
+        else if (s === 30) loadingMsg.textContent = 'Adding colour and labels…';
+        else if (s === 50) loadingMsg.textContent = 'Almost done — final touches…';
+        else if (s === 75) loadingMsg.textContent = 'Still going — this one is taking a while.';
+      }, 250);
     });
   </script>
 </body>
