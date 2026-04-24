@@ -151,6 +151,7 @@ button {
   justify-content: center;
   z-index: 1000;
 }
+.loading[hidden] { display: none; }
 .loading-inner { text-align: center; }
 .loading-inner p { margin: 0.4rem 0; }
 .loading-inner p.muted { color: var(--ink-soft); font-size: 0.9rem; }
