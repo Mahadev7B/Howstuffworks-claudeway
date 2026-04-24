@@ -13,7 +13,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from flask import Flask, jsonify, redirect, render_template, request, url_for
 
-from lesson_platform import generate_lesson, load_settings
+from lesson_platform import generate_lesson, init_db, load_settings, save_feedback
 
 load_dotenv()
 
@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 settings = load_settings()
 app.secret_key = settings.flask_secret_key
+feedback_enabled = init_db()
 
 
 EXAMPLE_QUESTIONS = [
@@ -72,9 +73,27 @@ def api_lesson():
     return jsonify({"ok": True, "lesson": data})
 
 
+@app.route("/api/feedback", methods=["POST"])
+def api_feedback():
+    if not feedback_enabled:
+        return jsonify({"ok": False, "error": "feedback storage not configured"}), 503
+    payload = request.get_json(silent=True) or {}
+    question = (payload.get("question") or "").strip()
+    rating = (payload.get("rating") or "").strip()
+    comment = (payload.get("comment") or "").strip() or None
+    if not question or rating not in ("up", "down"):
+        return jsonify({"ok": False, "error": "question and rating ('up'|'down') are required"}), 400
+    try:
+        save_feedback(question, rating, comment)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Feedback save failed")
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True})
+
+
 @app.route("/healthz")
 def healthz():
-    return {"ok": True, "model": settings.anthropic_model}
+    return {"ok": True, "model": settings.anthropic_model, "feedback": feedback_enabled}
 
 
 if __name__ == "__main__":

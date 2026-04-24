@@ -388,6 +388,63 @@ button {
 }
 .btn:hover { background: var(--accent); text-decoration: none; }
 
+/* ---------- Feedback ---------- */
+.feedback {
+  margin-top: 2rem;
+  padding: 1.25rem 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.feedback h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  color: var(--ink);
+}
+.feedback-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+.fb-btn {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  cursor: pointer;
+}
+.fb-btn.selected {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.fb-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.feedback textarea {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  resize: vertical;
+}
+#fb-submit {
+  align-self: flex-start;
+}
+.fb-status {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.9rem;
+  min-height: 1.2em;
+}
+
 /* ---------- Mobile ---------- */
 @media (max-width: 600px) {
   .brand h1 { font-size: 2.4rem; }

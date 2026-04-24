@@ -70,6 +70,17 @@
       <button id="nextBtn">Next →</button>
     </nav>
 
+    <section class="feedback" id="feedback" data-question="{{ question }}">
+      <h3>Did this lesson help?</h3>
+      <div class="feedback-buttons">
+        <button type="button" class="fb-btn" data-rating="up">👍 Yes</button>
+        <button type="button" class="fb-btn" data-rating="down">👎 Not really</button>
+      </div>
+      <textarea id="fb-comment" placeholder="Optional: what would make it better?" rows="2" maxlength="2000"></textarea>
+      <button type="button" id="fb-submit" class="primary" disabled>Send feedback</button>
+      <p class="fb-status" id="fb-status" role="status"></p>
+    </section>
+
     <footer class="lesson-meta">
       <span>Generated in {{ lesson.meta.generation_time_ms }}ms</span>
       <span>·</span>
@@ -225,6 +236,48 @@
         speechSynthesis.onvoiceschanged = () => {};
       }
       updateProgress();
+
+      const fbSection = document.getElementById('feedback');
+      const fbButtons = Array.from(document.querySelectorAll('.fb-btn'));
+      const fbComment = document.getElementById('fb-comment');
+      const fbSubmit = document.getElementById('fb-submit');
+      const fbStatus = document.getElementById('fb-status');
+      let fbRating = null;
+
+      fbButtons.forEach(btn => btn.addEventListener('click', () => {
+        fbRating = btn.dataset.rating;
+        fbButtons.forEach(b => b.classList.toggle('selected', b === btn));
+        fbSubmit.disabled = false;
+      }));
+
+      fbSubmit.addEventListener('click', async () => {
+        if (!fbRating) return;
+        fbSubmit.disabled = true;
+        fbStatus.textContent = 'Sending…';
+        try {
+          const res = await fetch('/api/feedback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              question: fbSection.dataset.question,
+              rating: fbRating,
+              comment: fbComment.value.trim(),
+            }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.ok) {
+            fbStatus.textContent = 'Thanks for the feedback!';
+            fbButtons.forEach(b => b.disabled = true);
+            fbComment.disabled = true;
+          } else {
+            fbStatus.textContent = 'Could not send feedback: ' + (data.error || res.statusText);
+            fbSubmit.disabled = false;
+          }
+        } catch (err) {
+          fbStatus.textContent = 'Network error. Try again.';
+          fbSubmit.disabled = false;
+        }
+      });
     })();
   </script>
 </body>
