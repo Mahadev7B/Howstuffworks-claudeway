@@ -8,12 +8,19 @@ Images: Claude-generated SVG (free).
 Voiceover: browser Web Speech API (free).
 """
 import logging
-from pathlib import Path
+import time
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, redirect, render_template, request, url_for
 
-from lesson_platform import generate_lesson, init_db, load_settings, save_feedback
+from lesson_platform import (
+    extract_and_lookup,
+    generate_lesson,
+    init_db,
+    load_settings,
+    record_api_call,
+    save_feedback,
+)
 
 load_dotenv()
 
@@ -23,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 settings = load_settings()
 app.secret_key = settings.flask_secret_key
-feedback_enabled = init_db()
+db_enabled = init_db()
 
 
 EXAMPLE_QUESTIONS = [
@@ -34,6 +41,53 @@ EXAMPLE_QUESTIONS = [
     "Why is the sky blue?",
     "How do plants eat sunlight?",
 ]
+
+
+def _client_context() -> dict:
+    ip, city, region, country = extract_and_lookup(
+        request.headers.get("X-Forwarded-For"), request.remote_addr
+    )
+    return {
+        "ip_address": ip,
+        "city": city,
+        "region": region,
+        "country": country,
+        "user_agent": request.headers.get("User-Agent"),
+    }
+
+
+def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None, str | None]:
+    """Generate a lesson, record the API call. Returns (lesson_or_None, error_or_None)."""
+    started = time.time()
+    try:
+        data = generate_lesson(question, settings)
+    except Exception as exc:  # noqa: BLE001
+        duration_ms = int((time.time() - started) * 1000)
+        logger.exception("Lesson generation failed (%s)", endpoint)
+        record_api_call(
+            endpoint=endpoint,
+            question=question,
+            model=settings.anthropic_model,
+            duration_ms=duration_ms,
+            success=False,
+            error=str(exc),
+            **ctx,
+        )
+        return None, str(exc)
+
+    meta = data.get("meta", {})
+    record_api_call(
+        endpoint=endpoint,
+        question=question,
+        model=meta.get("model", settings.anthropic_model),
+        input_tokens=meta.get("input_tokens", 0),
+        output_tokens=meta.get("output_tokens", 0),
+        cost_usd=meta.get("estimated_cost_usd", 0.0),
+        duration_ms=meta.get("generation_time_ms", 0),
+        success=True,
+        **ctx,
+    )
+    return data, None
 
 
 @app.route("/", methods=["GET"])
@@ -47,12 +101,10 @@ def lesson():
     if not question:
         return redirect(url_for("home"))
 
-    try:
-        data = generate_lesson(question, settings)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Lesson generation failed")
-        return render_template("error.html", question=question, error=str(exc)), 500
-
+    ctx = _client_context()
+    data, err = _track_lesson("/lesson", question, ctx)
+    if err is not None:
+        return render_template("error.html", question=question, error=err), 500
     return render_template("lesson.html", question=question, lesson=data)
 
 
@@ -64,18 +116,16 @@ def api_lesson():
     if not question:
         return jsonify({"ok": False, "error": "question is required"}), 400
 
-    try:
-        data = generate_lesson(question, settings)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Lesson generation failed (API)")
-        return jsonify({"ok": False, "error": str(exc)}), 500
-
+    ctx = _client_context()
+    data, err = _track_lesson("/api/lesson", question, ctx)
+    if err is not None:
+        return jsonify({"ok": False, "error": err}), 500
     return jsonify({"ok": True, "lesson": data})
 
 
 @app.route("/api/feedback", methods=["POST"])
 def api_feedback():
-    if not feedback_enabled:
+    if not db_enabled:
         return jsonify({"ok": False, "error": "feedback storage not configured"}), 503
     payload = request.get_json(silent=True) or {}
     question = (payload.get("question") or "").strip()
@@ -84,7 +134,7 @@ def api_feedback():
     if not question or rating not in ("up", "down"):
         return jsonify({"ok": False, "error": "question and rating ('up'|'down') are required"}), 400
     try:
-        save_feedback(question, rating, comment)
+        save_feedback(question, rating, comment, **_client_context())
     except Exception as exc:  # noqa: BLE001
         logger.exception("Feedback save failed")
         return jsonify({"ok": False, "error": str(exc)}), 500
@@ -93,7 +143,7 @@ def api_feedback():
 
 @app.route("/healthz")
 def healthz():
-    return {"ok": True, "model": settings.anthropic_model, "feedback": feedback_enabled}
+    return {"ok": True, "model": settings.anthropic_model, "db": db_enabled}
 
 
 if __name__ == "__main__":
