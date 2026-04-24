@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HowStuffWorks — for curious kids</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="home">
+    <header class="brand">
+      <h1>How<span>Stuff</span>Works</h1>
+      <p class="tagline">Ask anything. See how it works. Hear it explained.</p>
+    </header>
+
+    <form action="{{ url_for('lesson') }}" method="post" class="ask-form" id="askForm">
+      <input
+        type="text"
+        name="question"
+        id="question"
+        placeholder="How do rockets fly?"
+        required
+        autofocus
+        autocomplete="off"
+      />
+      <button type="submit">Ask</button>
+    </form>
+
+    <section class="examples">
+      <p class="examples-label">Try one:</p>
+      <ul>
+        {% for q in examples %}
+          <li><button type="button" class="chip" data-q="{{ q }}">{{ q }}</button></li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    <footer>
+      <p>Powered by Claude · Illustrations made of SVG · Voice by your browser</p>
+    </footer>
+  </main>
+
+  <div class="loading" id="loading" hidden>
+    <div class="loading-inner">
+      <div class="spinner"></div>
+      <p>Drawing your lesson…</p>
+      <p class="muted">This takes about 10–20 seconds</p>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('askForm');
+    const input = document.getElementById('question');
+    const loading = document.getElementById('loading');
+
+    document.querySelectorAll('.chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        input.value = chip.dataset.q;
+        form.requestSubmit();
+      });
+    });
+
+    form.addEventListener('submit', () => {
+      loading.hidden = false;
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ lesson.title }} — HowStuffWorks</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="lesson">
+
+    <header class="lesson-header">
+      <a href="{{ url_for('home') }}" class="back">← New question</a>
+      <div class="lesson-titles">
+        <p class="question">{{ question }}</p>
+        <h1>{{ lesson.title }}</h1>
+      </div>
+    </header>
+
+    <div class="controls">
+      <button id="autoBtn" class="primary">▶ Play lesson</button>
+      <button id="readBtn">🔊 Read this slide</button>
+      <span class="status" id="status">Press play to start the lesson</span>
+      <label class="speed">
+        Speed
+        <input type="range" min="0.6" max="1.4" step="0.1" value="0.9" id="speed">
+        <span id="speedVal">0.9×</span>
+      </label>
+    </div>
+
+    <div class="progress"><div class="progress-fill" id="progress"></div></div>
+
+    <div class="deck" id="deck">
+      {% for slide in lesson.slides %}
+        <article
+          class="slide {% if loop.first %}active{% endif %}"
+          data-slide="{{ loop.index }}"
+          data-narration="{{ slide.narration }}"
+        >
+          <div class="slide-head">
+            <p class="slide-num">Slide {{ loop.index }} of {{ lesson.slides|length }}</p>
+            <h2>{{ slide.title }}</h2>
+            {% if slide.subtitle %}<p class="slide-sub">{{ slide.subtitle }}</p>{% endif %}
+          </div>
+
+          <div class="illustration">
+            {{ slide.svg|safe }}
+          </div>
+
+          <p class="explanation">{{ slide.explanation }}</p>
+
+          <div class="fun-fact">
+            <strong>Fun fact:</strong> {{ slide.fun_fact }}
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+
+    <nav class="deck-nav">
+      <button id="prevBtn">← Back</button>
+      <div class="dots" id="dots">
+        {% for slide in lesson.slides %}
+          <button
+            class="dot {% if loop.first %}on{% endif %}"
+            data-goto="{{ loop.index0 }}"
+            aria-label="Go to slide {{ loop.index }}"
+          ></button>
+        {% endfor %}
+      </div>
+      <button id="nextBtn">Next →</button>
+    </nav>
+
+    <footer class="lesson-meta">
+      <span>Generated in {{ lesson.meta.generation_time_ms }}ms</span>
+      <span>·</span>
+      <span>{{ lesson.meta.input_tokens + lesson.meta.output_tokens }} tokens</span>
+      <span>·</span>
+      <span>~${{ '%.4f'|format(lesson.meta.estimated_cost_usd) }}</span>
+    </footer>
+  </main>
+
+  <script>
+    (function () {
+      const slides = Array.from(document.querySelectorAll('.slide'));
+      const dots = Array.from(document.querySelectorAll('.dot'));
+      const total = slides.length;
+      const statusEl = document.getElementById('status');
+      const progressEl = document.getElementById('progress');
+      const autoBtn = document.getElementById('autoBtn');
+      const readBtn = document.getElementById('readBtn');
+      const prevBtn = document.getElementById('prevBtn');
+      const nextBtn = document.getElementById('nextBtn');
+      const speedInput = document.getElementById('speed');
+      const speedVal = document.getElementById('speedVal');
+
+      let current = 0;
+      let rate = 0.9;
+      let autoMode = false;
+      let readingOnce = false;
+
+      function updateProgress() {
+        progressEl.style.width = ((current + 1) / total * 100) + '%';
+      }
+
+      function show(idx) {
+        slides[current].classList.remove('active');
+        dots[current].classList.remove('on');
+        current = ((idx % total) + total) % total;
+        slides[current].classList.add('active');
+        dots[current].classList.add('on');
+        updateProgress();
+      }
+
+      function speakCurrent(onDone) {
+        if (!('speechSynthesis' in window)) {
+          statusEl.textContent = 'Your browser does not support voiceover.';
+          if (onDone) onDone();
+          return;
+        }
+        speechSynthesis.cancel();
+        const text = slides[current].dataset.narration || '';
+        const utter = new SpeechSynthesisUtterance(text);
+        utter.rate = rate;
+        utter.pitch = 1.05;
+        const voices = speechSynthesis.getVoices();
+        const preferred =
+          voices.find(v => v.lang.startsWith('en') && /female|samantha|karen|zira|susan/i.test(v.name)) ||
+          voices.find(v => v.lang.startsWith('en')) ||
+          voices[0];
+        if (preferred) utter.voice = preferred;
+
+        utter.onstart = () => {
+          statusEl.textContent = 'Reading slide ' + (current + 1) + ' of ' + total + '…';
+          readBtn.textContent = '⏹ Stop';
+        };
+        utter.onend = () => {
+          readBtn.textContent = '🔊 Read this slide';
+          if (onDone) onDone();
+        };
+        utter.onerror = () => {
+          readBtn.textContent = '🔊 Read this slide';
+          statusEl.textContent = 'Audio error.';
+          if (onDone) onDone();
+        };
+
+        speechSynthesis.speak(utter);
+      }
+
+      function setAuto(on) {
+        autoMode = on;
+        if (on) {
+          autoBtn.textContent = '⏸ Pause';
+          autoBtn.classList.add('playing');
+        } else {
+          autoBtn.textContent = '▶ Play lesson';
+          autoBtn.classList.remove('playing');
+        }
+      }
+
+      function autoAdvance() {
+        if (!autoMode) return;
+        if (current < total - 1) {
+          setTimeout(() => {
+            if (!autoMode) return;
+            show(current + 1);
+            speakCurrent(autoAdvance);
+          }, 700);
+        } else {
+          setAuto(false);
+          statusEl.textContent = 'All done! Press play to watch again.';
+        }
+      }
+
+      autoBtn.addEventListener('click', () => {
+        if (autoMode) {
+          speechSynthesis.cancel();
+          setAuto(false);
+          statusEl.textContent = 'Paused. Press play to continue.';
+        } else {
+          setAuto(true);
+          speakCurrent(autoAdvance);
+        }
+      });
+
+      readBtn.addEventListener('click', () => {
+        if (speechSynthesis.speaking) {
+          speechSynthesis.cancel();
+          statusEl.textContent = 'Stopped.';
+          readBtn.textContent = '🔊 Read this slide';
+          return;
+        }
+        setAuto(false);
+        speakCurrent(() => { statusEl.textContent = 'Done. Press play to hear again.'; });
+      });
+
+      function manualNav(delta) {
+        if (autoMode) { setAuto(false); speechSynthesis.cancel(); }
+        show(current + delta);
+        statusEl.textContent = 'Slide ' + (current + 1) + ' of ' + total + '.';
+      }
+
+      prevBtn.addEventListener('click', () => manualNav(-1));
+      nextBtn.addEventListener('click', () => manualNav(1));
+      dots.forEach(d => d.addEventListener('click', () => {
+        if (autoMode) { setAuto(false); speechSynthesis.cancel(); }
+        show(parseInt(d.dataset.goto, 10));
+      }));
+
+      speedInput.addEventListener('input', () => {
+        rate = parseFloat(speedInput.value);
+        speedVal.textContent = rate.toFixed(1) + '×';
+        if (speechSynthesis.speaking) {
+          speechSynthesis.cancel();
+          speakCurrent(autoMode ? autoAdvance : null);
+        }
+      });
+
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight') manualNav(1);
+        else if (e.key === 'ArrowLeft') manualNav(-1);
+        else if (e.key === ' ') { e.preventDefault(); autoBtn.click(); }
+      });
+
+      if ('speechSynthesis' in window) {
+        speechSynthesis.onvoiceschanged = () => {};
+      }
+      updateProgress();
+    })();
+  </script>
+</body>
+</html>
