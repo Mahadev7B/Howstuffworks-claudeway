@@ -11,7 +11,16 @@ import logging
 import time
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, redirect, render_template, request, send_from_directory, url_for
+from flask import (
+    Flask,
+    Response,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_from_directory,
+    url_for,
+)
 
 from lesson_platform import (
     extract_and_lookup,
@@ -20,6 +29,7 @@ from lesson_platform import (
     load_settings,
     record_api_call,
     save_feedback,
+    synthesize,
 )
 
 load_dotenv()
@@ -142,6 +152,49 @@ def api_feedback():
     return jsonify({"ok": True})
 
 
+@app.route("/api/tts", methods=["POST"])
+def api_tts():
+    if not settings.openai_api_key:
+        return jsonify({"ok": False, "error": "TTS not configured"}), 503
+    payload = request.get_json(silent=True) or {}
+    text = (payload.get("text") or "").strip()
+    if not text:
+        return jsonify({"ok": False, "error": "text is required"}), 400
+    if len(text) > 4096:
+        text = text[:4096]
+
+    ctx = _client_context()
+    started = time.time()
+    try:
+        audio_bytes, cost = synthesize(text, settings)
+    except Exception as exc:  # noqa: BLE001
+        duration_ms = int((time.time() - started) * 1000)
+        logger.exception("TTS synthesis failed")
+        record_api_call(
+            endpoint="/api/tts",
+            question=text[:500],
+            model=settings.openai_tts_model,
+            duration_ms=duration_ms,
+            success=False,
+            error=str(exc),
+            **ctx,
+        )
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+    duration_ms = int((time.time() - started) * 1000)
+    record_api_call(
+        endpoint="/api/tts",
+        question=text[:500],
+        model=settings.openai_tts_model,
+        input_tokens=len(text),
+        cost_usd=cost,
+        duration_ms=duration_ms,
+        success=True,
+        **ctx,
+    )
+    return Response(audio_bytes, mimetype="audio/mpeg")
+
+
 @app.route("/favicon.ico")
 def favicon():
     return send_from_directory(app.static_folder, "favicon.svg", mimetype="image/svg+xml")
@@ -149,7 +202,12 @@ def favicon():
 
 @app.route("/healthz")
 def healthz():
-    return {"ok": True, "model": settings.anthropic_model, "db": db_enabled}
+    return {
+        "ok": True,
+        "model": settings.anthropic_model,
+        "db": db_enabled,
+        "tts": bool(settings.openai_api_key),
+    }
 
 
 if __name__ == "__main__":

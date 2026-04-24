@@ -19,6 +19,12 @@ services:
         sync: false
       - key: ANTHROPIC_MODEL
         value: claude-sonnet-4-6
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_TTS_MODEL
+        value: tts-1
+      - key: OPENAI_TTS_VOICE
+        value: nova
       - key: FLASK_SECRET_KEY
         generateValue: true
       - key: DATABASE_URL

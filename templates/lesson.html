@@ -123,7 +123,11 @@
         updateProgress();
       }
 
-      function speakCurrent(onDone) {
+      const audioCache = new Map();    // slideIdx -> blob URL
+      const audioEl = new Audio();
+      let serverTtsDisabled = false;    // flip to true after first failure
+
+      function speakWithBrowser(onDone) {
         if (!('speechSynthesis' in window)) {
           statusEl.textContent = 'Your browser does not support voiceover.';
           if (onDone) onDone();
@@ -158,6 +162,56 @@
         speechSynthesis.speak(utter);
       }
 
+      async function getAudioUrl(idx) {
+        if (audioCache.has(idx)) return audioCache.get(idx);
+        const text = slides[idx].dataset.narration || '';
+        const res = await fetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+        });
+        if (!res.ok) throw new Error('TTS HTTP ' + res.status);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        audioCache.set(idx, url);
+        return url;
+      }
+
+      function stopAllAudio() {
+        try { audioEl.pause(); audioEl.currentTime = 0; } catch (e) {}
+        if ('speechSynthesis' in window) speechSynthesis.cancel();
+      }
+
+      async function speakCurrent(onDone) {
+        stopAllAudio();
+        if (serverTtsDisabled) return speakWithBrowser(onDone);
+
+        statusEl.textContent = 'Loading voice for slide ' + (current + 1) + '…';
+        readBtn.textContent = '⏹ Stop';
+        try {
+          const url = await getAudioUrl(current);
+          audioEl.src = url;
+          audioEl.playbackRate = rate;
+          audioEl.onplay = () => {
+            statusEl.textContent = 'Reading slide ' + (current + 1) + ' of ' + total + '…';
+          };
+          audioEl.onended = () => {
+            readBtn.textContent = '🔊 Read this slide';
+            if (onDone) onDone();
+          };
+          audioEl.onerror = () => {
+            readBtn.textContent = '🔊 Read this slide';
+            statusEl.textContent = 'Audio playback error.';
+            if (onDone) onDone();
+          };
+          await audioEl.play();
+        } catch (err) {
+          console.warn('Server TTS failed, falling back to browser:', err);
+          serverTtsDisabled = true;
+          speakWithBrowser(onDone);
+        }
+      }
+
       function setAuto(on) {
         autoMode = on;
         if (on) {
@@ -183,9 +237,14 @@
         }
       }
 
+      function isSpeaking() {
+        return (audioEl && !audioEl.paused) ||
+               (('speechSynthesis' in window) && speechSynthesis.speaking);
+      }
+
       autoBtn.addEventListener('click', () => {
         if (autoMode) {
-          speechSynthesis.cancel();
+          stopAllAudio();
           setAuto(false);
           statusEl.textContent = 'Paused. Press play to continue.';
         } else {
@@ -195,8 +254,8 @@
       });
 
       readBtn.addEventListener('click', () => {
-        if (speechSynthesis.speaking) {
-          speechSynthesis.cancel();
+        if (isSpeaking()) {
+          stopAllAudio();
           statusEl.textContent = 'Stopped.';
           readBtn.textContent = '🔊 Read this slide';
           return;
@@ -206,7 +265,7 @@
       });
 
       function manualNav(delta) {
-        if (autoMode) { setAuto(false); speechSynthesis.cancel(); }
+        if (autoMode) { setAuto(false); stopAllAudio(); }
         show(current + delta);
         statusEl.textContent = 'Slide ' + (current + 1) + ' of ' + total + '.';
       }
@@ -214,14 +273,16 @@
       prevBtn.addEventListener('click', () => manualNav(-1));
       nextBtn.addEventListener('click', () => manualNav(1));
       dots.forEach(d => d.addEventListener('click', () => {
-        if (autoMode) { setAuto(false); speechSynthesis.cancel(); }
+        if (autoMode) { setAuto(false); stopAllAudio(); }
         show(parseInt(d.dataset.goto, 10));
       }));
 
       speedInput.addEventListener('input', () => {
         rate = parseFloat(speedInput.value);
         speedVal.textContent = rate.toFixed(1) + '×';
-        if (speechSynthesis.speaking) {
+        if (!audioEl.paused) {
+          audioEl.playbackRate = rate;
+        } else if ('speechSynthesis' in window && speechSynthesis.speaking) {
           speechSynthesis.cancel();
           speakCurrent(autoMode ? autoAdvance : null);
         }
