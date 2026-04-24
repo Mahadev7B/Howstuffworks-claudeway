@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS api_calls (
   model          TEXT NOT NULL,
   input_tokens   INTEGER NOT NULL DEFAULT 0,
   output_tokens  INTEGER NOT NULL DEFAULT 0,
+  input_chars    INTEGER NOT NULL DEFAULT 0,
+  output_chars   INTEGER NOT NULL DEFAULT 0,
   cost_usd       NUMERIC(10, 6) NOT NULL DEFAULT 0,
   duration_ms    INTEGER NOT NULL DEFAULT 0,
   success        BOOLEAN NOT NULL,
@@ -57,7 +59,9 @@ ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS city       TEXT;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS region     TEXT;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS country    TEXT;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS user_agent TEXT;
-ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS lesson     JSONB;
+ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS lesson       JSONB;
+ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS input_chars  INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS output_chars INTEGER NOT NULL DEFAULT 0;
 """
 
 
@@ -126,6 +130,8 @@ def record_api_call(
     model: str,
     input_tokens: int = 0,
     output_tokens: int = 0,
+    input_chars: int = 0,
+    output_chars: int = 0,
     cost_usd: float = 0.0,
     duration_ms: int = 0,
     success: bool,
@@ -145,9 +151,9 @@ def record_api_call(
                 """
                 INSERT INTO api_calls
                   (endpoint, question, model, input_tokens, output_tokens,
-                   cost_usd, duration_ms, success, error,
+                   input_chars, output_chars, cost_usd, duration_ms, success, error,
                    ip_address, city, region, country, user_agent, lesson)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     endpoint[:100],
@@ -155,6 +161,8 @@ def record_api_call(
                     model[:100],
                     input_tokens,
                     output_tokens,
+                    input_chars,
+                    output_chars,
                     cost_usd,
                     duration_ms,
                     success,

@@ -186,7 +186,7 @@ def api_tts():
         endpoint="/api/tts",
         question=text[:500],
         model=settings.openai_tts_model,
-        input_tokens=len(text),
+        input_chars=len(text),
         cost_usd=cost,
         duration_ms=duration_ms,
         success=True,
