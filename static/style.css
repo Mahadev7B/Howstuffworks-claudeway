@@ -438,6 +438,27 @@ button {
 }
 #fb-submit {
   align-self: flex-start;
+  padding: 0.55rem 1.1rem;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+#fb-submit:hover:not(:disabled) {
+  background: #6257c9;
+}
+#fb-submit:disabled {
+  background: var(--line);
+  color: var(--ink-soft);
+  cursor: not-allowed;
+}
+.fb-status.success {
+  color: var(--success);
+  font-weight: 600;
 }
 .fb-status {
   margin: 0;
