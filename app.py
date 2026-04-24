@@ -85,6 +85,7 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
         cost_usd=meta.get("estimated_cost_usd", 0.0),
         duration_ms=meta.get("generation_time_ms", 0),
         success=True,
+        lesson=data,
         **ctx,
     )
     return data, None

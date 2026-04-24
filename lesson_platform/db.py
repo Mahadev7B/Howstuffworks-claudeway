@@ -2,6 +2,9 @@
 import logging
 import os
 
+from typing import Any
+
+from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 logger = logging.getLogger(__name__)
@@ -38,6 +41,7 @@ CREATE TABLE IF NOT EXISTS api_calls (
   region         TEXT,
   country        TEXT,
   user_agent     TEXT,
+  lesson         JSONB,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS api_calls_created_at_idx ON api_calls (created_at DESC);
@@ -53,6 +57,7 @@ ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS city       TEXT;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS region     TEXT;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS country    TEXT;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS user_agent TEXT;
+ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS lesson     JSONB;
 """
 
 
@@ -130,6 +135,7 @@ def record_api_call(
     region: str | None = None,
     country: str | None = None,
     user_agent: str | None = None,
+    lesson: dict[str, Any] | None = None,
 ) -> None:
     if _pool is None:
         return
@@ -140,8 +146,8 @@ def record_api_call(
                 INSERT INTO api_calls
                   (endpoint, question, model, input_tokens, output_tokens,
                    cost_usd, duration_ms, success, error,
-                   ip_address, city, region, country, user_agent)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   ip_address, city, region, country, user_agent, lesson)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     endpoint[:100],
@@ -158,6 +164,7 @@ def record_api_call(
                     (region or "")[:128] or None,
                     (country or "")[:128] or None,
                     (user_agent or "")[:500] or None,
+                    Jsonb(lesson) if lesson is not None else None,
                 ),
             )
     except Exception:
