@@ -11,7 +11,7 @@ import logging
 import time
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask import Flask, jsonify, redirect, render_template, request, send_from_directory, url_for
 
 from lesson_platform import (
     extract_and_lookup,
@@ -140,6 +140,11 @@ def api_feedback():
         logger.exception("Feedback save failed")
         return jsonify({"ok": False, "error": str(exc)}), 500
     return jsonify({"ok": True})
+
+
+@app.route("/favicon.ico")
+def favicon():
+    return send_from_directory(app.static_folder, "favicon.svg", mimetype="image/svg+xml")
 
 
 @app.route("/healthz")
