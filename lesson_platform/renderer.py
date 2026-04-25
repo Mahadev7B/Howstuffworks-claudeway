@@ -26,6 +26,29 @@ ANIM_DURATION_S = 1.6
 ANIM_FPS = 12
 
 
+def _num(v, default: float = 0.0) -> float:
+    """Coerce v to float — Claude occasionally outputs numbers as strings."""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def _xy_pair(v) -> tuple[float, float]:
+    """Coerce [x, y] to (float, float). Tolerates string elements."""
+    if isinstance(v, (list, tuple)) and len(v) >= 2:
+        return _num(v[0]), _num(v[1])
+    return 0.0, 0.0
+
+
+def _coerce_points(points):
+    out = []
+    if isinstance(points, list):
+        for p in points:
+            out.append(list(_xy_pair(p)))
+    return out
+
+
 def _make_fig(spec: dict):
     width = int(spec.get("width", 640))
     height = int(spec.get("height", 240))
@@ -40,14 +63,32 @@ def _make_fig(spec: dict):
     return fig, ax, bg
 
 
+def _normalize_shape(s: dict) -> dict:
+    """Coerce numeric coordinate/size fields to floats. Returns the same dict mutated."""
+    if not isinstance(s, dict):
+        return s
+    for k in ("x", "y", "w", "h", "cx", "cy", "r", "rx", "ry",
+              "x1", "y1", "x2", "y2", "size", "stroke_width"):
+        if k in s:
+            s[k] = _num(s[k], default=s.get(k, 0))
+    if "points" in s:
+        s["points"] = _coerce_points(s["points"])
+    if "pointTo" in s:
+        s["pointTo"] = list(_xy_pair(s["pointTo"]))
+    return s
+
+
 def _build_patches(ax, shapes):
     """Return [(shape, artist|None)] for each shape. Unknown types produce None."""
     artists = []
     for s in shapes:
+        if not isinstance(s, dict):
+            continue
+        s = _normalize_shape(s)
         t = s.get("type")
         fill = s.get("fill", "#999999")
         stroke = s.get("stroke", "none")
-        sw = s.get("stroke_width", 0)
+        sw = _num(s.get("stroke_width", 0))
         artist = None
         try:
             if t == "rect":
@@ -78,14 +119,14 @@ def _build_patches(ax, shapes):
                 (artist,) = ax.plot(
                     [s["x1"], s["x2"]], [s["y1"], s["y2"]],
                     color=s.get("stroke", "#333"),
-                    linewidth=s.get("stroke_width", 1.5),
+                    linewidth=_num(s.get("stroke_width", 1.5), 1.5),
                     linestyle=s.get("dash", "-"),
                 )
             elif t == "text":
                 artist = ax.text(
                     s["x"], s["y"], str(s.get("text", "")),
                     color=s.get("fill", "#1F1B2E"),
-                    fontsize=s.get("size", 12),
+                    fontsize=_num(s.get("size", 12), 12),
                     fontweight=s.get("weight", "normal"),
                     ha=s.get("anchor", "left"), va="center",
                     family="sans-serif",
@@ -95,7 +136,7 @@ def _build_patches(ax, shapes):
                     str(s.get("text", "")),
                     xy=s["pointTo"], xytext=(s["x"], s["y"]),
                     color=s.get("fill", "#534AB7"),
-                    fontsize=s.get("size", 12),
+                    fontsize=_num(s.get("size", 12), 12),
                     fontweight="bold", ha="center", va="center",
                     family="sans-serif",
                     arrowprops=dict(
@@ -114,12 +155,12 @@ def _build_patches(ax, shapes):
 def _apply_translate(artist, shape: dict, dx: float, dy: float) -> None:
     t = shape.get("type")
     if t == "rect":
-        artist.set_x(shape["x"] + dx)
-        artist.set_y(shape["y"] + dy)
+        artist.set_x(_num(shape["x"]) + dx)
+        artist.set_y(_num(shape["y"]) + dy)
     elif t in ("circle", "ellipse"):
-        artist.center = (shape["cx"] + dx, shape["cy"] + dy)
+        artist.center = (_num(shape["cx"]) + dx, _num(shape["cy"]) + dy)
     elif t == "polygon":
-        pts = [(p[0] + dx, p[1] + dy) for p in shape["points"]]
+        pts = [(_num(p[0]) + dx, _num(p[1]) + dy) for p in shape["points"]]
         artist.set_xy(pts)
 
 

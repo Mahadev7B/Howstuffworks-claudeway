@@ -152,6 +152,21 @@ button {
   z-index: 1000;
 }
 .loading[hidden] { display: none; }
+.loading-inner {
+  text-align: center;
+  max-width: 420px;
+}
+.loading-inner #game {
+  display: block;
+  margin: 1rem auto 0.5rem;
+  border: 2px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: #1F1B2E;
+  outline: none;
+  touch-action: none;
+}
+.loading-inner #game:focus { box-shadow: 0 0 0 3px var(--accent-soft); }
+.loading-inner .game-hint { font-size: 0.85rem; }
 .loading-inner { text-align: center; }
 .loading-inner p { margin: 0.4rem 0; }
 .loading-inner p.muted { color: var(--ink-soft); font-size: 0.9rem; }

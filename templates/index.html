@@ -43,9 +43,10 @@
 
   <div class="loading" id="loading" hidden>
     <div class="loading-inner">
-      <div class="spinner"></div>
       <p id="loadingMsg">Drawing your lesson…</p>
-      <p class="muted">Illustrations take up to a minute. <span id="elapsed">0s</span></p>
+      <p class="muted">While you wait — eat the dots. Avoid the ghost! <span id="elapsed">0s</span></p>
+      <canvas id="game" width="360" height="240" tabindex="0" aria-label="Pac-Munch mini game"></canvas>
+      <p class="muted game-hint">Arrow keys or W A S D · <span id="gameStatus">Score: 0</span></p>
     </div>
   </div>
 
@@ -74,6 +75,157 @@
         else if (s === 50) loadingMsg.textContent = 'Almost done — final touches…';
         else if (s === 75) loadingMsg.textContent = 'Still going — this one is taking a while.';
       }, 250);
+      startGame();
+    });
+
+    // ---------- Pac-Munch mini-game ---------------------------------------
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const gameStatus = document.getElementById('gameStatus');
+    const COLS = 12, ROWS = 8, CELL = 30;
+    let player, ghost, dots, score, dir, gameLoopId, mouthOpen, frame;
+
+    function resetGame() {
+      player = { x: 1, y: 1 };
+      ghost  = { x: COLS - 2, y: ROWS - 2, dir: { x: -1, y: 0 } };
+      dots = [];
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+          if (!(x === player.x && y === player.y) && !(x === ghost.x && y === ghost.y)) {
+            dots.push({ x, y });
+          }
+        }
+      }
+      score = 0;
+      dir = { x: 0, y: 0 };
+      mouthOpen = true;
+      frame = 0;
+      updateStatus();
+    }
+
+    function updateStatus(extra) {
+      gameStatus.textContent = (extra ? extra + ' · ' : '') + 'Score: ' + score;
+    }
+
+    function moveGhost() {
+      const dx = player.x - ghost.x;
+      const dy = player.y - ghost.y;
+      // 60% chase, 40% random
+      let nx = ghost.dir.x, ny = ghost.dir.y;
+      if (Math.random() < 0.6) {
+        if (Math.abs(dx) > Math.abs(dy)) { nx = Math.sign(dx); ny = 0; }
+        else { nx = 0; ny = Math.sign(dy) || (Math.random() < 0.5 ? 1 : -1); }
+      } else {
+        const choices = [[1,0],[-1,0],[0,1],[0,-1]];
+        const c = choices[Math.floor(Math.random() * choices.length)];
+        nx = c[0]; ny = c[1];
+      }
+      const tx = ghost.x + nx;
+      const ty = ghost.y + ny;
+      if (tx >= 0 && tx < COLS && ty >= 0 && ty < ROWS) {
+        ghost.x = tx; ghost.y = ty;
+        ghost.dir = { x: nx, y: ny };
+      }
+    }
+
+    function tick() {
+      frame++;
+      // Player moves every 6 frames (~10 cells/s at 60fps)
+      if (frame % 6 === 0) {
+        const tx = player.x + dir.x;
+        const ty = player.y + dir.y;
+        if (tx >= 0 && tx < COLS && ty >= 0 && ty < ROWS) {
+          player.x = tx; player.y = ty;
+        }
+        const eatenIdx = dots.findIndex(d => d.x === player.x && d.y === player.y);
+        if (eatenIdx >= 0) { dots.splice(eatenIdx, 1); score++; updateStatus(); }
+        mouthOpen = !mouthOpen;
+      }
+      // Ghost moves every 9 frames (a bit slower)
+      if (frame % 9 === 0) moveGhost();
+
+      // Collision
+      if (player.x === ghost.x && player.y === ghost.y) {
+        updateStatus('Caught! Restarting…');
+        cancelAnimationFrame(gameLoopId);
+        setTimeout(() => { resetGame(); loop(); }, 1200);
+        return;
+      }
+      // Win
+      if (dots.length === 0) {
+        updateStatus('You won! 🎉');
+        cancelAnimationFrame(gameLoopId);
+        setTimeout(() => { resetGame(); loop(); }, 1500);
+        return;
+      }
+      draw();
+    }
+
+    function draw() {
+      ctx.fillStyle = '#1F1B2E';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      // dots
+      ctx.fillStyle = '#FAC775';
+      for (const d of dots) {
+        ctx.beginPath();
+        ctx.arc(d.x * CELL + CELL / 2, d.y * CELL + CELL / 2, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // player (pac with mouth)
+      const px = player.x * CELL + CELL / 2;
+      const py = player.y * CELL + CELL / 2;
+      ctx.fillStyle = '#FAC775';
+      ctx.beginPath();
+      const mouth = mouthOpen ? 0.25 : 0.05;
+      let angle = 0;
+      if (dir.x === 1) angle = 0;
+      else if (dir.x === -1) angle = Math.PI;
+      else if (dir.y === -1) angle = -Math.PI / 2;
+      else if (dir.y === 1) angle = Math.PI / 2;
+      ctx.arc(px, py, CELL / 2 - 2, angle + mouth * Math.PI, angle + (2 - mouth) * Math.PI);
+      ctx.lineTo(px, py);
+      ctx.fill();
+      // ghost
+      const gx = ghost.x * CELL + CELL / 2;
+      const gy = ghost.y * CELL + CELL / 2;
+      ctx.fillStyle = '#E24B4A';
+      ctx.beginPath();
+      ctx.arc(gx, gy, CELL / 2 - 2, Math.PI, 0);
+      ctx.lineTo(gx + CELL / 2 - 2, gy + CELL / 2 - 4);
+      ctx.lineTo(gx + 4, gy + CELL / 2 - 8);
+      ctx.lineTo(gx - 4, gy + CELL / 2 - 4);
+      ctx.lineTo(gx - CELL / 2 + 2, gy + CELL / 2 - 8);
+      ctx.lineTo(gx - CELL / 2 + 2, gy);
+      ctx.fill();
+      // ghost eyes
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath(); ctx.arc(gx - 5, gy - 3, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(gx + 5, gy - 3, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#0C447C';
+      ctx.beginPath(); ctx.arc(gx - 5, gy - 3, 1.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(gx + 5, gy - 3, 1.5, 0, Math.PI * 2); ctx.fill();
+    }
+
+    function loop() {
+      gameLoopId = requestAnimationFrame(loop);
+      tick();
+    }
+
+    function startGame() {
+      resetGame();
+      canvas.focus();
+      cancelAnimationFrame(gameLoopId);
+      loop();
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (loading.hidden) return;
+      switch (e.key) {
+        case 'ArrowUp': case 'w': case 'W': dir = { x: 0, y: -1 }; e.preventDefault(); break;
+        case 'ArrowDown': case 's': case 'S': dir = { x: 0, y: 1 }; e.preventDefault(); break;
+        case 'ArrowLeft': case 'a': case 'A': dir = { x: -1, y: 0 }; e.preventDefault(); break;
+        case 'ArrowRight': case 'd': case 'D': dir = { x: 1, y: 0 }; e.preventDefault(); break;
+      }
     });
   </script>
 </body>

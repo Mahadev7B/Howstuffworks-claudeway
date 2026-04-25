@@ -18,17 +18,6 @@
       </div>
     </header>
 
-    <div class="controls">
-      <button id="autoBtn" class="primary">▶ Play lesson</button>
-      <button id="readBtn">🔊 Read this slide</button>
-      <span class="status" id="status">Press play to start the lesson</span>
-      <label class="speed">
-        Speed
-        <input type="range" min="0.6" max="1.4" step="0.1" value="0.9" id="speed">
-        <span id="speedVal">0.9×</span>
-      </label>
-    </div>
-
     <div class="progress"><div class="progress-fill" id="progress"></div></div>
 
     <div class="deck" id="deck">
@@ -59,6 +48,17 @@
           </div>
         </article>
       {% endfor %}
+    </div>
+
+    <div class="controls">
+      <button id="autoBtn" class="primary">▶ Play lesson</button>
+      <button id="readBtn">🔊 Read this slide</button>
+      <span class="status" id="status">Press play to start the lesson</span>
+      <label class="speed">
+        Speed
+        <input type="range" min="0.6" max="1.4" step="0.1" value="0.9" id="speed">
+        <span id="speedVal">0.9×</span>
+      </label>
     </div>
 
     <nav class="deck-nav">
@@ -166,19 +166,34 @@
         speechSynthesis.speak(utter);
       }
 
+      const audioInflight = new Map();   // slideIdx -> Promise<url>
+
       async function getAudioUrl(idx) {
         if (audioCache.has(idx)) return audioCache.get(idx);
+        if (audioInflight.has(idx)) return audioInflight.get(idx);
         const text = slides[idx].dataset.narration || '';
-        const res = await fetch('/api/tts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text }),
-        });
-        if (!res.ok) throw new Error('TTS HTTP ' + res.status);
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        audioCache.set(idx, url);
-        return url;
+        const promise = (async () => {
+          const res = await fetch('/api/tts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text }),
+          });
+          if (!res.ok) throw new Error('TTS HTTP ' + res.status);
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          audioCache.set(idx, url);
+          return url;
+        })();
+        audioInflight.set(idx, promise);
+        promise.finally(() => audioInflight.delete(idx));
+        return promise;
+      }
+
+      function preloadAudio(idx) {
+        if (idx < 0 || idx >= total) return;
+        if (audioCache.has(idx) || audioInflight.has(idx)) return;
+        if (serverTtsDisabled) return;
+        getAudioUrl(idx).catch(() => {});  // fire and forget
       }
 
       function stopAllAudio() {
@@ -192,6 +207,9 @@
 
         statusEl.textContent = 'Loading voice for slide ' + (current + 1) + '…';
         readBtn.textContent = '⏹ Stop';
+        // Prefetch upcoming slides while this one plays
+        preloadAudio(current + 1);
+        preloadAudio(current + 2);
         try {
           const url = await getAudioUrl(current);
           audioEl.src = url;
@@ -304,6 +322,10 @@
         speechSynthesis.onvoiceschanged = () => {};
       }
       updateProgress();
+
+      // Warm the cache so the very first Play feels instant
+      preloadAudio(0);
+      preloadAudio(1);
 
       const fbSection = document.getElementById('feedback');
       const fbButtons = Array.from(document.querySelectorAll('.fb-btn'));
