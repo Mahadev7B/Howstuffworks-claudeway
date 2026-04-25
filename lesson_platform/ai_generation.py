@@ -69,6 +69,13 @@ Drawing composition rules:
 - Use small labels with dashed leader lines to name important parts.
 - Keep shapes inside the canvas.
 
+Image prompt rules (used by an AI image generator, separate from the spec):
+- Each slide also gets an `image_prompt` field — a vivid, kid-friendly text description.
+- Style: "flat cartoon illustration for a children's storybook, bright friendly colors, simple shapes, no text in image, no labels, no words".
+- Describe the SUBJECT clearly with its key parts visible.
+- Keep it under 60 words, focused on what's in frame and the mood.
+- Example for a rocket: "A bright cartoon rocket flying upward through fluffy white clouds in a clear blue sky, with orange and yellow flames trailing below. Tall purple rocket body with a triangular nose cone and small fins. Friendly storybook style, flat colors, no text."
+
 Output format — respond ONLY with a single JSON object (no markdown fences, no commentary):
 
 {
@@ -82,6 +89,7 @@ Output format — respond ONLY with a single JSON object (no markdown fences, no
       "explanation": "2-3 sentences. Simple vocabulary.",
       "fun_fact": "One delightful fact.",
       "narration": "Spoken-friendly prose that combines title + explanation + fun fact. No markdown.",
+      "image_prompt": "Vivid kid-friendly description of the scene. No text in image.",
       "spec": {
         "width": 640,
         "height": 240,
@@ -93,7 +101,7 @@ Output format — respond ONLY with a single JSON object (no markdown fences, no
   ]
 }
 
-The first slide's spec should focus on the SUBJECT itself (the recognizable shape with labels).
+The first slide's spec/image_prompt should focus on the SUBJECT itself (the recognizable subject).
 Slides 2-4 can show mechanisms, forces, or sub-parts.
 """
 
@@ -120,7 +128,7 @@ def _validate_lesson(data: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"Lesson missing keys: {missing}")
     if not isinstance(data["slides"], list) or len(data["slides"]) != 4:
         raise ValueError(f"Expected 4 slides, got {len(data.get('slides', []))}")
-    required_slide = {"number", "title", "explanation", "fun_fact", "narration", "spec"}
+    required_slide = {"number", "title", "explanation", "fun_fact", "narration", "spec", "image_prompt"}
     for idx, slide in enumerate(data["slides"], start=1):
         miss = required_slide - set(slide)
         if miss:

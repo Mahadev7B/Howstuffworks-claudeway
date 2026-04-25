@@ -16,6 +16,11 @@ class Settings:
     daily_budget_usd: float
     max_cost_per_lesson_usd: float
     per_ip_hourly_limit: int
+    # Image generation
+    image_provider: str  # "flux" or "matplotlib"
+    fal_api_key: str
+    flux_model: str  # e.g. "fal-ai/flux/schnell"
+    flux_image_size: str  # e.g. "landscape_16_9"
 
 
 def load_settings() -> Settings:
@@ -30,4 +35,8 @@ def load_settings() -> Settings:
         daily_budget_usd=float(os.getenv("DAILY_BUDGET_USD", "5.00")),
         max_cost_per_lesson_usd=float(os.getenv("MAX_COST_PER_LESSON_USD", "0.15")),
         per_ip_hourly_limit=int(os.getenv("PER_IP_HOURLY_LIMIT", "20")),
+        image_provider=os.getenv("IMAGE_PROVIDER", "matplotlib").lower(),
+        fal_api_key=os.getenv("FAL_KEY", "") or os.getenv("FAL_API_KEY", ""),
+        flux_model=os.getenv("FLUX_MODEL", "fal-ai/flux/schnell"),
+        flux_image_size=os.getenv("FLUX_IMAGE_SIZE", "landscape_16_9"),
     )

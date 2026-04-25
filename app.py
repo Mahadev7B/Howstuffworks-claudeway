@@ -25,6 +25,7 @@ from flask import (
 
 from lesson_platform import (
     extract_and_lookup,
+    generate_image,
     generate_lesson,
     get_cached_lesson,
     init_db,
@@ -61,29 +62,88 @@ EXAMPLE_QUESTIONS = [
 LESSON_ENDPOINTS = ("/lesson", "/api/lesson")
 
 
-def _attach_slide_images(lesson: dict) -> None:
-    """Render each slide's spec to bytes and attach as an inline data URL.
+def _render_with_flux(slide: dict, ctx: dict) -> bool:
+    """Generate image via Flux Schnell. Returns True on success. Records api_call."""
+    prompt = (slide.get("image_prompt") or "").strip()
+    if not prompt:
+        return False
+    started = time.time()
+    try:
+        img_bytes, mime, cost = generate_image(prompt, settings)
+    except Exception as exc:  # noqa: BLE001
+        duration_ms = int((time.time() - started) * 1000)
+        logger.warning("Flux gen failed for slide %s: %s", slide.get("number"), exc)
+        record_api_call(
+            endpoint="/internal/flux",
+            question=prompt[:500],
+            model=settings.flux_model,
+            duration_ms=duration_ms,
+            success=False,
+            error=str(exc),
+            **ctx,
+        )
+        return False
+    duration_ms = int((time.time() - started) * 1000)
+    b64 = base64.b64encode(img_bytes).decode("ascii")
+    slide["image_data_url"] = f"data:{mime};base64,{b64}"
+    slide["image_bytes"] = len(img_bytes)
+    slide["image_source"] = "flux"
+    record_api_call(
+        endpoint="/internal/flux",
+        question=prompt[:500],
+        model=settings.flux_model,
+        cost_usd=cost,
+        duration_ms=duration_ms,
+        success=True,
+        **ctx,
+    )
+    return True
 
-    Mutates the lesson in place. Swallows render errors per-slide so a bad
-    slide doesn't break the whole lesson.
+
+def _render_with_matplotlib(slide: dict) -> bool:
+    spec = slide.get("spec")
+    if not isinstance(spec, dict):
+        return False
+    try:
+        img_bytes, mime = render_spec(spec)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Matplotlib render failed: %s", exc)
+        return False
+    b64 = base64.b64encode(img_bytes).decode("ascii")
+    slide["image_data_url"] = f"data:{mime};base64,{b64}"
+    slide["image_bytes"] = len(img_bytes)
+    slide["image_source"] = "matplotlib"
+    return True
+
+
+def _attach_slide_images(lesson: dict, ctx: dict | None = None) -> None:
+    """Attach an `image_data_url` to each slide.
+
+    Provider chosen by settings.image_provider. Falls back to matplotlib if
+    Flux is unavailable or fails for a given slide. Mutates lesson in place.
     """
-    rendered = 0
+    if ctx is None:
+        ctx = {"ip_address": None, "city": None, "region": None,
+               "country": None, "user_agent": None}
+    use_flux = settings.image_provider == "flux" and bool(settings.fal_api_key)
+    rendered_flux = rendered_mpl = 0
     for slide in lesson.get("slides", []):
-        spec = slide.get("spec")
-        if not isinstance(spec, dict):
-            continue
         if slide.get("image_data_url"):
-            continue  # already rendered (e.g., cache hit)
-        try:
-            img_bytes, mime = render_spec(spec)
-            b64 = base64.b64encode(img_bytes).decode("ascii")
-            slide["image_data_url"] = f"data:{mime};base64,{b64}"
-            slide["image_bytes"] = len(img_bytes)
-            rendered += 1
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("Slide render failed: %s", exc)
-            slide["image_data_url"] = None
-    logger.info("Rendered %d of %d slides", rendered, len(lesson.get("slides", [])))
+            continue  # already rendered (cache hit)
+        ok = False
+        if use_flux:
+            ok = _render_with_flux(slide, ctx)
+            if ok:
+                rendered_flux += 1
+        if not ok:
+            if _render_with_matplotlib(slide):
+                rendered_mpl += 1
+            else:
+                slide["image_data_url"] = None
+    logger.info(
+        "Rendered slides — flux: %d, matplotlib: %d, total: %d",
+        rendered_flux, rendered_mpl, len(lesson.get("slides", [])),
+    )
 
 
 def _client_context() -> dict:
@@ -133,7 +193,7 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
         )
         logger.info("Cache hit for question: %s", question)
         # Cache may or may not have rendered images embedded; ensure they exist.
-        _attach_slide_images(cached)
+        _attach_slide_images(cached, ctx)
         return cached, None
 
     blocked = _guardrail_check(ctx)
@@ -178,13 +238,13 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
         lesson=data,
         **ctx,
     )
-    # Cache the Claude output (spec only, no rendered images — they're cheap to re-render)
+    # Render images first (Flux or matplotlib), THEN cache so cached lessons
+    # don't re-pay for image generation on every hit.
+    render_started = time.time()
+    _attach_slide_images(data, ctx)
+    logger.info("Image rendering took %dms", int((time.time() - render_started) * 1000))
     if db_enabled:
         save_cached_lesson(question, data)
-    # Render images into the lesson being returned to the client
-    render_started = time.time()
-    _attach_slide_images(data)
-    logger.info("Image rendering took %dms", int((time.time() - render_started) * 1000))
     return data, None
 
 
@@ -299,6 +359,8 @@ def healthz():
         "model": settings.anthropic_model,
         "db": db_enabled,
         "tts": bool(settings.openai_api_key),
+        "image_provider": settings.image_provider,
+        "flux": settings.image_provider == "flux" and bool(settings.fal_api_key),
         "today_spend_usd": round(today_spend_usd(), 4),
         "daily_budget_usd": settings.daily_budget_usd,
     }

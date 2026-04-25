@@ -31,6 +31,14 @@ services:
         value: "0.15"
       - key: PER_IP_HOURLY_LIMIT
         value: "20"
+      - key: IMAGE_PROVIDER
+        value: matplotlib
+      - key: FAL_API_KEY
+        sync: false
+      - key: FLUX_MODEL
+        value: fal-ai/flux/schnell
+      - key: FLUX_IMAGE_SIZE
+        value: landscape_16_9
       - key: FLASK_SECRET_KEY
         generateValue: true
       - key: DATABASE_URL
