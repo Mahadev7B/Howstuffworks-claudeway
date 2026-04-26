@@ -187,7 +187,6 @@ button {
   outline: none;
   touch-action: none;
   max-width: 100%;
-  height: auto;
 }
 .loading-inner #game:focus { box-shadow: 0 0 0 3px var(--accent-soft); }
 .loading-inner .game-hint { font-size: 0.85rem; }
@@ -561,9 +560,8 @@ button {
   .ask-form input { font-size: 1rem; padding: 0.75rem 0.75rem; }
   .ask-form button { width: 100%; padding: 0.75rem; border-radius: 8px; margin-top: 0.25rem; }
 
-  /* Loading game */
-  .loading-inner #game { width: 100%; max-width: 360px; height: auto; }
-  .dpad { display: flex; }
+  /* Loading game — narrower screens */
+  .loading-inner #game { width: 100%; max-width: 320px; }
 
   /* Lesson header */
   .lesson { padding: 1.25rem 1rem 2.5rem; }
