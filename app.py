@@ -31,6 +31,7 @@ from lesson_platform import (
     generate_image,
     generate_lesson,
     get_cached_lesson,
+    get_lesson_from_calls,
     init_db,
     ip_calls_last_hour,
     load_settings,
@@ -262,13 +263,9 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
         lesson=data,
         **ctx,
     )
-    # Render images first (Flux or matplotlib), THEN cache so cached lessons
-    # don't re-pay for image generation on every hit.
     render_started = time.time()
     _attach_slide_images(data, ctx)
     logger.info("Image rendering took %dms", int((time.time() - render_started) * 1000))
-    if db_enabled:
-        save_cached_lesson(question, data)
     return data, None
 
 
@@ -340,7 +337,11 @@ def api_feedback():
         return jsonify({"ok": False, "error": str(exc)}), 500
 
     if rating == "up" and db_enabled:
-        pin_cached_lesson(question)
+        lesson_data = get_lesson_from_calls(question)
+        if lesson_data:
+            save_cached_lesson(question, lesson_data)
+            pin_cached_lesson(question)
+            logger.info("Cached and pinned thumbs-up lesson: %s", question[:80])
 
     record_api_call(
         endpoint="/api/feedback",

@@ -283,6 +283,28 @@ def pin_cached_lesson(question: str) -> None:
         logger.exception("Pin cached lesson failed")
 
 
+def get_lesson_from_calls(question: str) -> dict[str, Any] | None:
+    """Return the most recent successfully-generated lesson for this question from api_calls."""
+    if _pool is None:
+        return None
+    try:
+        with _pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT lesson FROM api_calls
+                WHERE question = %s AND lesson IS NOT NULL AND success = true
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (question[:500],),
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
+    except Exception:
+        logger.exception("get_lesson_from_calls failed")
+        return None
+
+
 def delete_cached_lesson(question: str) -> None:
     """Remove a cached lesson so it will be regenerated on next request."""
     if _pool is None:

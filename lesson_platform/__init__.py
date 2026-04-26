@@ -4,6 +4,7 @@ from .guardrails import check_question
 from .db import (
     delete_cached_lesson,
     get_cached_lesson,
+    get_lesson_from_calls,
     init_db,
     ip_calls_last_hour,
     pin_cached_lesson,
@@ -27,6 +28,7 @@ __all__ = [
     "extract_and_lookup",
     "synthesize",
     "get_cached_lesson",
+    "get_lesson_from_calls",
     "save_cached_lesson",
     "delete_cached_lesson",
     "pin_cached_lesson",
