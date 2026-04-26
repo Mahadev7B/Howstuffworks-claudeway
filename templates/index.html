@@ -426,20 +426,24 @@
       loop();
     }
 
+    function maybeRestartLoop() {
+      if (!loading.hidden && stars) loop();
+    }
+
     // Restart loop when Safari restores a throttled/suspended tab
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible' && !loading.hidden && stars) {
-        loop();
-      }
+      if (document.visibilityState === 'visible') maybeRestartLoop();
     });
+    // pageshow fires on BFCache restore (back/forward navigation or app-switcher return)
+    window.addEventListener('pageshow', maybeRestartLoop);
+    // focus fires when app returns from a popup/notification on iOS
+    window.addEventListener('focus', maybeRestartLoop);
 
-    // Heartbeat watchdog: if no tick fired in 3s while loading, restart the loop
+    // Heartbeat watchdog: restart if no tick for 1.5s (catches brief OS interruptions)
     setInterval(() => {
       if (loading.hidden || !stars || !lastTickTime) return;
-      if (Date.now() - lastTickTime > 3000) {
-        loop();
-      }
-    }, 1000);
+      if (Date.now() - lastTickTime > 1500) loop();
+    }, 500);
 
     document.addEventListener('keydown', (e) => {
       if (loading.hidden) return;
