@@ -153,8 +153,7 @@
         else if (s === 50) loadingMsg.textContent = 'Almost done — final touches…';
         else if (s === 75) loadingMsg.textContent = 'Still going — this one is taking a while.';
       }, 250);
-      // Let the browser paint the overlay before starting the game loop
-      requestAnimationFrame(() => requestAnimationFrame(startGame));
+      startGame();
     });
 
     // ---------- Space mini-game ---------------------------------------
@@ -223,13 +222,15 @@
 
       if (player.x === asteroid.x && player.y === asteroid.y) {
         updateStatus('Hit! Restarting…');
-        cancelAnimationFrame(gameLoopId);
+        clearInterval(gameLoopId);
+        gameLoopId = null;
         setTimeout(() => { resetGame(); loop(); }, 1200);
         return;
       }
       if (stars.length === 0) {
         updateStatus('All stars collected!');
-        cancelAnimationFrame(gameLoopId);
+        clearInterval(gameLoopId);
+        gameLoopId = null;
         setTimeout(() => { resetGame(); loop(); }, 1500);
         return;
       }
@@ -334,13 +335,17 @@
       drawAsteroid(asteroid.x * CELL + CELL / 2, asteroid.y * CELL + CELL / 2);
     }
 
+    // Use setInterval instead of rAF — Safari pauses rAF during form navigation
+    const FRAME_MS = 1000 / 60;
+
     function loop() {
-      gameLoopId = requestAnimationFrame(loop);
-      tick();
+      if (gameLoopId) clearInterval(gameLoopId);
+      gameLoopId = setInterval(tick, FRAME_MS);
     }
 
     function startGame() {
-      cancelAnimationFrame(gameLoopId);
+      if (gameLoopId) clearInterval(gameLoopId);
+      gameLoopId = null;
       resetGame();
       canvas.focus();
       loop();
