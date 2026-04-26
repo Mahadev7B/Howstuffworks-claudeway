@@ -2,6 +2,7 @@ from .ai_generation import generate_lesson
 from .config import load_settings
 from .guardrails import check_question
 from .db import (
+    delete_cached_lesson,
     get_cached_lesson,
     init_db,
     ip_calls_last_hour,
@@ -27,6 +28,7 @@ __all__ = [
     "synthesize",
     "get_cached_lesson",
     "save_cached_lesson",
+    "delete_cached_lesson",
     "pin_cached_lesson",
     "today_spend_usd",
     "ip_calls_last_hour",

@@ -283,6 +283,22 @@ def pin_cached_lesson(question: str) -> None:
         logger.exception("Pin cached lesson failed")
 
 
+def delete_cached_lesson(question: str) -> None:
+    """Remove a cached lesson so it will be regenerated on next request."""
+    if _pool is None:
+        return
+    qhash = question_hash(question)
+    try:
+        with _pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM cached_lessons WHERE question_hash = %s",
+                (qhash,),
+            )
+        logger.info("Deleted stale cache entry for: %s", question[:80])
+    except Exception:
+        logger.exception("Cache delete failed")
+
+
 def save_cached_lesson(question: str, lesson: dict[str, Any]) -> None:
     if _pool is None:
         return

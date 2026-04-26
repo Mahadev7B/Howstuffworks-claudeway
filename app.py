@@ -26,6 +26,7 @@ from flask import (
 
 from lesson_platform import (
     check_question,
+    delete_cached_lesson,
     extract_and_lookup,
     generate_image,
     generate_lesson,
@@ -198,19 +199,26 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
     cached = get_cached_lesson(question, settings.lesson_cache_ttl_days) if db_enabled else None
     if cached is not None:
         cached.setdefault("meta", {})["from_cache"] = True
-        record_api_call(
-            endpoint=endpoint,
-            question=question,
-            model=cached.get("meta", {}).get("model", "cache"),
-            duration_ms=0,
-            cost_usd=0.0,
-            success=True,
-            **ctx,
-        )
         logger.info("Cache hit for question: %s", question)
         # Cache may or may not have rendered images embedded; ensure they exist.
         _attach_slide_images(cached, ctx)
-        return cached, None
+        # If every slide is still missing an image the cached spec is broken — bust it.
+        slides = cached.get("slides", [])
+        if slides and not any(s.get("image_data_url") for s in slides):
+            logger.warning("Cached lesson has no renderable images — busting cache: %s", question)
+            delete_cached_lesson(question)
+            cached = None
+        else:
+            record_api_call(
+                endpoint=endpoint,
+                question=question,
+                model=cached.get("meta", {}).get("model", "cache"),
+                duration_ms=0,
+                cost_usd=0.0,
+                success=True,
+                **ctx,
+            )
+            return cached, None
 
     blocked = _guardrail_check(ctx)
     if blocked is not None:
