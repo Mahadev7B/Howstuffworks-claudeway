@@ -134,8 +134,22 @@
       }
 
       const audioCache = new Map();    // slideIdx -> blob URL
+      // Safari requires audio to be created AND played within a user gesture.
+      // We create a single Audio element and unlock it on first user tap.
       const audioEl = new Audio();
+      let audioUnlocked = false;
       let serverTtsDisabled = false;    // flip to true after first failure
+
+      function unlockAudio() {
+        if (audioUnlocked) return;
+        audioUnlocked = true;
+        // Play a silent buffer to satisfy Safari's gesture requirement
+        audioEl.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAA' +
+          'EAAQARgAAAIAIAAEABAAZGF0YQQAAAAAAA==';
+        audioEl.play().catch(() => {});
+      }
+      document.addEventListener('pointerdown', unlockAudio, { once: true });
+      document.addEventListener('click', unlockAudio, { once: true });
 
       function speakWithBrowser(onDone) {
         if (!('speechSynthesis' in window)) {
@@ -218,7 +232,10 @@
         preloadAudio(current + 2);
         try {
           const url = await getAudioUrl(current);
+          // Re-create Audio element each time to avoid Safari stale-src issues
+          audioEl.pause();
           audioEl.src = url;
+          audioEl.load();
           audioEl.playbackRate = rate;
           audioEl.onplay = () => {
             statusEl.textContent = 'Reading slide ' + (current + 1) + ' of ' + total + '…';

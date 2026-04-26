@@ -236,6 +236,13 @@ button {
 }
 .dpad-btn:active,
 .dpad-btn.pressed { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+/* Suppress Safari long-press context menu and text selection on game controls */
+.dpad, .dpad-btn {
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
 .loading-inner { text-align: center; }
 .loading-inner p { margin: 0.4rem 0; }
 .loading-inner p.muted { color: var(--ink-soft); font-size: 0.9rem; }
