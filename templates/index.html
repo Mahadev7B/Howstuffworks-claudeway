@@ -397,41 +397,49 @@
       }
     });
 
-    // Show d-pad on any touch-capable device and update hint text
-    if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+    // Detect touch device — show d-pad and update hint
+    const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+    if (isTouchDevice) {
       document.getElementById('dpad').style.display = 'flex';
-      document.getElementById('gameHint').firstChild.textContent = 'Tap d-pad or swipe · ';
+      document.getElementById('gameHint').firstChild.textContent = 'Tap arrows to move · ';
     }
 
-    // D-pad buttons — respond to both touch and mouse
+    // Ensure game starts on first d-pad tap if somehow not already running
+    function ensureGameRunning() {
+      if (!gameLoopId && stars) loop();
+    }
+
+    // D-pad — use pointerdown (works for touch + mouse, no duplicate events)
     document.querySelectorAll('.dpad-btn').forEach(btn => {
-      const press = (e) => {
+      btn.addEventListener('pointerdown', (e) => {
         e.preventDefault();
+        btn.setPointerCapture(e.pointerId);
         dir = { x: parseInt(btn.dataset.dx, 10), y: parseInt(btn.dataset.dy, 10) };
         btn.classList.add('pressed');
-      };
-      const release = () => btn.classList.remove('pressed');
-      btn.addEventListener('touchstart', press, { passive: false });
-      btn.addEventListener('touchend', release, { passive: true });
-      btn.addEventListener('mousedown', press);
-      btn.addEventListener('mouseup', release);
+        ensureGameRunning();
+      });
+      btn.addEventListener('pointerup',     () => btn.classList.remove('pressed'));
+      btn.addEventListener('pointercancel', () => btn.classList.remove('pressed'));
     });
 
-    // Swipe on canvas — use canvas CSS scale to map touch coords correctly
-    let touchStartX = 0, touchStartY = 0;
-    canvas.addEventListener('touchstart', (e) => {
+    // Swipe on canvas
+    let swipeStartX = 0, swipeStartY = 0;
+    canvas.addEventListener('pointerdown', (e) => {
       e.preventDefault();
-      touchStartX = e.touches[0].clientX;
-      touchStartY = e.touches[0].clientY;
-    }, { passive: false });
-    canvas.addEventListener('touchend', (e) => {
+      canvas.setPointerCapture(e.pointerId);
+      swipeStartX = e.clientX;
+      swipeStartY = e.clientY;
+    });
+    canvas.addEventListener('pointerup', (e) => {
       if (loading.hidden) return;
-      const dx = e.changedTouches[0].clientX - touchStartX;
-      const dy = e.changedTouches[0].clientY - touchStartY;
+      const dx = e.clientX - swipeStartX;
+      const dy = e.clientY - swipeStartY;
       if (Math.abs(dx) < 15 && Math.abs(dy) < 15) return;
-      if (Math.abs(dx) > Math.abs(dy)) dir = { x: Math.sign(dx), y: 0 };
-      else dir = { x: 0, y: Math.sign(dy) };
-    }, { passive: true });
+      dir = Math.abs(dx) > Math.abs(dy)
+        ? { x: Math.sign(dx), y: 0 }
+        : { x: 0, y: Math.sign(dy) };
+      ensureGameRunning();
+    });
   </script>
 </body>
 </html>

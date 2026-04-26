@@ -187,6 +187,9 @@ button {
   outline: none;
   touch-action: none;
   max-width: 100%;
+  position: relative;
+  z-index: 1001;
+  pointer-events: auto;
 }
 .loading-inner #game:focus { box-shadow: 0 0 0 3px var(--accent-soft); }
 .loading-inner .game-hint { font-size: 0.85rem; }
@@ -198,6 +201,10 @@ button {
   gap: 6px;
   margin: 1rem auto 0;
   user-select: none;
+  position: relative;
+  z-index: 1001;
+  pointer-events: auto;
+  touch-action: none;
 }
 .dpad-middle {
   display: flex;
@@ -209,9 +216,9 @@ button {
   height: 60px;
 }
 .dpad-btn {
-  width: 60px;
-  height: 60px;
-  font-size: 1.3rem;
+  width: 64px;
+  height: 64px;
+  font-size: 1.4rem;
   background: var(--surface);
   border: 2px solid var(--line-strong);
   border-radius: 12px;
@@ -224,6 +231,8 @@ button {
   box-shadow: 0 2px 6px rgba(31,27,46,0.12);
   transition: background 0.1s, border-color 0.1s;
   -webkit-tap-highlight-color: transparent;
+  pointer-events: auto;
+  user-select: none;
 }
 .dpad-btn:active,
 .dpad-btn.pressed { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
