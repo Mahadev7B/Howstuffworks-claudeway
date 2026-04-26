@@ -59,6 +59,7 @@
         <button class="dpad-btn" data-dx="0"  data-dy="-1" aria-label="Up">▲</button>
         <div class="dpad-middle">
           <button class="dpad-btn" data-dx="-1" data-dy="0"  aria-label="Left">◀</button>
+          <div class="dpad-spacer"></div>
           <button class="dpad-btn" data-dx="1"  data-dy="0"  aria-label="Right">▶</button>
         </div>
         <button class="dpad-btn" data-dx="0"  data-dy="1"  aria-label="Down">▼</button>
@@ -361,12 +362,16 @@
 
     // D-pad buttons — respond to both touch and mouse
     document.querySelectorAll('.dpad-btn').forEach(btn => {
-      const setDir = (e) => {
+      const press = (e) => {
         e.preventDefault();
         dir = { x: parseInt(btn.dataset.dx, 10), y: parseInt(btn.dataset.dy, 10) };
+        btn.classList.add('pressed');
       };
-      btn.addEventListener('touchstart', setDir, { passive: false });
-      btn.addEventListener('mousedown', setDir);
+      const release = () => btn.classList.remove('pressed');
+      btn.addEventListener('touchstart', press, { passive: false });
+      btn.addEventListener('touchend', release, { passive: true });
+      btn.addEventListener('mousedown', press);
+      btn.addEventListener('mouseup', release);
     });
 
     // Swipe on canvas — use canvas CSS scale to map touch coords correctly
