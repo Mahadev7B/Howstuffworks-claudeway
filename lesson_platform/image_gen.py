@@ -30,8 +30,12 @@ def _estimate_cost(size: str) -> float:
     return _SIZE_TO_MP.get(size, 0.6) * _PRICE_PER_MP
 
 
-def generate_image(prompt: str, settings: Settings) -> tuple[bytes, str, float]:
-    """Call Flux Schnell via fal.ai and return (bytes, mime, cost_usd).
+def generate_image(
+    prompt: str,
+    settings: Settings,
+    negative_prompt: str | None = None,
+) -> tuple[bytes, str, float]:
+    """Call Flux via fal.ai and return (bytes, mime, cost_usd).
 
     Raises RuntimeError if the API key is missing or generation fails.
     """
@@ -41,16 +45,20 @@ def generate_image(prompt: str, settings: Settings) -> tuple[bytes, str, float]:
     # fal_client picks up the key from FAL_KEY env var; ensure it's set in this process
     os.environ["FAL_KEY"] = settings.fal_api_key
 
+    arguments: dict[str, Any] = {
+        "prompt": prompt,
+        "image_size": settings.flux_image_size,
+        "num_inference_steps": 4,    # Schnell is tuned for ~4 steps
+        "num_images": 1,
+        "enable_safety_checker": True,
+    }
+    if negative_prompt:
+        arguments["negative_prompt"] = negative_prompt
+
     try:
         result: dict[str, Any] = fal_client.subscribe(
             settings.flux_model,
-            arguments={
-                "prompt": prompt,
-                "image_size": settings.flux_image_size,
-                "num_inference_steps": 4,    # Schnell is tuned for ~4 steps
-                "num_images": 1,
-                "enable_safety_checker": True,
-            },
+            arguments=arguments,
             with_logs=False,
         )
     except Exception as exc:

@@ -69,11 +69,22 @@ Drawing composition rules:
 - Use small labels with dashed leader lines to name important parts.
 - Keep shapes inside the canvas.
 
-Image prompt rules (used by an AI image generator, separate from the spec):
-- Each slide also gets an `image_prompt` field — a short, vivid, kid-friendly scene description.
-- Always end with: "children's storybook illustration, flat bright colors, no text, no labels."
-- Describe only the KEY visual subject in 20–35 words total. Simple and cheerful.
-- Example for a rocket: "A cheerful cartoon rocket blasting into a starry sky, bright orange flames below, fluffy clouds around it. children's storybook illustration, flat bright colors, no text, no labels."
+Image prompt rules for Flux image generation:
+- Each slide must include an `image_prompt` field.
+- The image must be a clear educational visual for children aged 6–10.
+- Use a simple centered composition with one main subject.
+- Make the subject instantly recognizable.
+- Show the mechanism clearly using visual action, not text.
+- Avoid clutter, extra characters, fantasy objects, random decorations, or too many background elements.
+- Do NOT include text, labels, captions, letters, numbers, logos, or watermarks.
+- Use bright, clean, kid-friendly colors.
+- Style should be: children's educational storybook illustration, simple science poster, flat bright colors, soft rounded shapes.
+- The image_prompt should be 35–55 words.
+- Include the slide's key idea visually.
+- Always end with: "children's educational storybook illustration, simple science poster, flat bright colors, soft rounded shapes, no text, no labels, no letters, no numbers."
+
+Each slide must also include an `image_negative_prompt` field with exactly this value:
+"text, labels, captions, letters, numbers, logo, watermark, scary, realistic photo, cluttered background, extra people, extra animals, confusing diagram"
 
 Output format — respond ONLY with a single JSON object (no markdown fences, no commentary):
 
@@ -88,7 +99,8 @@ Output format — respond ONLY with a single JSON object (no markdown fences, no
       "explanation": "2-3 sentences. Simple vocabulary.",
       "fun_fact": "One delightful fact.",
       "narration": "Spoken-friendly prose that combines title + explanation + fun fact. No markdown.",
-      "image_prompt": "Vivid kid-friendly description of the scene. No text in image.",
+      "image_prompt": "Clear educational scene showing the slide's key idea. One main subject, simple composition, visual action. children's educational storybook illustration, simple science poster, flat bright colors, soft rounded shapes, no text, no labels, no letters, no numbers.",
+      "image_negative_prompt": "text, labels, captions, letters, numbers, logo, watermark, scary, realistic photo, cluttered background, extra people, extra animals, confusing diagram",
       "spec": {
         "width": 640,
         "height": 240,

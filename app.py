@@ -74,9 +74,10 @@ def _render_with_flux(slide: dict, ctx: dict) -> bool:
     prompt = (slide.get("image_prompt") or "").strip()
     if not prompt:
         return False
+    negative_prompt = (slide.get("image_negative_prompt") or "").strip() or None
     started = time.time()
     try:
-        img_bytes, mime, cost = generate_image(prompt, settings)
+        img_bytes, mime, cost = generate_image(prompt, settings, negative_prompt)
     except Exception as exc:  # noqa: BLE001
         duration_ms = int((time.time() - started) * 1000)
         logger.warning("Flux gen failed for slide %s: %s", slide.get("number"), exc)
