@@ -88,6 +88,16 @@
       <p class="fb-status" id="fb-status" role="status"></p>
     </section>
 
+    {% if lesson.next_question %}
+    <section class="next-question">
+      <p class="next-label">Curious about more?</p>
+      <form action="{{ url_for('lesson') }}" method="post">
+        <input type="hidden" name="question" value="{{ lesson.next_question }}">
+        <button type="submit" class="next-btn">{{ lesson.next_question }} →</button>
+      </form>
+    </section>
+    {% endif %}
+
     <footer class="lesson-meta">
       <span>Generated in {{ lesson.meta.generation_time_ms }}ms</span>
       <span>·</span>

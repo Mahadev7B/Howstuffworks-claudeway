@@ -80,6 +80,7 @@ Output format — respond ONLY with a single JSON object (no markdown fences, no
 {
   "title": "Plain-English title of the lesson",
   "subject": "the main noun (e.g. 'rocket', 'rain', 'volcano')",
+  "next_question": "A natural follow-up question a curious kid would ask next. Start with 'How' or 'Why'. Max 8 words.",
   "slides": [
     {
       "number": 1,
