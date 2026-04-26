@@ -338,9 +338,9 @@
     }
 
     function startGame() {
+      cancelAnimationFrame(gameLoopId);
       resetGame();
       canvas.focus();
-      cancelAnimationFrame(gameLoopId);
       loop();
     }
 
