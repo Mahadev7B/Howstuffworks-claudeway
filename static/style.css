@@ -316,6 +316,16 @@ button {
 }
 .illustration svg,
 .illustration .slide-image { max-width: 100%; height: auto; display: block; border-radius: 6px; }
+
+.slide.active .slide-image {
+  animation: floatImage 4s ease-in-out infinite;
+}
+@keyframes floatImage {
+  0%   { transform: translateY(0px) scale(1); }
+  50%  { transform: translateY(-8px) scale(1.02); }
+  100% { transform: translateY(0px) scale(1); }
+}
+
 .slide-image-missing {
   padding: 2rem;
   color: var(--ink-soft);
