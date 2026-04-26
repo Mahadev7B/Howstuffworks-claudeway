@@ -164,6 +164,8 @@ button {
   background: #1F1B2E;
   outline: none;
   touch-action: none;
+  max-width: 100%;
+  height: auto;
 }
 .loading-inner #game:focus { box-shadow: 0 0 0 3px var(--accent-soft); }
 .loading-inner .game-hint { font-size: 0.85rem; }
@@ -500,9 +502,54 @@ button {
 
 /* ---------- Mobile ---------- */
 @media (max-width: 600px) {
-  .brand h1 { font-size: 2.4rem; }
-  .lesson-titles h1 { font-size: 1.5rem; }
-  .deck { padding: 1.25rem; min-height: 0; }
+  /* Home */
+  .home { padding: 3.5rem 1rem 2rem; }
+  .brand h1 { font-size: 2.2rem; }
+  .tagline { font-size: 0.97rem; }
+  .ask-form { flex-wrap: wrap; padding: 0.35rem; }
+  .ask-form input { font-size: 1rem; padding: 0.75rem 0.75rem; }
+  .ask-form button { width: 100%; padding: 0.75rem; border-radius: 8px; margin-top: 0.25rem; }
+
+  /* Loading game */
+  .loading-inner #game { width: 100%; max-width: 360px; height: auto; }
+
+  /* Lesson header */
+  .lesson { padding: 1.25rem 1rem 2.5rem; }
+  .lesson-header { flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
+  .back { padding-top: 0; }
+  .lesson-titles h1 { font-size: 1.45rem; }
+
+  /* Controls — stack into two rows */
+  .controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+    padding: 0.75rem;
+  }
+  .controls .btn-row {
+    display: flex;
+    gap: 0.5rem;
+  }
+  .controls .btn-row button { flex: 1; }
   .controls .speed { display: none; }
-  .controls .status { display: none; }
+  .controls .status {
+    display: block;
+    min-width: 0;
+    font-size: 0.83rem;
+    text-align: center;
+  }
+
+  /* Deck */
+  .deck { padding: 1.1rem; min-height: 0; }
+  .slide h2 { font-size: 1.35rem; }
+  .explanation { font-size: 1rem; }
+
+  /* Nav */
+  .deck-nav { padding: 0.75rem 0; }
+  .deck-nav button { padding: 0.6rem 0.9rem; font-size: 0.88rem; }
+
+  /* Feedback */
+  .feedback { padding: 1rem; }
+  .feedback-buttons { flex-wrap: wrap; }
+  .fb-btn { flex: 1; text-align: center; }
 }
