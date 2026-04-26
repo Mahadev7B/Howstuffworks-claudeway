@@ -70,11 +70,10 @@ Drawing composition rules:
 - Keep shapes inside the canvas.
 
 Image prompt rules (used by an AI image generator, separate from the spec):
-- Each slide also gets an `image_prompt` field — a vivid, kid-friendly text description.
-- Style: "flat cartoon illustration for a children's storybook, bright friendly colors, simple shapes, no text in image, no labels, no words".
-- Describe the SUBJECT clearly with its key parts visible.
-- Keep it under 60 words, focused on what's in frame and the mood.
-- Example for a rocket: "A bright cartoon rocket flying upward through fluffy white clouds in a clear blue sky, with orange and yellow flames trailing below. Tall purple rocket body with a triangular nose cone and small fins. Friendly storybook style, flat colors, no text."
+- Each slide also gets an `image_prompt` field — a short, vivid, kid-friendly scene description.
+- Always end with: "children's storybook illustration, flat bright colors, no text, no labels."
+- Describe only the KEY visual subject in 20–35 words total. Simple and cheerful.
+- Example for a rocket: "A cheerful cartoon rocket blasting into a starry sky, bright orange flames below, fluffy clouds around it. children's storybook illustration, flat bright colors, no text, no labels."
 
 Output format — respond ONLY with a single JSON object (no markdown fences, no commentary):
 

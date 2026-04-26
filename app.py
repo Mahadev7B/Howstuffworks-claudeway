@@ -10,6 +10,7 @@ Voiceover: browser Web Speech API (free).
 import base64
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from dotenv import load_dotenv
 from flask import (
@@ -24,6 +25,7 @@ from flask import (
 )
 
 from lesson_platform import (
+    check_question,
     extract_and_lookup,
     generate_image,
     generate_lesson,
@@ -60,6 +62,7 @@ EXAMPLE_QUESTIONS = [
 ]
 
 LESSON_ENDPOINTS = ("/lesson", "/api/lesson")
+FEEDBACK_HOURLY_LIMIT = 10  # per IP
 
 
 def _render_with_flux(slide: dict, ctx: dict) -> bool:
@@ -121,25 +124,37 @@ def _attach_slide_images(lesson: dict, ctx: dict | None = None) -> None:
 
     Provider chosen by settings.image_provider. Falls back to matplotlib if
     Flux is unavailable or fails for a given slide. Mutates lesson in place.
+    Flux slides are rendered in parallel for speed.
     """
     if ctx is None:
         ctx = {"ip_address": None, "city": None, "region": None,
                "country": None, "user_agent": None}
     use_flux = settings.image_provider == "flux" and bool(settings.fal_api_key)
+    slides = [s for s in lesson.get("slides", []) if not s.get("image_data_url")]
     rendered_flux = rendered_mpl = 0
-    for slide in lesson.get("slides", []):
-        if slide.get("image_data_url"):
-            continue  # already rendered (cache hit)
-        ok = False
-        if use_flux:
-            ok = _render_with_flux(slide, ctx)
-            if ok:
-                rendered_flux += 1
-        if not ok:
+
+    if use_flux and slides:
+        def _flux_one(slide):
+            return slide, _render_with_flux(slide, ctx)
+
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            futures = {ex.submit(_flux_one, s): s for s in slides}
+            for fut in as_completed(futures):
+                slide, ok = fut.result()
+                if ok:
+                    rendered_flux += 1
+                else:
+                    if _render_with_matplotlib(slide):
+                        rendered_mpl += 1
+                    else:
+                        slide["image_data_url"] = None
+    else:
+        for slide in slides:
             if _render_with_matplotlib(slide):
                 rendered_mpl += 1
             else:
                 slide["image_data_url"] = None
+
     logger.info(
         "Rendered slides — flux: %d, matplotlib: %d, total: %d",
         rendered_flux, rendered_mpl, len(lesson.get("slides", [])),
@@ -258,6 +273,13 @@ def lesson():
     question = request.form.get("question", "").strip()
     if not question:
         return redirect(url_for("home"))
+    if len(question) > 200:
+        return render_template("error.html", question=question[:200],
+                               error="Your question is a bit too long — try a shorter version!"), 400
+
+    blocked = check_question(question)
+    if blocked:
+        return render_template("error.html", question=question, error=blocked), 400
 
     ctx = _client_context()
     data, err = _track_lesson("/lesson", question, ctx)
@@ -273,6 +295,12 @@ def api_lesson():
     question = (payload.get("question") or "").strip()
     if not question:
         return jsonify({"ok": False, "error": "question is required"}), 400
+    if len(question) > 200:
+        return jsonify({"ok": False, "error": "Question too long — keep it under 200 characters."}), 400
+
+    blocked = check_question(question)
+    if blocked:
+        return jsonify({"ok": False, "error": blocked}), 400
 
     ctx = _client_context()
     data, err = _track_lesson("/api/lesson", question, ctx)
@@ -291,11 +319,25 @@ def api_feedback():
     comment = (payload.get("comment") or "").strip() or None
     if not question or rating not in ("up", "down"):
         return jsonify({"ok": False, "error": "question and rating ('up'|'down') are required"}), 400
+
+    ctx = _client_context()
+    if ip_calls_last_hour(ctx.get("ip_address"), ("/api/feedback",)) >= FEEDBACK_HOURLY_LIMIT:
+        return jsonify({"ok": False, "error": "Too many feedback submissions. Try again later."}), 429
+
     try:
-        save_feedback(question, rating, comment, **_client_context())
+        save_feedback(question, rating, comment, **ctx)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Feedback save failed")
         return jsonify({"ok": False, "error": str(exc)}), 500
+
+    record_api_call(
+        endpoint="/api/feedback",
+        question=question[:500],
+        model="none",
+        duration_ms=0,
+        success=True,
+        **ctx,
+    )
     return jsonify({"ok": True})
 
 

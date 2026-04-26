@@ -1,5 +1,6 @@
 from .ai_generation import generate_lesson
 from .config import load_settings
+from .guardrails import check_question
 from .db import (
     get_cached_lesson,
     init_db,
@@ -16,6 +17,7 @@ from .tts import synthesize
 
 __all__ = [
     "generate_lesson",
+    "check_question",
     "load_settings",
     "init_db",
     "save_feedback",

@@ -3,8 +3,10 @@ import hashlib
 import logging
 import os
 import re
+import time
 from typing import Any
 
+import psycopg
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
@@ -76,6 +78,11 @@ ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS output_chars INTEGER NOT NULL DEF
 """
 
 
+def _check_connection(conn) -> None:
+    """psycopg_pool health-check: run a trivial query; raises on dead connection."""
+    conn.execute("SELECT 1")
+
+
 def init_db() -> bool:
     """Create the pool and ensure schema exists. Returns True if DB is available."""
     global _pool
@@ -84,7 +91,14 @@ def init_db() -> bool:
         logger.warning("DATABASE_URL not set — DB storage disabled")
         return False
     try:
-        _pool = ConnectionPool(dsn, min_size=1, max_size=4, kwargs={"autocommit": True})
+        _pool = ConnectionPool(
+            dsn,
+            min_size=1,
+            max_size=4,
+            kwargs={"autocommit": True},
+            check=_check_connection,       # validate before handing out
+            reconnect_timeout=30,          # keep trying to reconnect for 30s
+        )
         with _pool.connection() as conn, conn.cursor() as cur:
             cur.execute(SCHEMA)
         logger.info("DB ready (feedback + api_calls)")
@@ -114,24 +128,33 @@ def save_feedback(
         raise RuntimeError("DB not configured")
     if rating not in ("up", "down"):
         raise ValueError("rating must be 'up' or 'down'")
-    with _pool.connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO feedback
-              (question, rating, comment, ip_address, city, region, country, user_agent)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            (
-                question[:500],
-                rating,
-                (comment or "")[:2000] or None,
-                (ip_address or "")[:64] or None,
-                (city or "")[:128] or None,
-                (region or "")[:128] or None,
-                (country or "")[:128] or None,
-                (user_agent or "")[:500] or None,
-            ),
-        )
+    params = (
+        question[:500],
+        rating,
+        (comment or "")[:2000] or None,
+        (ip_address or "")[:64] or None,
+        (city or "")[:128] or None,
+        (region or "")[:128] or None,
+        (country or "")[:128] or None,
+        (user_agent or "")[:500] or None,
+    )
+    sql = """
+        INSERT INTO feedback
+          (question, rating, comment, ip_address, city, region, country, user_agent)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+    """
+    # Retry once on stale-connection errors (SSL reset, server timeout, etc.)
+    for attempt in range(2):
+        try:
+            with _pool.connection() as conn, conn.cursor() as cur:
+                cur.execute(sql, params)
+            return
+        except psycopg.OperationalError:
+            if attempt == 0:
+                logger.warning("Feedback insert hit stale connection, retrying…")
+                time.sleep(0.1)
+            else:
+                raise
 
 
 def record_api_call(

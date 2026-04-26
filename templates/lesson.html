@@ -321,6 +321,9 @@
       if ('speechSynthesis' in window) {
         speechSynthesis.onvoiceschanged = () => {};
       }
+
+      // Always start at slide 1 regardless of any residual DOM state
+      show(0);
       updateProgress();
 
       // Warm the cache so the very first Play feels instant
