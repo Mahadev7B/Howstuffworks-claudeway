@@ -2,8 +2,9 @@
 
 Two layers:
 1. Hard-block: explicit/body-part content — never reaches Claude.
-2. Soft-check: question must relate to science, technology, nature, or math.
-   Unrelated questions (sports trivia, politics, etc.) get a friendly redirect.
+2. Soft-check: question must relate to science, technology, nature, math,
+   history, inventions, everyday objects, or how the world works.
+   Unrelated questions (celebrity gossip, gambling, politics, etc.) get a friendly redirect.
 """
 import re
 
@@ -78,9 +79,25 @@ _ALLOWED_TOPICS = {
     "magnet", "compass", "telescope", "microscope", "x-ray", "mri",
     "wifi", "bluetooth", "gps", "microwave", "refrigerator",
     "vaccine", "medicine", "doctor",
-    # History of science (intentionally allowed)
-    "invention", "inventor", "discover", "discovery", "newton", "einstein",
-    "darwin", "curie", "galileo", "tesla", "edison",
+    # History of science and inventions
+    "invention", "inventor", "invent", "invented", "discover", "discovery",
+    "newton", "einstein", "darwin", "curie", "galileo", "tesla", "edison",
+    "history", "historical", "ancient", "origin", "origins", "come from",
+    "where did", "who made", "who invented", "how was", "how were",
+    "when was", "when were", "why did", "why do people",
+    # Everyday objects and life
+    "shoe", "shoes", "pencil", "pen", "paper", "glass", "bread", "food",
+    "book", "wheel", "clock", "watch", "chair", "table", "phone", "telephone",
+    "bicycle", "bike", "train", "ship", "boat", "umbrella", "hat", "clothes",
+    "clothing", "money", "coin", "school", "toy", "toys", "map", "flag",
+    "house", "building", "road", "bridge", "tool", "tools", "knife", "fork",
+    "spoon", "cup", "bowl", "door", "window", "wall", "key", "lock",
+    "button", "zipper", "mirror", "candle", "lamp", "light bulb", "radio",
+    "television", "tv", "movie", "music", "instrument", "piano", "guitar",
+    "sport", "sports", "ball", "game", "games", "playground",
+    # Common question starters — allow broad child questions through
+    "how did", "how do people", "what makes", "where does", "where do",
+    "who was", "who were", "tell me", "explain",
 }
 
 # Stopwords that don't help classify — strip before checking allowed topics
@@ -98,9 +115,9 @@ _HARD_BLOCK_MSG = (
 )
 
 _OFFTOPIC_MSG = (
-    "This app explores science, technology, nature, and math. "
-    "Try asking something like \"How do rockets fly?\" or "
-    "\"Why is the sky blue?\""
+    "This app explores science, nature, history, inventions, and how the world works. "
+    "Try asking something like \"How do rockets fly?\", \"Why is the sky blue?\", "
+    "or \"How was the wheel invented?\""
 )
 
 
