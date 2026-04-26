@@ -89,12 +89,6 @@
     </section>
 
     <section class="next-question">
-      {% if lesson.next_question %}
-      <form action="{{ url_for('lesson') }}" method="post">
-        <input type="hidden" name="question" value="{{ lesson.next_question }}">
-        <button type="submit" class="next-btn">{{ lesson.next_question }} →</button>
-      </form>
-      {% endif %}
       <a href="{{ url_for('home') }}" class="new-question-link">← Ask a new question</a>
     </section>
 
