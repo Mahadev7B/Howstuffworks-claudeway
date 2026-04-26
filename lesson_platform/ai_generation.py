@@ -102,6 +102,15 @@ Image prompt rules for Flux image generation:
 Each slide must also include an `image_negative_prompt` field with exactly this value:
 "text, labels, captions, letters, numbers, logo, watermark, scary, realistic photo, cluttered background, extra people, extra animals, confusing diagram"
 
+JSON safety rules — these are critical:
+- All string values must be valid JSON strings.
+- Use straight double-quotes only. Never use curly/smart quotes.
+- Apostrophes inside strings are fine (they don't need escaping): "people's", "don't", "it's".
+- Double-quotes inside strings MUST be escaped with a backslash: "He said \"hello\"".
+- Never use a raw double-quote character inside a string value without a backslash before it.
+- No trailing commas after the last item in an array or object.
+- Do not include comments inside the JSON.
+
 Output format — respond ONLY with a single JSON object (no markdown fences, no commentary):
 
 {
