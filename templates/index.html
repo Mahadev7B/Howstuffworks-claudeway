@@ -335,18 +335,16 @@
       drawAsteroid(asteroid.x * CELL + CELL / 2, asteroid.y * CELL + CELL / 2);
     }
 
-    // Use setInterval instead of rAF — Safari pauses rAF during form navigation
-    const FRAME_MS = 1000 / 60;
-
     function loop() {
       if (gameLoopId) clearInterval(gameLoopId);
-      gameLoopId = setInterval(tick, FRAME_MS);
+      gameLoopId = setInterval(tick, 50); // ~20fps — smooth enough, easy on CPU
     }
 
     function startGame() {
       if (gameLoopId) clearInterval(gameLoopId);
       gameLoopId = null;
       resetGame();
+      draw();        // paint first frame immediately so canvas isn't blank
       canvas.focus();
       loop();
     }
