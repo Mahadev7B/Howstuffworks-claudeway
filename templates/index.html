@@ -64,7 +64,6 @@
         </div>
         <button class="dpad-btn" data-dx="0"  data-dy="1"  aria-label="Down">▼</button>
       </div>
-      <p id="dbgLog" style="font-size:10px;color:#888;margin:4px 0;min-height:1.2em;word-break:break-all;"></p>
     </div>
   </div>
 
@@ -190,14 +189,9 @@
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
     const gameStatus = document.getElementById('gameStatus');
-    const dbgLog = document.getElementById('dbgLog');
     const COLS = 12, ROWS = 8, CELL = 30;
     let player, asteroid, stars, score, dir, gameLoopId, thrustFrame, frame;
     let tickCount = 0;
-
-    function dbg(msg) {
-      if (dbgLog) dbgLog.textContent = msg;
-    }
 
     // Visible debug overlay — shows errors on canvas so mobile users can see them
     function showGameError(msg) {
@@ -406,7 +400,6 @@
       lastTickTime = Date.now();
       try {
         tickCount++;
-        if (tickCount % 10 === 0) dbg('tick=' + tickCount + ' stars=' + (stars ? stars.length : '?'));
         tick();
       } catch(e) { showGameError(e.message); }
     }
@@ -415,7 +408,6 @@
       if (gameLoopId) clearInterval(gameLoopId);
       // 100ms (~10fps) — less aggressively throttled by Safari than 50ms
       gameLoopId = setInterval(safeTick, 100);
-      dbg('loop id=' + gameLoopId);
     }
 
     function startGame() {
@@ -423,7 +415,6 @@
       lastTickTime = 0;
       if (gameLoopId) clearInterval(gameLoopId);
       gameLoopId = null;
-      dbg('startGame');
       try {
         resetGame();
         draw();
@@ -438,7 +429,6 @@
     // Restart loop when Safari restores a throttled/suspended tab
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible' && !loading.hidden && stars) {
-        dbg('visibility restored — restarting');
         loop();
       }
     });
@@ -447,7 +437,6 @@
     setInterval(() => {
       if (loading.hidden || !stars || !lastTickTime) return;
       if (Date.now() - lastTickTime > 3000) {
-        dbg('watchdog restart');
         loop();
       }
     }, 1000);
@@ -482,7 +471,6 @@
         btn.setPointerCapture(e.pointerId);
         dir = { x: parseInt(btn.dataset.dx, 10), y: parseInt(btn.dataset.dy, 10) };
         btn.classList.add('pressed');
-        dbg('dpad dx=' + dir.x + ' dy=' + dir.y + ' loop=' + gameLoopId);
         ensureGameRunning();
       });
       btn.addEventListener('pointerup',     () => btn.classList.remove('pressed'));
