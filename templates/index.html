@@ -153,7 +153,8 @@
         else if (s === 50) loadingMsg.textContent = 'Almost done — final touches…';
         else if (s === 75) loadingMsg.textContent = 'Still going — this one is taking a while.';
       }, 250);
-      startGame();
+      // Let the browser paint the overlay before starting the game loop
+      requestAnimationFrame(() => requestAnimationFrame(startGame));
     });
 
     // ---------- Space mini-game ---------------------------------------
@@ -206,6 +207,7 @@
     }
 
     function tick() {
+      if (!stars) return;  // guard against tick firing before resetGame
       frame++;
       if (frame % 6 === 0) {
         const tx = player.x + dir.x;
