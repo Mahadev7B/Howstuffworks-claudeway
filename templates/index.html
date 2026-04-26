@@ -31,13 +31,13 @@
       <p class="examples-label">Try one:</p>
       <ul>
         {% for q in examples %}
-          <li><button type="button" class="chip" data-q="{{ q }}">{{ q }}</button></li>
+          <li><button type="button" class="chip" data-idx="{{ loop.index0 }}">{{ q }}</button></li>
         {% endfor %}
       </ul>
     </section>
 
     <footer>
-      <p>Powered by AI · Illustrations made of SVG · Voice by your browser</p>
+      <p>Powered by AI · Illustrated lessons · Voice by OpenAI</p>
     </footer>
   </main>
 
@@ -57,10 +57,15 @@
     const loadingMsg = document.getElementById('loadingMsg');
     const elapsed = document.getElementById('elapsed');
 
+    const QUESTIONS = {{ examples | tojson }};
+
     document.querySelectorAll('.chip').forEach(chip => {
       chip.addEventListener('click', () => {
-        input.value = chip.dataset.q;
-        form.requestSubmit();
+        const q = QUESTIONS[parseInt(chip.dataset.idx, 10)];
+        if (q) {
+          input.value = q;
+          form.requestSubmit();
+        }
       });
     });
 
