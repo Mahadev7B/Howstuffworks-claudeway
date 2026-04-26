@@ -55,6 +55,14 @@
       <p class="muted">While you wait — collect the stars. Avoid the asteroid! <span id="elapsed">0s</span></p>
       <canvas id="game" width="360" height="240" tabindex="0" aria-label="Space mini game"></canvas>
       <p class="muted game-hint">Arrow keys or W A S D · <span id="gameStatus">Stars: 0</span></p>
+      <div class="dpad" id="dpad">
+        <button class="dpad-btn" data-dx="0"  data-dy="-1" aria-label="Up">▲</button>
+        <div class="dpad-middle">
+          <button class="dpad-btn" data-dx="-1" data-dy="0"  aria-label="Left">◀</button>
+          <button class="dpad-btn" data-dx="1"  data-dy="0"  aria-label="Right">▶</button>
+        </div>
+        <button class="dpad-btn" data-dx="0"  data-dy="1"  aria-label="Down">▼</button>
+      </div>
     </div>
   </div>
 
@@ -344,6 +352,31 @@
         case 'ArrowRight': case 'd': case 'D': dir = { x: 1, y: 0 }; e.preventDefault(); break;
       }
     });
+
+    // D-pad buttons
+    document.querySelectorAll('.dpad-btn').forEach(btn => {
+      const setDir = (e) => {
+        e.preventDefault();
+        dir = { x: parseInt(btn.dataset.dx, 10), y: parseInt(btn.dataset.dy, 10) };
+      };
+      btn.addEventListener('touchstart', setDir, { passive: false });
+      btn.addEventListener('mousedown', setDir);
+    });
+
+    // Swipe on canvas
+    let touchStartX = 0, touchStartY = 0;
+    canvas.addEventListener('touchstart', (e) => {
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+    }, { passive: true });
+    canvas.addEventListener('touchend', (e) => {
+      if (loading.hidden) return;
+      const dx = e.changedTouches[0].clientX - touchStartX;
+      const dy = e.changedTouches[0].clientY - touchStartY;
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return; // tap, ignore
+      if (Math.abs(dx) > Math.abs(dy)) dir = { x: Math.sign(dx), y: 0 };
+      else dir = { x: 0, y: Math.sign(dy) };
+    }, { passive: true });
   </script>
 </body>
 </html>
