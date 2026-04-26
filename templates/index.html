@@ -400,25 +400,30 @@
       drawAsteroid(asteroid.x * CELL + CELL / 2, asteroid.y * CELL + CELL / 2);
     }
 
+    let lastTickTime = 0;
+
     function safeTick() {
+      lastTickTime = Date.now();
       try {
         tickCount++;
-        if (tickCount % 20 === 0) dbg('tick=' + tickCount + ' stars=' + (stars ? stars.length : '?') + ' loop=' + gameLoopId);
+        if (tickCount % 10 === 0) dbg('tick=' + tickCount + ' stars=' + (stars ? stars.length : '?'));
         tick();
       } catch(e) { showGameError(e.message); }
     }
 
     function loop() {
       if (gameLoopId) clearInterval(gameLoopId);
-      gameLoopId = setInterval(safeTick, 50);
-      dbg('loop started id=' + gameLoopId);
+      // 100ms (~10fps) — less aggressively throttled by Safari than 50ms
+      gameLoopId = setInterval(safeTick, 100);
+      dbg('loop id=' + gameLoopId);
     }
 
     function startGame() {
       tickCount = 0;
+      lastTickTime = 0;
       if (gameLoopId) clearInterval(gameLoopId);
       gameLoopId = null;
-      dbg('startGame called');
+      dbg('startGame');
       try {
         resetGame();
         draw();
@@ -429,6 +434,23 @@
       canvas.focus();
       loop();
     }
+
+    // Restart loop when Safari restores a throttled/suspended tab
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && !loading.hidden && stars) {
+        dbg('visibility restored — restarting');
+        loop();
+      }
+    });
+
+    // Heartbeat watchdog: if no tick fired in 3s while loading, restart the loop
+    setInterval(() => {
+      if (loading.hidden || !stars || !lastTickTime) return;
+      if (Date.now() - lastTickTime > 3000) {
+        dbg('watchdog restart');
+        loop();
+      }
+    }, 1000);
 
     document.addEventListener('keydown', (e) => {
       if (loading.hidden) return;
