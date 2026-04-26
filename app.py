@@ -33,6 +33,7 @@ from lesson_platform import (
     init_db,
     ip_calls_last_hour,
     load_settings,
+    pin_cached_lesson,
     record_api_call,
     render_spec,
     save_cached_lesson,
@@ -194,7 +195,7 @@ def _guardrail_check(ctx: dict) -> str | None:
 
 def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None, str | None]:
     """Serve from cache if possible; otherwise generate, record, and cache."""
-    cached = get_cached_lesson(question) if db_enabled else None
+    cached = get_cached_lesson(question, settings.lesson_cache_ttl_days) if db_enabled else None
     if cached is not None:
         cached.setdefault("meta", {})["from_cache"] = True
         record_api_call(
@@ -329,6 +330,9 @@ def api_feedback():
     except Exception as exc:  # noqa: BLE001
         logger.exception("Feedback save failed")
         return jsonify({"ok": False, "error": str(exc)}), 500
+
+    if rating == "up" and db_enabled:
+        pin_cached_lesson(question)
 
     record_api_call(
         endpoint="/api/feedback",

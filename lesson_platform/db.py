@@ -58,8 +58,10 @@ CREATE TABLE IF NOT EXISTS cached_lessons (
   lesson        JSONB NOT NULL,
   hit_count     INTEGER NOT NULL DEFAULT 0,
   last_hit_at   TIMESTAMPTZ,
+  pinned        BOOLEAN NOT NULL DEFAULT false,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE cached_lessons ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT false;
 
 -- Idempotent column adds for pre-existing tables
 ALTER TABLE feedback  ADD COLUMN IF NOT EXISTS ip_address TEXT;
@@ -224,15 +226,31 @@ def question_hash(question: str) -> str:
     return hashlib.sha256(_normalize_question(question).encode("utf-8")).hexdigest()
 
 
-def get_cached_lesson(question: str) -> dict[str, Any] | None:
+def get_cached_lesson(question: str, ttl_days: int = 30) -> dict[str, Any] | None:
+    """Return cached lesson if it exists and hasn't expired.
+
+    Pinned lessons (thumbs-up feedback) ignore TTL and never expire.
+    ttl_days=0 disables expiry entirely.
+    """
     if _pool is None:
         return None
     qhash = question_hash(question)
     try:
         with _pool.connection() as conn, conn.cursor() as cur:
-            cur.execute(
-                "SELECT lesson FROM cached_lessons WHERE question_hash = %s", (qhash,)
-            )
+            if ttl_days > 0:
+                cur.execute(
+                    """
+                    SELECT lesson FROM cached_lessons
+                    WHERE question_hash = %s
+                      AND (pinned = true OR created_at > NOW() - INTERVAL '1 day' * %s)
+                    """,
+                    (qhash, ttl_days),
+                )
+            else:
+                cur.execute(
+                    "SELECT lesson FROM cached_lessons WHERE question_hash = %s",
+                    (qhash,),
+                )
             row = cur.fetchone()
             if row is None:
                 return None
@@ -248,6 +266,21 @@ def get_cached_lesson(question: str) -> dict[str, Any] | None:
     except Exception:
         logger.exception("Cache read failed")
         return None
+
+
+def pin_cached_lesson(question: str) -> None:
+    """Mark a cached lesson as pinned so it never expires (called on thumbs-up)."""
+    if _pool is None:
+        return
+    qhash = question_hash(question)
+    try:
+        with _pool.connection() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE cached_lessons SET pinned = true WHERE question_hash = %s",
+                (qhash,),
+            )
+    except Exception:
+        logger.exception("Pin cached lesson failed")
 
 
 def save_cached_lesson(question: str, lesson: dict[str, Any]) -> None:

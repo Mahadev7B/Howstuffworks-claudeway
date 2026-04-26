@@ -21,6 +21,8 @@ class Settings:
     fal_api_key: str
     flux_model: str  # e.g. "fal-ai/flux/schnell"
     flux_image_size: str  # e.g. "landscape_16_9"
+    # Cache
+    lesson_cache_ttl_days: int  # 0 = never expire
 
 
 def load_settings() -> Settings:
@@ -39,4 +41,5 @@ def load_settings() -> Settings:
         fal_api_key=os.getenv("FAL_KEY", "") or os.getenv("FAL_API_KEY", ""),
         flux_model=os.getenv("FLUX_MODEL", "fal-ai/flux/schnell"),
         flux_image_size=os.getenv("FLUX_IMAGE_SIZE", "landscape_16_9"),
+        lesson_cache_ttl_days=int(os.getenv("LESSON_CACHE_TTL_DAYS", "30")),
     )
