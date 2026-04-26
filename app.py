@@ -9,6 +9,7 @@ Voiceover: browser Web Speech API (free).
 """
 import base64
 import logging
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -400,6 +401,25 @@ def api_tts():
         **ctx,
     )
     return Response(audio_bytes, mimetype="audio/mpeg")
+
+
+@app.route("/admin/clear-cache", methods=["POST"])
+def admin_clear_cache():
+    secret = os.environ.get("ADMIN_SECRET", "")
+    if not secret or request.headers.get("X-Admin-Secret") != secret:
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+    if not db_enabled:
+        return jsonify({"ok": False, "error": "DB not enabled"}), 503
+    from lesson_platform.db import _pool
+    try:
+        with _pool.connection() as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM cached_lessons")
+            deleted = cur.rowcount
+        logger.info("Admin cleared cache: %d rows deleted", deleted)
+        return jsonify({"ok": True, "deleted": deleted})
+    except Exception as exc:
+        logger.exception("Admin clear-cache failed")
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 @app.route("/favicon.ico")
