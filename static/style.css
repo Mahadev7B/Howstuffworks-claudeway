@@ -93,7 +93,7 @@ button {
   color: var(--ink);
 }
 .ask-form input::placeholder { color: var(--ink-soft); }
-.ask-form button {
+.ask-form button[type="submit"] {
   background: var(--ink);
   color: var(--surface);
   border-radius: 10px;
@@ -101,7 +101,29 @@ button {
   font-weight: 500;
   transition: background 0.15s;
 }
-.ask-form button:hover { background: var(--accent); }
+.ask-form button[type="submit"]:hover { background: var(--accent); }
+
+.mic-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  color: var(--ink-muted);
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+}
+.mic-btn:hover { color: var(--accent); background: var(--accent-soft); }
+.mic-btn.mic-listening {
+  color: #e84040;
+  background: #fde8e8;
+  animation: mic-pulse 1s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(232, 64, 64, 0.35); }
+  50%       { box-shadow: 0 0 0 7px rgba(232, 64, 64, 0); }
+}
 
 .examples { margin-top: 1rem; }
 .examples-label {

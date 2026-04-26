@@ -24,6 +24,14 @@
         autofocus
         autocomplete="off"
       />
+      <button type="button" id="micBtn" class="mic-btn" aria-label="Search by voice" hidden>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="9" y="2" width="6" height="12" rx="3"/>
+          <path d="M5 10a7 7 0 0 0 14 0"/>
+          <line x1="12" y1="19" x2="12" y2="22"/>
+          <line x1="9" y1="22" x2="15" y2="22"/>
+        </svg>
+      </button>
       <button type="submit">Ask</button>
     </form>
 
@@ -68,6 +76,62 @@
         }
       });
     });
+
+    // ---------- Voice search ---------------------------------------
+    const micBtn = document.getElementById('micBtn');
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognition = null;
+
+    if (SpeechRecognition) {
+      micBtn.hidden = false;
+      recognition = new SpeechRecognition();
+      recognition.lang = 'en-US';
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        micBtn.classList.add('mic-listening');
+        micBtn.setAttribute('aria-label', 'Listening…');
+        input.placeholder = 'Listening…';
+      };
+
+      recognition.onresult = (e) => {
+        const transcript = Array.from(e.results)
+          .map(r => r[0].transcript).join('');
+        input.value = transcript;
+        if (e.results[e.results.length - 1].isFinal) {
+          micBtn.classList.remove('mic-listening');
+          micBtn.setAttribute('aria-label', 'Search by voice');
+          input.placeholder = 'How do rockets fly?';
+          if (transcript.trim()) form.requestSubmit();
+        }
+      };
+
+      recognition.onerror = (e) => {
+        micBtn.classList.remove('mic-listening');
+        micBtn.setAttribute('aria-label', 'Search by voice');
+        input.placeholder = 'How do rockets fly?';
+        if (e.error !== 'no-speech' && e.error !== 'aborted') {
+          input.placeholder = 'Mic error: ' + e.error;
+          setTimeout(() => { input.placeholder = 'How do rockets fly?'; }, 2500);
+        }
+      };
+
+      recognition.onend = () => {
+        micBtn.classList.remove('mic-listening');
+        micBtn.setAttribute('aria-label', 'Search by voice');
+        if (!input.value) input.placeholder = 'How do rockets fly?';
+      };
+
+      micBtn.addEventListener('click', () => {
+        if (micBtn.classList.contains('mic-listening')) {
+          recognition.stop();
+        } else {
+          input.value = '';
+          recognition.start();
+        }
+      });
+    }
 
     form.addEventListener('submit', () => {
       loading.hidden = false;
