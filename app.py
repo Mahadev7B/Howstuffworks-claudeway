@@ -276,9 +276,12 @@ def home():
     return render_template("index.html", examples=EXAMPLE_QUESTIONS)
 
 
-@app.route("/lesson", methods=["POST"])
+@app.route("/lesson", methods=["GET", "POST"])
 def lesson():
-    question = request.form.get("question", "").strip()
+    if request.method == "GET":
+        question = request.args.get("q", "").strip()
+    else:
+        question = request.form.get("question", "").strip()
     if not question:
         return redirect(url_for("home"))
     if len(question) > 200:

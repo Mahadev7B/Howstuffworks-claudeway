@@ -80,10 +80,7 @@
     document.querySelectorAll('.chip').forEach(chip => {
       chip.addEventListener('click', () => {
         const q = QUESTIONS[parseInt(chip.dataset.idx, 10)];
-        if (q) {
-          input.value = q;
-          form.requestSubmit();
-        }
+        if (q) { input.value = q; askQuestion(q); }
       });
     });
 
@@ -113,7 +110,7 @@
           micBtn.classList.remove('mic-listening');
           micBtn.setAttribute('aria-label', 'Search by voice');
           input.placeholder = 'How do rockets fly?';
-          if (transcript.trim()) form.requestSubmit();
+          if (transcript.trim()) askQuestion(transcript);
         }
       };
 
@@ -143,10 +140,17 @@
       });
     }
 
-    form.addEventListener('submit', () => {
+    function askQuestion(question) {
+      if (!question || !question.trim()) return;
+      question = question.trim();
+      if (question.length > 200) question = question.slice(0, 200);
+
+      // Show loading overlay — page does NOT navigate, JS stays alive
       loading.hidden = false;
+      startGame();
+
       const start = Date.now();
-      setInterval(() => {
+      const timerInterval = setInterval(() => {
         const s = Math.floor((Date.now() - start) / 1000);
         elapsed.textContent = s + 's';
         if (s === 15) loadingMsg.textContent = 'Sketching the scene…';
@@ -154,7 +158,32 @@
         else if (s === 50) loadingMsg.textContent = 'Almost done — final touches…';
         else if (s === 75) loadingMsg.textContent = 'Still going — this one is taking a while.';
       }, 250);
-      startGame();
+
+      fetch('/api/lesson', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question }),
+      })
+      .then(res => res.json())
+      .then(data => {
+        clearInterval(timerInterval);
+        if (data.ok) {
+          // Navigate to GET /lesson?q=... which re-generates from cache/fresh
+          window.location.href = '/lesson?q=' + encodeURIComponent(question);
+        } else {
+          window.location.href = '/lesson?q=' + encodeURIComponent(question);
+        }
+      })
+      .catch(() => {
+        clearInterval(timerInterval);
+        // Fall back to normal POST on network error
+        window.location.href = '/lesson?q=' + encodeURIComponent(question);
+      });
+    }
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      askQuestion(input.value);
     });
 
     // ---------- Space mini-game ---------------------------------------
