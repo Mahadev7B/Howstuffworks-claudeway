@@ -44,9 +44,9 @@
   <div class="loading" id="loading" hidden>
     <div class="loading-inner">
       <p id="loadingMsg">Drawing your lesson…</p>
-      <p class="muted">While you wait — eat the dots. Avoid the ghost! <span id="elapsed">0s</span></p>
-      <canvas id="game" width="360" height="240" tabindex="0" aria-label="Pac-Munch mini game"></canvas>
-      <p class="muted game-hint">Arrow keys or W A S D · <span id="gameStatus">Score: 0</span></p>
+      <p class="muted">While you wait — collect the stars. Avoid the asteroid! <span id="elapsed">0s</span></p>
+      <canvas id="game" width="360" height="240" tabindex="0" aria-label="Space mini game"></canvas>
+      <p class="muted game-hint">Arrow keys or W A S D · <span id="gameStatus">Stars: 0</span></p>
     </div>
   </div>
 
@@ -83,40 +83,39 @@
       startGame();
     });
 
-    // ---------- Pac-Munch mini-game ---------------------------------------
+    // ---------- Space mini-game ---------------------------------------
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
     const gameStatus = document.getElementById('gameStatus');
     const COLS = 12, ROWS = 8, CELL = 30;
-    let player, ghost, dots, score, dir, gameLoopId, mouthOpen, frame;
+    let player, asteroid, stars, score, dir, gameLoopId, thrustFrame, frame;
 
     function resetGame() {
-      player = { x: 1, y: 1 };
-      ghost  = { x: COLS - 2, y: ROWS - 2, dir: { x: -1, y: 0 } };
-      dots = [];
+      player   = { x: 1, y: 1 };
+      asteroid = { x: COLS - 2, y: ROWS - 2, dir: { x: -1, y: 0 } };
+      stars = [];
       for (let y = 0; y < ROWS; y++) {
         for (let x = 0; x < COLS; x++) {
-          if (!(x === player.x && y === player.y) && !(x === ghost.x && y === ghost.y)) {
-            dots.push({ x, y });
+          if (!(x === player.x && y === player.y) && !(x === asteroid.x && y === asteroid.y)) {
+            stars.push({ x, y });
           }
         }
       }
       score = 0;
       dir = { x: 0, y: 0 };
-      mouthOpen = true;
+      thrustFrame = 0;
       frame = 0;
       updateStatus();
     }
 
     function updateStatus(extra) {
-      gameStatus.textContent = (extra ? extra + ' · ' : '') + 'Score: ' + score;
+      gameStatus.textContent = (extra ? extra + ' · ' : '') + 'Stars: ' + score;
     }
 
-    function moveGhost() {
-      const dx = player.x - ghost.x;
-      const dy = player.y - ghost.y;
-      // 60% chase, 40% random
-      let nx = ghost.dir.x, ny = ghost.dir.y;
+    function moveAsteroid() {
+      const dx = player.x - asteroid.x;
+      const dy = player.y - asteroid.y;
+      let nx = asteroid.dir.x, ny = asteroid.dir.y;
       if (Math.random() < 0.6) {
         if (Math.abs(dx) > Math.abs(dy)) { nx = Math.sign(dx); ny = 0; }
         else { nx = 0; ny = Math.sign(dy) || (Math.random() < 0.5 ? 1 : -1); }
@@ -125,40 +124,36 @@
         const c = choices[Math.floor(Math.random() * choices.length)];
         nx = c[0]; ny = c[1];
       }
-      const tx = ghost.x + nx;
-      const ty = ghost.y + ny;
+      const tx = asteroid.x + nx;
+      const ty = asteroid.y + ny;
       if (tx >= 0 && tx < COLS && ty >= 0 && ty < ROWS) {
-        ghost.x = tx; ghost.y = ty;
-        ghost.dir = { x: nx, y: ny };
+        asteroid.x = tx; asteroid.y = ty;
+        asteroid.dir = { x: nx, y: ny };
       }
     }
 
     function tick() {
       frame++;
-      // Player moves every 6 frames (~10 cells/s at 60fps)
       if (frame % 6 === 0) {
         const tx = player.x + dir.x;
         const ty = player.y + dir.y;
         if (tx >= 0 && tx < COLS && ty >= 0 && ty < ROWS) {
           player.x = tx; player.y = ty;
         }
-        const eatenIdx = dots.findIndex(d => d.x === player.x && d.y === player.y);
-        if (eatenIdx >= 0) { dots.splice(eatenIdx, 1); score++; updateStatus(); }
-        mouthOpen = !mouthOpen;
+        const idx = stars.findIndex(s => s.x === player.x && s.y === player.y);
+        if (idx >= 0) { stars.splice(idx, 1); score++; updateStatus(); }
+        thrustFrame = (dir.x !== 0 || dir.y !== 0) ? (thrustFrame + 1) % 4 : 0;
       }
-      // Ghost moves every 9 frames (a bit slower)
-      if (frame % 9 === 0) moveGhost();
+      if (frame % 9 === 0) moveAsteroid();
 
-      // Collision
-      if (player.x === ghost.x && player.y === ghost.y) {
-        updateStatus('Caught! Restarting…');
+      if (player.x === asteroid.x && player.y === asteroid.y) {
+        updateStatus('Hit! Restarting…');
         cancelAnimationFrame(gameLoopId);
         setTimeout(() => { resetGame(); loop(); }, 1200);
         return;
       }
-      // Win
-      if (dots.length === 0) {
-        updateStatus('You won! 🎉');
+      if (stars.length === 0) {
+        updateStatus('All stars collected!');
         cancelAnimationFrame(gameLoopId);
         setTimeout(() => { resetGame(); loop(); }, 1500);
         return;
@@ -166,49 +161,102 @@
       draw();
     }
 
-    function draw() {
-      ctx.fillStyle = '#1F1B2E';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      // dots
-      ctx.fillStyle = '#FAC775';
-      for (const d of dots) {
+    function drawStar(cx, cy, r, points) {
+      ctx.beginPath();
+      for (let i = 0; i < points * 2; i++) {
+        const a = (i * Math.PI) / points - Math.PI / 2;
+        const rad = i % 2 === 0 ? r : r * 0.45;
+        if (i === 0) ctx.moveTo(cx + Math.cos(a) * rad, cy + Math.sin(a) * rad);
+        else ctx.lineTo(cx + Math.cos(a) * rad, cy + Math.sin(a) * rad);
+      }
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    function drawRocket(cx, cy, dx, dy) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      // Rotate to face movement direction
+      const angle = (dx !== 0 || dy !== 0) ? Math.atan2(dy, dx) + Math.PI / 2 : -Math.PI / 2;
+      ctx.rotate(angle);
+      // Body
+      ctx.fillStyle = '#C8C0FF';
+      ctx.beginPath();
+      ctx.moveTo(0, -10);
+      ctx.lineTo(6, 4);
+      ctx.lineTo(-6, 4);
+      ctx.closePath();
+      ctx.fill();
+      // Nose cone
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath();
+      ctx.moveTo(0, -10);
+      ctx.lineTo(3, -3);
+      ctx.lineTo(-3, -3);
+      ctx.closePath();
+      ctx.fill();
+      // Fins
+      ctx.fillStyle = '#534AB7';
+      ctx.beginPath(); ctx.moveTo(6, 4); ctx.lineTo(10, 8); ctx.lineTo(4, 6); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(-6, 4); ctx.lineTo(-10, 8); ctx.lineTo(-4, 6); ctx.closePath(); ctx.fill();
+      // Thruster flame
+      if (thrustFrame > 0) {
+        ctx.fillStyle = thrustFrame % 2 === 0 ? '#EF9F27' : '#FF6B35';
         ctx.beginPath();
-        ctx.arc(d.x * CELL + CELL / 2, d.y * CELL + CELL / 2, 3, 0, Math.PI * 2);
+        ctx.moveTo(-3, 5);
+        ctx.lineTo(3, 5);
+        ctx.lineTo(0, 5 + 4 + thrustFrame * 2);
+        ctx.closePath();
         ctx.fill();
       }
-      // player (pac with mouth)
-      const px = player.x * CELL + CELL / 2;
-      const py = player.y * CELL + CELL / 2;
-      ctx.fillStyle = '#FAC775';
+      ctx.restore();
+    }
+
+    function drawAsteroid(cx, cy) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(frame * 0.04);
+      ctx.fillStyle = '#8B7355';
       ctx.beginPath();
-      const mouth = mouthOpen ? 0.25 : 0.05;
-      let angle = 0;
-      if (dir.x === 1) angle = 0;
-      else if (dir.x === -1) angle = Math.PI;
-      else if (dir.y === -1) angle = -Math.PI / 2;
-      else if (dir.y === 1) angle = Math.PI / 2;
-      ctx.arc(px, py, CELL / 2 - 2, angle + mouth * Math.PI, angle + (2 - mouth) * Math.PI);
-      ctx.lineTo(px, py);
+      const pts = [
+        [0,-11],[5,-8],[10,-5],[11,1],[8,7],[3,10],
+        [-3,11],[-8,7],[-11,2],[-9,-4],[-5,-9]
+      ];
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.closePath();
       ctx.fill();
-      // ghost
-      const gx = ghost.x * CELL + CELL / 2;
-      const gy = ghost.y * CELL + CELL / 2;
-      ctx.fillStyle = '#E24B4A';
-      ctx.beginPath();
-      ctx.arc(gx, gy, CELL / 2 - 2, Math.PI, 0);
-      ctx.lineTo(gx + CELL / 2 - 2, gy + CELL / 2 - 4);
-      ctx.lineTo(gx + 4, gy + CELL / 2 - 8);
-      ctx.lineTo(gx - 4, gy + CELL / 2 - 4);
-      ctx.lineTo(gx - CELL / 2 + 2, gy + CELL / 2 - 8);
-      ctx.lineTo(gx - CELL / 2 + 2, gy);
-      ctx.fill();
-      // ghost eyes
-      ctx.fillStyle = '#FFFFFF';
-      ctx.beginPath(); ctx.arc(gx - 5, gy - 3, 3, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(gx + 5, gy - 3, 3, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#0C447C';
-      ctx.beginPath(); ctx.arc(gx - 5, gy - 3, 1.5, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(gx + 5, gy - 3, 1.5, 0, Math.PI * 2); ctx.fill();
+      // Crater marks
+      ctx.fillStyle = '#6B5A42';
+      ctx.beginPath(); ctx.arc(-3, -2, 2.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(4, 4, 1.8, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+
+    function draw() {
+      // Space background
+      ctx.fillStyle = '#0A0820';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Faint background star specks
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      for (let i = 0; i < 30; i++) {
+        const bx = ((i * 73 + 17) % canvas.width);
+        const by = ((i * 41 + 29) % canvas.height);
+        ctx.fillRect(bx, by, 1, 1);
+      }
+
+      // Collectible stars
+      ctx.fillStyle = '#FAD750';
+      for (const s of stars) {
+        drawStar(s.x * CELL + CELL / 2, s.y * CELL + CELL / 2, 5, 5);
+      }
+
+      // Rocket (player)
+      drawRocket(player.x * CELL + CELL / 2, player.y * CELL + CELL / 2, dir.x, dir.y);
+
+      // Asteroid
+      drawAsteroid(asteroid.x * CELL + CELL / 2, asteroid.y * CELL + CELL / 2);
     }
 
     function loop() {
