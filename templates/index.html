@@ -109,7 +109,7 @@
           micBtn.classList.remove('mic-listening');
           micBtn.setAttribute('aria-label', 'Search by voice');
           input.placeholder = 'How do rockets fly?';
-          if (transcript.trim()) askQuestion(transcript);
+          input.focus();
         }
       };
 
