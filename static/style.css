@@ -441,13 +441,6 @@ button {
   margin-top: 2rem;
   text-align: center;
 }
-.next-label {
-  font-size: 0.85rem;
-  color: var(--ink-soft);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  margin: 0 0 0.6rem;
-}
 .next-btn {
   display: inline-block;
   background: var(--surface);
