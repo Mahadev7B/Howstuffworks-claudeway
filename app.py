@@ -98,9 +98,10 @@ EXAMPLE_QUESTIONS = [
 ]
 
 # Only POST /api/lesson actually triggers Claude/Flux generation. GET /lesson
-# may serve from cache or re-render from the in-memory recent-lesson cache, so
-# we don't count it toward the hourly limit.
-LESSON_RATE_LIMIT_ENDPOINTS = ("/api/lesson",)
+# may serve from cache or the in-memory recent-lesson cache, so it must NOT
+# be counted toward the hourly lesson limit.
+LESSON_ENDPOINTS = ("/api/lesson",)
+LESSON_RATE_LIMIT_ENDPOINTS = LESSON_ENDPOINTS
 FEEDBACK_HOURLY_LIMIT = 10  # per IP
 
 # Sentinel returned by _guardrail_check when the rate limit is the reason
