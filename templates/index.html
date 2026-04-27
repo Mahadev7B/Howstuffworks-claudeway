@@ -64,6 +64,10 @@
         </div>
         <button class="dpad-btn" data-dx="0"  data-dy="1"  aria-label="Down">▼</button>
       </div>
+      <div class="loading-actions">
+        <button type="button" id="openLessonBtn" class="primary big-btn" hidden>Open Lesson →</button>
+        <button type="button" id="cancelBtn" class="secondary">Stop</button>
+      </div>
     </div>
   </div>
 
@@ -139,17 +143,54 @@
       });
     }
 
+    const openLessonBtn = document.getElementById('openLessonBtn');
+    const cancelBtn = document.getElementById('cancelBtn');
+    let activeAbort = null;
+    let activeTimer = null;
+    let cancelled = false;
+
+    function resetLoadingUI() {
+      loading.hidden = true;
+      openLessonBtn.hidden = true;
+      cancelBtn.hidden = false;
+      cancelBtn.textContent = 'Stop';
+      loadingMsg.textContent = 'Drawing your lesson…';
+      elapsed.textContent = '0s';
+    }
+
+    cancelBtn.addEventListener('click', () => {
+      cancelled = true;
+      if (activeAbort) { try { activeAbort.abort(); } catch (e) {} }
+      if (activeTimer) clearInterval(activeTimer);
+      // Keep the question in the input so the user can edit/retry
+      resetLoadingUI();
+      input.focus();
+    });
+
+    openLessonBtn.addEventListener('click', () => {
+      const q = openLessonBtn.dataset.question || input.value.trim();
+      if (q) window.location.href = '/lesson?q=' + encodeURIComponent(q);
+    });
+
     function askQuestion(question) {
       if (!question || !question.trim()) return;
       question = question.trim();
       if (question.length > 200) question = question.slice(0, 200);
+
+      // Reset state for a fresh request
+      cancelled = false;
+      openLessonBtn.hidden = true;
+      cancelBtn.hidden = false;
+      cancelBtn.textContent = 'Stop';
+      loadingMsg.textContent = 'Drawing your lesson…';
+      elapsed.textContent = '0s';
 
       // Show loading overlay — page does NOT navigate, JS stays alive
       loading.hidden = false;
       startGame();
 
       const start = Date.now();
-      const timerInterval = setInterval(() => {
+      activeTimer = setInterval(() => {
         const s = Math.floor((Date.now() - start) / 1000);
         elapsed.textContent = s + 's';
         if (s === 15) loadingMsg.textContent = 'Sketching the scene…';
@@ -158,35 +199,42 @@
         else if (s === 75) loadingMsg.textContent = 'Still going — this one is taking a while.';
       }, 250);
 
+      activeAbort = new AbortController();
+
       fetch('/api/lesson', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question }),
+        signal: activeAbort.signal,
       })
       .then(res => res.json())
       .then(data => {
-        clearInterval(timerInterval);
+        if (cancelled) return;
+        clearInterval(activeTimer);
+        activeTimer = null;
         if (data.ok) {
-          loadingMsg.textContent = 'Lesson is ready! Opening it now…';
-          setTimeout(() => {
-            window.location.href = '/lesson?q=' + encodeURIComponent(question);
-          }, 300);
+          // Keep the game running. Reveal the Open Lesson button and let
+          // the user decide when to navigate.
+          loadingMsg.textContent = 'Your lesson is ready!';
+          openLessonBtn.dataset.question = question;
+          openLessonBtn.hidden = false;
+          cancelBtn.textContent = 'Cancel';
         } else {
           const errMsg = (data.error || 'Something went wrong.');
           loadingMsg.textContent = '⚠ ' + errMsg;
           elapsed.textContent = '';
-          // Keep the loading screen visible so the error is readable, then go anyway
-          setTimeout(() => {
-            window.location.href = '/lesson?q=' + encodeURIComponent(question);
-          }, 2500);
+          openLessonBtn.dataset.question = question;
+          openLessonBtn.textContent = 'See details →';
+          openLessonBtn.hidden = false;
+          cancelBtn.textContent = 'Back';
         }
       })
-      .catch(() => {
-        clearInterval(timerInterval);
-        loadingMsg.textContent = 'Network error — trying anyway…';
-        setTimeout(() => {
-          window.location.href = '/lesson?q=' + encodeURIComponent(question);
-        }, 800);
+      .catch((err) => {
+        if (cancelled || (err && err.name === 'AbortError')) return;
+        clearInterval(activeTimer);
+        activeTimer = null;
+        loadingMsg.textContent = '⚠ Network error. Tap Back to try again.';
+        cancelBtn.textContent = 'Back';
       });
     }
 

@@ -246,6 +246,36 @@ button {
 .loading-inner { text-align: center; }
 .loading-inner p { margin: 0.4rem 0; }
 .loading-inner p.muted { color: var(--ink-soft); font-size: 0.9rem; }
+
+.loading-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  align-items: center;
+  margin-top: 0.9rem;
+}
+.big-btn {
+  font-size: 1.15rem;
+  font-weight: 700;
+  padding: 0.85rem 1.6rem;
+  min-width: 220px;
+  border-radius: 12px;
+  animation: ready-pulse 1.4s ease-in-out infinite;
+}
+@keyframes ready-pulse {
+  0%, 100% { transform: scale(1);   box-shadow: 0 4px 14px rgba(127, 119, 221, 0.35); }
+  50%      { transform: scale(1.04); box-shadow: 0 6px 20px rgba(127, 119, 221, 0.55); }
+}
+.secondary {
+  background: transparent;
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+  padding: 0.5rem 1rem;
+  border-radius: 10px;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+.secondary:hover { background: var(--line); color: var(--ink); }
 .spinner {
   width: 40px;
   height: 40px;
