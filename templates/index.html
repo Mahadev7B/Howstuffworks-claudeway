@@ -52,6 +52,10 @@
   <div class="loading" id="loading" hidden>
     <div class="loading-inner">
       <p id="loadingMsg">Drawing your lesson…</p>
+      <div class="loading-actions">
+        <button type="button" id="openLessonBtn" class="primary big-btn" hidden>Open Lesson →</button>
+        <button type="button" id="cancelBtn" class="secondary">Stop</button>
+      </div>
       <p class="muted">While you wait — collect the stars. Avoid the asteroid! <span id="elapsed">0s</span></p>
       <canvas id="game" width="360" height="240" tabindex="0" aria-label="Space mini game"></canvas>
       <p class="muted game-hint" id="gameHint">Arrow keys or W A S D · <span id="gameStatus">Stars: 0</span></p>
@@ -63,10 +67,6 @@
           <button class="dpad-btn" data-dx="1"  data-dy="0"  aria-label="Right">▶</button>
         </div>
         <button class="dpad-btn" data-dx="0"  data-dy="1"  aria-label="Down">▼</button>
-      </div>
-      <div class="loading-actions">
-        <button type="button" id="openLessonBtn" class="primary big-btn" hidden>Open Lesson →</button>
-        <button type="button" id="cancelBtn" class="secondary">Stop</button>
       </div>
     </div>
   </div>

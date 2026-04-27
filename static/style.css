@@ -169,9 +169,12 @@ button {
   inset: 0;
   background: rgba(253, 248, 243, 0.95);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   z-index: 1000;
+  overflow-y: auto;
+  padding: 1.2rem 1rem 2rem;
+  -webkit-overflow-scrolling: touch;
 }
 .loading[hidden] { display: none; }
 .loading-inner {
@@ -252,8 +255,11 @@ button {
   flex-direction: column;
   gap: 0.6rem;
   align-items: center;
-  margin-top: 0.9rem;
+  margin: 0.6rem 0 0.4rem;
+  position: relative;
+  z-index: 1002;
 }
+.loading-actions button { pointer-events: auto; }
 .big-btn {
   font-size: 1.15rem;
   font-weight: 700;
