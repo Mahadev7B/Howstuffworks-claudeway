@@ -56,6 +56,38 @@ app.secret_key = settings.flask_secret_key
 db_enabled = init_db()
 
 
+# Short-lived in-memory cache so a freshly-generated lesson (POST /api/lesson)
+# is served instantly when the user taps Open Lesson (GET /lesson?q=...).
+# Keyed by normalized question; entry expires after 10 minutes.
+_RECENT_LESSONS: dict[str, tuple[float, dict]] = {}
+_RECENT_TTL_S = 600
+
+
+def _recent_key(question: str) -> str:
+    return question.strip().lower()
+
+
+def _recent_get(question: str) -> dict | None:
+    key = _recent_key(question)
+    entry = _RECENT_LESSONS.get(key)
+    if entry is None:
+        return None
+    ts, data = entry
+    if time.time() - ts > _RECENT_TTL_S:
+        _RECENT_LESSONS.pop(key, None)
+        return None
+    return data
+
+
+def _recent_put(question: str, data: dict) -> None:
+    _RECENT_LESSONS[_recent_key(question)] = (time.time(), data)
+    # Cheap GC: drop expired entries when dict grows
+    if len(_RECENT_LESSONS) > 64:
+        cutoff = time.time() - _RECENT_TTL_S
+        for k in [k for k, (ts, _) in _RECENT_LESSONS.items() if ts < cutoff]:
+            _RECENT_LESSONS.pop(k, None)
+
+
 EXAMPLE_QUESTIONS = [
     "How do rockets fly?",
     "How do aeroplanes fly?",
@@ -199,6 +231,11 @@ def _guardrail_check(ctx: dict) -> str | None:
 
 def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None, str | None]:
     """Serve from cache if possible; otherwise generate, record, and cache."""
+    recent = _recent_get(question)
+    if recent is not None:
+        logger.info("Recent in-memory cache hit: %s", question[:80])
+        return recent, None
+
     cached = get_cached_lesson(question, settings.lesson_cache_ttl_days) if db_enabled else None
     if cached is not None:
         cached.setdefault("meta", {})["from_cache"] = True
@@ -270,6 +307,7 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
     render_ms = int((time.time() - render_started) * 1000)
     total_ms = int((time.time() - started) * 1000)
     logger.info("Flux render %dms | total request %dms", render_ms, total_ms)
+    _recent_put(question, data)
     return data, None
 
 
