@@ -267,7 +267,9 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
     )
     render_started = time.time()
     _attach_slide_images(data, ctx)
-    logger.info("Image rendering took %dms", int((time.time() - render_started) * 1000))
+    render_ms = int((time.time() - render_started) * 1000)
+    total_ms = int((time.time() - started) * 1000)
+    logger.info("Flux render %dms | total request %dms", render_ms, total_ms)
     return data, None
 
 

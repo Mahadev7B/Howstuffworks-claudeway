@@ -4,6 +4,7 @@ Returns (image_bytes, mime, cost_usd) or raises on failure.
 """
 import logging
 import os
+import time
 import urllib.request
 from typing import Any
 
@@ -14,16 +15,16 @@ from .config import Settings
 logger = logging.getLogger(__name__)
 
 # Flux Schnell on fal.ai pricing as of late 2025: ~$0.003/megapixel.
-# Approximate cost depending on image size keyword.
 _SIZE_TO_MP = {
-    "square": 1.0,         # 1024x1024
+    "square": 1.0,
     "square_hd": 1.0,
-    "portrait_4_3": 0.79,  # 768x1024
+    "portrait_4_3": 0.79,
     "portrait_16_9": 0.59,
     "landscape_4_3": 0.79,
-    "landscape_16_9": 0.59,  # 1024x576
+    "landscape_16_9": 0.59,
 }
 _PRICE_PER_MP = 0.003
+_POLL_INTERVAL = 1.0   # seconds between status checks (fal default is 0.1)
 
 
 def _estimate_cost(size: str) -> float:
@@ -42,28 +43,31 @@ def generate_image(
     if not settings.fal_api_key:
         raise RuntimeError("FAL_KEY is not set")
 
-    # fal_client picks up the key from FAL_KEY env var; ensure it's set in this process
     os.environ["FAL_KEY"] = settings.fal_api_key
 
     arguments: dict[str, Any] = {
         "prompt": prompt,
         "image_size": settings.flux_image_size,
-        "num_inference_steps": 4,    # Schnell is tuned for ~4 steps
+        "num_inference_steps": 4,
         "num_images": 1,
         "enable_safety_checker": True,
     }
     if negative_prompt:
         arguments["negative_prompt"] = negative_prompt
 
+    started = time.time()
     try:
-        result: dict[str, Any] = fal_client.subscribe(
-            settings.flux_model,
-            arguments=arguments,
-            with_logs=False,
-        )
+        handle = fal_client.submit(settings.flux_model, arguments=arguments)
+        # Poll at 1s intervals (fal default is 0.1s — too noisy in logs)
+        for _ in handle.iter_events(with_logs=False, interval=_POLL_INTERVAL):
+            pass
+        resp = handle.client.get(handle.response_url)
+        resp.raise_for_status()
+        result: dict[str, Any] = resp.json()
     except Exception as exc:
         logger.exception("Flux generation failed")
         raise RuntimeError(f"Flux generation failed: {exc}") from exc
+    logger.info("Flux done in %.1fs", time.time() - started)
 
     images = result.get("images") or []
     if not images:

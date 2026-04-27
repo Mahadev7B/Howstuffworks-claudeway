@@ -40,105 +40,39 @@ Question types and how to handle them:
 • Everyday objects (shoes, pencils, bread, glass, etc.) — explain origin or how they work.
 • Nature questions (animals, plants, weather, space) — explain simply.
 
-Content rules:
-- Short, simple sentences. Concrete words over abstract.
-- Kid-friendly analogies (toys, animals, food, weather).
-- One main idea per slide.
-- A playful fun fact per slide.
+Content rules — be concise, every field must be SHORT:
+- title: max 6 words.
+- subtitle: one short phrase, max 8 words.
+- explanation: max 2 short sentences. Simple words only.
+- fun_fact: one sentence, max 20 words.
+- narration: max 2 short sentences combining the key idea and fun fact. No markdown.
 - Never say "I can't answer that" — always create a lesson.
 
-Illustration rules:
-- Each slide has a `spec` field: a drawing description, NOT code.
-- Canvas is 640 wide × 240 tall, origin top-left.
-- Colors must be from this palette (no other hex values):
-  purples  #7F77DD #534AB7 #AFA9EC #EEEDFE
-  oranges  #EF9F27 #FAC775 #BA7517
-  greens   #5DCAA5 #0F6E56 #3B6D11 #639922
-  blues    #B5D4F4 #185FA5 #0C447C
-  reds     #E24B4A #A32D2D
-  neutrals #FFFFFF #FDF8F3 #888780 #1F1B2E
+image_prompt rules (35–55 words):
+- One main subject, simple centered composition, bright kid-friendly colors.
+- Show the slide's key idea visually, no text or labels in the image.
+- Always end with: "children's educational storybook illustration, flat bright colors, soft rounded shapes, no text, no labels."
 
-Allowed shape types (use ONLY these; any other type is ignored):
-  {"type":"rect",    "x":N,"y":N,"w":N,"h":N, "fill":"#..."}
-  {"type":"circle",  "cx":N,"cy":N,"r":N,     "fill":"#..."}
-  {"type":"ellipse", "cx":N,"cy":N,"rx":N,"ry":N,"fill":"#..."}
-  {"type":"polygon", "points":[[x,y],...],   "fill":"#..."}
-  {"type":"line",    "x1":N,"y1":N,"x2":N,"y2":N,"stroke":"#...","stroke_width":N,"dash":"-" or "--"}
-  {"type":"text",    "x":N,"y":N,"text":"...","fill":"#...","size":N,"weight":"bold"|"normal","anchor":"left"|"center"|"right"}
-  {"type":"label",   "x":N,"y":N,"text":"...","pointTo":[x,y],"fill":"#...","size":N}  // dashed leader line from (x,y) to pointTo
+image_negative_prompt: always exactly "text, labels, letters, numbers, logo, watermark, scary, realistic photo, cluttered background"
 
-Animation (use on EVERY slide — at least one animated shape per slide):
-- Add an "animate" field to any shape except labels:
-    "animate":{"dx":N,"dy":N,"yoyo":true|false}
-- dx/dy are pixel offsets at the peak of the motion. Keep them subtle (usually 3 to 30).
-- yoyo=true → bounces back and forth (floating clouds, flame flicker, bobbing rocket).
-- yoyo=false → one-way motion (rain drops falling, smoke rising).
-- Animate motion that makes physical sense for the subject. Don't animate labels or static ground.
-- Keep total animated shapes per slide small (usually 3–8) so the render stays fast.
-
-Drawing composition rules:
-- The SUBJECT of the slide must be instantly recognizable as a flat, friendly illustration.
-  * Rocket → nose cone (triangle), body (rect), fins (triangles), flame (triangle).
-  * Volcano → cone mountain, crater (dark opening), lava fountain, lava stream.
-  * Plane → fuselage, swept wings, tail, windows.
-  * Rain → cloud (ellipses), falling drops (small ellipses with yoyo=false).
-- Use small labels with dashed leader lines to name important parts.
-- Keep shapes inside the canvas.
-
-Image prompt rules for Flux image generation:
-- Each slide must include an `image_prompt` field.
-- The image must be a clear educational visual for children aged 6–10.
-- Use a simple centered composition with one main subject.
-- Make the subject instantly recognizable.
-- Show the mechanism clearly using visual action, not text.
-- Avoid clutter, extra characters, fantasy objects, random decorations, or too many background elements.
-- Do NOT include text, labels, captions, letters, numbers, logos, or watermarks.
-- Use bright, clean, kid-friendly colors.
-- Style should be: children's educational storybook illustration, simple science poster, flat bright colors, soft rounded shapes.
-- The image_prompt should be 35–55 words.
-- Include the slide's key idea visually.
-- Always end with: "children's educational storybook illustration, simple science poster, flat bright colors, soft rounded shapes, no text, no labels, no letters, no numbers."
-
-Each slide must also include an `image_negative_prompt` field with exactly this value:
-"text, labels, captions, letters, numbers, logo, watermark, scary, realistic photo, cluttered background, extra people, extra animals, confusing diagram"
-
-JSON safety rules — these are critical:
-- All string values must be valid JSON strings.
-- Use straight double-quotes only. Never use curly/smart quotes.
-- Apostrophes inside strings are fine (they don't need escaping): "people's", "don't", "it's".
-- Double-quotes inside strings MUST be escaped with a backslash: "He said \"hello\"".
-- Never use a raw double-quote character inside a string value without a backslash before it.
-- No trailing commas after the last item in an array or object.
-- Do not include comments inside the JSON.
-
-Output format — respond ONLY with a single JSON object (no markdown fences, no commentary):
+Output format — a single JSON object, no markdown fences:
 
 {
-  "title": "Plain-English title of the lesson",
-  "subject": "the main noun (e.g. 'rocket', 'rain', 'volcano')",
+  "title": "Lesson title (max 6 words)",
+  "subject": "main noun",
   "slides": [
     {
       "number": 1,
-      "title": "Short catchy title (max 4 words)",
-      "subtitle": "One-line hook",
-      "explanation": "2-3 sentences. Simple vocabulary.",
-      "fun_fact": "One delightful fact.",
-      "narration": "Spoken-friendly prose that combines title + explanation + fun fact. No markdown.",
-      "image_prompt": "Clear educational scene showing the slide's key idea. One main subject, simple composition, visual action. children's educational storybook illustration, simple science poster, flat bright colors, soft rounded shapes, no text, no labels, no letters, no numbers.",
-      "image_negative_prompt": "text, labels, captions, letters, numbers, logo, watermark, scary, realistic photo, cluttered background, extra people, extra animals, confusing diagram",
-      "spec": {
-        "width": 640,
-        "height": 240,
-        "background": "#B5D4F4",
-        "shapes": [ ...shape objects... ]
-      }
-    },
-    ... 3 more slides
+      "title": "Slide title (max 6 words)",
+      "subtitle": "One short hook phrase",
+      "explanation": "Max 2 short sentences.",
+      "fun_fact": "One short fun fact.",
+      "narration": "Max 2 short sentences for voiceover.",
+      "image_prompt": "35-55 word image description ending with style suffix.",
+      "image_negative_prompt": "text, labels, letters, numbers, logo, watermark, scary, realistic photo, cluttered background"
+    }
   ]
 }
-
-The first slide's spec/image_prompt should focus on the SUBJECT itself (the recognizable subject).
-Slides 2-4 can show mechanisms, forces, or sub-parts.
 """
 
 
@@ -181,20 +115,10 @@ _LESSON_TOOL: dict[str, Any] = {
                         "narration":            {"type": "string"},
                         "image_prompt":         {"type": "string"},
                         "image_negative_prompt":{"type": "string"},
-                        "spec": {
-                            "type": "object",
-                            "properties": {
-                                "width":      {"type": "integer"},
-                                "height":     {"type": "integer"},
-                                "background": {"type": "string"},
-                                "shapes":     {"type": "array", "items": {"type": "object"}},
-                            },
-                            "required": ["width", "height", "background", "shapes"],
-                        },
                     },
                     "required": [
                         "number", "title", "explanation", "fun_fact",
-                        "narration", "image_prompt", "spec",
+                        "narration", "image_prompt",
                     ],
                 },
             },
@@ -204,6 +128,25 @@ _LESSON_TOOL: dict[str, Any] = {
 }
 
 
+_BG_COLORS = ["#B5D4F4", "#EEEDFE", "#5DCAA5", "#FAC775", "#AFA9EC"]
+
+
+def _default_spec(slide_idx: int, title: str, subject: str) -> dict[str, Any]:
+    """Generate a simple colored placeholder spec when Claude doesn't supply one."""
+    bg = _BG_COLORS[slide_idx % len(_BG_COLORS)]
+    return {
+        "width": 640, "height": 240, "background": bg,
+        "shapes": [
+            {"type": "rect", "x": 220, "y": 60, "w": 200, "h": 120, "fill": "#FFFFFF",
+             "animate": {"dx": 0, "dy": 6, "yoyo": True}},
+            {"type": "text", "x": 320, "y": 115, "text": subject[:24],
+             "fill": "#1F1B2E", "size": 22, "weight": "bold", "anchor": "center"},
+            {"type": "text", "x": 320, "y": 145, "text": title[:32],
+             "fill": "#534AB7", "size": 13, "weight": "normal", "anchor": "center"},
+        ],
+    }
+
+
 def _validate_lesson(data: dict[str, Any]) -> dict[str, Any]:
     required_top = {"title", "subject", "slides"}
     missing = required_top - set(data)
@@ -211,21 +154,27 @@ def _validate_lesson(data: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"Lesson missing keys: {missing}")
     if not isinstance(data["slides"], list) or len(data["slides"]) != 4:
         raise ValueError(f"Expected 4 slides, got {len(data.get('slides', []))}")
-    required_slide = {"number", "title", "explanation", "fun_fact", "narration", "spec", "image_prompt"}
+    required_slide = {"number", "title", "explanation", "fun_fact", "narration", "image_prompt"}
+    subject = data.get("subject", "")
     for idx, slide in enumerate(data["slides"], start=1):
         miss = required_slide - set(slide)
         if miss:
             raise ValueError(f"Slide {idx} missing keys: {miss}")
-        spec = slide.get("spec")
-        if not isinstance(spec, dict):
-            raise ValueError(f"Slide {idx} spec is not a dict")
-        shapes = spec.get("shapes")
-        if not isinstance(shapes, list) or not shapes:
-            raise ValueError(f"Slide {idx} spec has no shapes")
-        # Drop unknown shape types defensively (renderer would skip them anyway)
-        spec["shapes"] = [s for s in shapes if isinstance(s, dict) and s.get("type") in _ALLOWED_SHAPE_TYPES]
-        if not spec["shapes"]:
-            raise ValueError(f"Slide {idx} spec has no recognizable shapes")
+        # Attach a default spec if Claude didn't supply one
+        if not isinstance(slide.get("spec"), dict):
+            slide["spec"] = _default_spec(idx - 1, slide.get("title", ""), subject)
+        else:
+            spec = slide["spec"]
+            shapes = spec.get("shapes")
+            if not isinstance(shapes, list) or not shapes:
+                slide["spec"] = _default_spec(idx - 1, slide.get("title", ""), subject)
+            else:
+                spec["shapes"] = [
+                    s for s in shapes
+                    if isinstance(s, dict) and s.get("type") in _ALLOWED_SHAPE_TYPES
+                ]
+                if not spec["shapes"]:
+                    slide["spec"] = _default_spec(idx - 1, slide.get("title", ""), subject)
     return data
 
 
@@ -247,17 +196,22 @@ def generate_lesson(question: str, settings: Settings) -> dict[str, Any]:
 
     response = client.messages.create(
         model=settings.anthropic_model,
-        max_tokens=8000,
+        max_tokens=2000,
         system=SYSTEM_PROMPT,
         tools=[_LESSON_TOOL],
         tool_choice={"type": "tool", "name": "produce_lesson"},
         messages=[
             {
                 "role": "user",
-                "content": f'A child asked: "{question}"\n\nCreate the 4-slide lesson now.',
+                "content": f'A child asked: "{question}"\n\nCreate the 4-slide lesson now. Keep every text field short.',
             }
         ],
     )
+
+    claude_ms = int((time.time() - started) * 1000)
+    input_tokens = response.usage.input_tokens
+    output_tokens = response.usage.output_tokens
+    logger.info("Claude done in %dms — %d in / %d out tokens", claude_ms, input_tokens, output_tokens)
 
     # With tool_use, the API guarantees valid JSON in tool_use blocks
     tool_block = next(
@@ -265,7 +219,6 @@ def generate_lesson(question: str, settings: Settings) -> dict[str, Any]:
         None,
     )
     if tool_block is None:
-        # Fallback: model returned text instead of a tool call (should not happen)
         raw_text = "".join(
             b.text for b in response.content if getattr(b, "type", None) == "text"
         )
@@ -274,8 +227,6 @@ def generate_lesson(question: str, settings: Settings) -> dict[str, Any]:
         lesson = _validate_lesson(tool_block.input)
 
     elapsed_ms = int((time.time() - started) * 1000)
-    input_tokens = response.usage.input_tokens
-    output_tokens = response.usage.output_tokens
     # Sonnet 4.6 pricing: $3 per 1M input, $15 per 1M output
     cost_usd = (input_tokens * 3 + output_tokens * 15) / 1_000_000
 
@@ -287,11 +238,5 @@ def generate_lesson(question: str, settings: Settings) -> dict[str, Any]:
         "model": settings.anthropic_model,
     }
 
-    logger.info(
-        "Lesson generated in %dms — %d in / %d out tokens ($%.5f)",
-        elapsed_ms,
-        input_tokens,
-        output_tokens,
-        cost_usd,
-    )
+    logger.info("Lesson total %dms — $%.5f", elapsed_ms, cost_usd)
     return lesson
