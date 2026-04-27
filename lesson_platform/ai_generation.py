@@ -154,31 +154,54 @@ def _extract_json(text: str) -> dict[str, Any]:
     return json.loads(cleaned[start : end + 1])
 
 
-def _repair_json(bad_text: str, client: "Anthropic", model: str) -> dict[str, Any]:
-    """Ask Claude to fix its own malformed JSON output."""
-    logger.warning("JSON parse failed — attempting repair via Claude")
-    repair_response = client.messages.create(
-        model=model,
-        max_tokens=8000,
-        system="You are a JSON repair assistant. Fix the JSON so it is valid. Output ONLY the corrected JSON, no markdown, no explanation.",
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    "The following JSON is malformed. Fix every syntax error "
-                    "(unescaped quotes, missing commas, trailing commas, etc.) "
-                    "and return only the corrected JSON:\n\n" + bad_text
-                ),
-            }
-        ],
-    )
-    repaired = "".join(
-        block.text for block in repair_response.content if getattr(block, "type", None) == "text"
-    )
-    return _extract_json(repaired)
-
-
 _ALLOWED_SHAPE_TYPES = {"rect", "circle", "ellipse", "polygon", "line", "text", "label"}
+
+# Tool definition used with tool_use mode — the API validates Claude's output
+# against this schema, guaranteeing structurally valid JSON every time.
+_LESSON_TOOL: dict[str, Any] = {
+    "name": "produce_lesson",
+    "description": "Output a complete 4-slide illustrated lesson for a child's question.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string"},
+            "subject": {"type": "string"},
+            "slides": {
+                "type": "array",
+                "minItems": 4,
+                "maxItems": 4,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "number":               {"type": "integer"},
+                        "title":                {"type": "string"},
+                        "subtitle":             {"type": "string"},
+                        "explanation":          {"type": "string"},
+                        "fun_fact":             {"type": "string"},
+                        "narration":            {"type": "string"},
+                        "image_prompt":         {"type": "string"},
+                        "image_negative_prompt":{"type": "string"},
+                        "spec": {
+                            "type": "object",
+                            "properties": {
+                                "width":      {"type": "integer"},
+                                "height":     {"type": "integer"},
+                                "background": {"type": "string"},
+                                "shapes":     {"type": "array", "items": {"type": "object"}},
+                            },
+                            "required": ["width", "height", "background", "shapes"],
+                        },
+                    },
+                    "required": [
+                        "number", "title", "explanation", "fun_fact",
+                        "narration", "image_prompt", "spec",
+                    ],
+                },
+            },
+        },
+        "required": ["title", "subject", "slides"],
+    },
+}
 
 
 def _validate_lesson(data: dict[str, Any]) -> dict[str, Any]:
@@ -226,6 +249,8 @@ def generate_lesson(question: str, settings: Settings) -> dict[str, Any]:
         model=settings.anthropic_model,
         max_tokens=8000,
         system=SYSTEM_PROMPT,
+        tools=[_LESSON_TOOL],
+        tool_choice={"type": "tool", "name": "produce_lesson"},
         messages=[
             {
                 "role": "user",
@@ -234,14 +259,19 @@ def generate_lesson(question: str, settings: Settings) -> dict[str, Any]:
         ],
     )
 
-    raw_text = "".join(
-        block.text for block in response.content if getattr(block, "type", None) == "text"
+    # With tool_use, the API guarantees valid JSON in tool_use blocks
+    tool_block = next(
+        (b for b in response.content if getattr(b, "type", None) == "tool_use"),
+        None,
     )
-    try:
+    if tool_block is None:
+        # Fallback: model returned text instead of a tool call (should not happen)
+        raw_text = "".join(
+            b.text for b in response.content if getattr(b, "type", None) == "text"
+        )
         lesson = _validate_lesson(_extract_json(raw_text))
-    except (json.JSONDecodeError, ValueError) as exc:
-        logger.warning("Initial parse failed (%s) — trying repair", exc)
-        lesson = _validate_lesson(_repair_json(raw_text, client, settings.anthropic_model))
+    else:
+        lesson = _validate_lesson(tool_block.input)
 
     elapsed_ms = int((time.time() - started) * 1000)
     input_tokens = response.usage.input_tokens
