@@ -97,8 +97,14 @@ EXAMPLE_QUESTIONS = [
     "How do plants eat sunlight?",
 ]
 
-LESSON_ENDPOINTS = ("/lesson", "/api/lesson")
+# Only POST /api/lesson actually triggers Claude/Flux generation. GET /lesson
+# may serve from cache or re-render from the in-memory recent-lesson cache, so
+# we don't count it toward the hourly limit.
+LESSON_RATE_LIMIT_ENDPOINTS = ("/api/lesson",)
 FEEDBACK_HOURLY_LIMIT = 10  # per IP
+
+# Sentinel returned by _guardrail_check when the rate limit is the reason
+RATE_LIMIT_ERROR = "rate_limit"
 
 
 def _render_with_flux(slide: dict, ctx: dict) -> bool:
@@ -211,21 +217,32 @@ def _client_context() -> dict:
     }
 
 
-def _guardrail_check(ctx: dict) -> str | None:
-    """Return an error message if a guardrail blocks the request, else None."""
+def _guardrail_check(endpoint: str, ctx: dict) -> str | None:
+    """Return an error code/message if a guardrail blocks the request, else None.
+
+    Rate-limit failures return the sentinel string ``RATE_LIMIT_ERROR`` so
+    callers can surface HTTP 429.
+    """
     spent = today_spend_usd()
     if spent >= settings.daily_budget_usd:
         logger.warning("Daily budget exceeded: $%.4f >= $%.2f", spent, settings.daily_budget_usd)
         return (
             "Daily lesson budget reached. Cached lessons still work — try one of the examples."
         )
-    hits = ip_calls_last_hour(ctx.get("ip_address"), LESSON_ENDPOINTS)
-    if hits >= settings.per_ip_hourly_limit:
-        logger.warning("IP rate limit hit: %s (%d calls/hour)", ctx.get("ip_address"), hits)
-        return (
-            f"You've asked {hits} questions in the last hour. "
-            "Please wait a bit before asking another one."
+
+    # Only check/log the lesson rate limiter on endpoints that actually
+    # trigger generation (POST /api/lesson). GET /lesson, /api/tts, static
+    # files etc. are excluded.
+    if endpoint in LESSON_RATE_LIMIT_ENDPOINTS:
+        hits = ip_calls_last_hour(ctx.get("ip_address"), LESSON_RATE_LIMIT_ENDPOINTS)
+        limit = settings.per_ip_hourly_limit
+        logger.info(
+            "Lesson rate-limit check route=%s ip=%s count=%d limit=%d",
+            endpoint, ctx.get("ip_address"), hits, limit,
         )
+        if hits >= limit:
+            logger.warning("IP rate limit hit: %s (%d/%d)", ctx.get("ip_address"), hits, limit)
+            return RATE_LIMIT_ERROR
     return None
 
 
@@ -260,7 +277,7 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
             )
             return cached, None
 
-    blocked = _guardrail_check(ctx)
+    blocked = _guardrail_check(endpoint, ctx)
     if blocked is not None:
         return None, blocked
 
@@ -335,6 +352,9 @@ def lesson():
     ctx = _client_context()
     data, err = _track_lesson("/lesson", question, ctx)
     if err is not None:
+        if err == RATE_LIMIT_ERROR:
+            friendly = "Too many questions. Please try again later."
+            return render_template("error.html", question=question, error=friendly), 429
         return render_template("error.html", question=question, error=err), 500
     return render_template("lesson.html", question=question, lesson=data)
 
@@ -356,6 +376,12 @@ def api_lesson():
     ctx = _client_context()
     data, err = _track_lesson("/api/lesson", question, ctx)
     if err is not None:
+        if err == RATE_LIMIT_ERROR:
+            return jsonify({
+                "ok": False,
+                "error": "rate_limit",
+                "message": "Too many questions. Please try again later.",
+            }), 429
         return jsonify({"ok": False, "error": err}), 500
     return jsonify({"ok": True, "lesson": data})
 
