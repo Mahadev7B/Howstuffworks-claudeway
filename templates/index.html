@@ -167,16 +167,26 @@
       .then(data => {
         clearInterval(timerInterval);
         if (data.ok) {
-          // Navigate to GET /lesson?q=... which re-generates from cache/fresh
-          window.location.href = '/lesson?q=' + encodeURIComponent(question);
+          loadingMsg.textContent = 'Lesson is ready! Opening it now…';
+          setTimeout(() => {
+            window.location.href = '/lesson?q=' + encodeURIComponent(question);
+          }, 300);
         } else {
-          window.location.href = '/lesson?q=' + encodeURIComponent(question);
+          const errMsg = (data.error || 'Something went wrong.');
+          loadingMsg.textContent = '⚠ ' + errMsg;
+          elapsed.textContent = '';
+          // Keep the loading screen visible so the error is readable, then go anyway
+          setTimeout(() => {
+            window.location.href = '/lesson?q=' + encodeURIComponent(question);
+          }, 2500);
         }
       })
       .catch(() => {
         clearInterval(timerInterval);
-        // Fall back to normal POST on network error
-        window.location.href = '/lesson?q=' + encodeURIComponent(question);
+        loadingMsg.textContent = 'Network error — trying anyway…';
+        setTimeout(() => {
+          window.location.href = '/lesson?q=' + encodeURIComponent(question);
+        }, 800);
       });
     }
 
