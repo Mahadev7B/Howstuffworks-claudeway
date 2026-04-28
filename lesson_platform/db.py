@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import psycopg
@@ -13,6 +14,24 @@ from psycopg_pool import ConnectionPool
 logger = logging.getLogger(__name__)
 
 _pool: ConnectionPool | None = None
+
+# Hard cap on how long ANY db operation may wait for a pool connection.
+# If the pool is exhausted we skip the op rather than block lesson generation.
+_POOL_TIMEOUT_S = 3.0
+# libpq-level connect timeout (when the pool has to open a new socket).
+_CONNECT_TIMEOUT_S = 5
+
+# Background executor for fire-and-forget writes (record_api_call, cache writes,
+# pin updates). Lesson generation must never wait on these.
+_bg_writer = ThreadPoolExecutor(max_workers=2, thread_name_prefix="db-bg")
+
+
+def _bg(fn, *args, **kwargs):
+    """Fire-and-forget DB write. Returns immediately; logs on submit failure."""
+    try:
+        _bg_writer.submit(fn, *args, **kwargs)
+    except Exception:
+        logger.exception("Failed to schedule background DB write")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS feedback (
@@ -97,11 +116,12 @@ def init_db() -> bool:
             dsn,
             min_size=1,
             max_size=4,
-            kwargs={"autocommit": True},
-            check=_check_connection,       # validate before handing out
-            reconnect_timeout=30,          # keep trying to reconnect for 30s
+            timeout=_POOL_TIMEOUT_S,                      # default checkout timeout
+            kwargs={"autocommit": True, "connect_timeout": _CONNECT_TIMEOUT_S},
+            check=_check_connection,
+            reconnect_timeout=10,
         )
-        with _pool.connection() as conn, conn.cursor() as cur:
+        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute(SCHEMA)
         logger.info("DB ready (feedback + api_calls)")
         return True
@@ -148,7 +168,7 @@ def save_feedback(
     # Retry once on stale-connection errors (SSL reset, server timeout, etc.)
     for attempt in range(2):
         try:
-            with _pool.connection() as conn, conn.cursor() as cur:
+            with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
                 cur.execute(sql, params)
             return
         except psycopg.OperationalError:
@@ -157,6 +177,25 @@ def save_feedback(
                 time.sleep(0.1)
             else:
                 raise
+
+
+def _do_record_api_call(params: tuple) -> None:
+    if _pool is None:
+        return
+    try:
+        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO api_calls
+                  (endpoint, question, model, input_tokens, output_tokens,
+                   input_chars, output_chars, cost_usd, duration_ms, success, error,
+                   ip_address, city, region, country, user_agent, lesson)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                params,
+            )
+    except Exception:
+        logger.exception("Failed to record api_call")
 
 
 def record_api_call(
@@ -179,40 +218,30 @@ def record_api_call(
     user_agent: str | None = None,
     lesson: dict[str, Any] | None = None,
 ) -> None:
+    """Telemetry write — non-blocking. Submits to the background executor and
+    returns immediately so lesson generation is never delayed by DB latency."""
     if _pool is None:
         return
-    try:
-        with _pool.connection() as conn, conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO api_calls
-                  (endpoint, question, model, input_tokens, output_tokens,
-                   input_chars, output_chars, cost_usd, duration_ms, success, error,
-                   ip_address, city, region, country, user_agent, lesson)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    endpoint[:100],
-                    question[:500],
-                    model[:100],
-                    input_tokens,
-                    output_tokens,
-                    input_chars,
-                    output_chars,
-                    cost_usd,
-                    duration_ms,
-                    success,
-                    (error or "")[:1000] or None,
-                    (ip_address or "")[:64] or None,
-                    (city or "")[:128] or None,
-                    (region or "")[:128] or None,
-                    (country or "")[:128] or None,
-                    (user_agent or "")[:500] or None,
-                    Jsonb(lesson) if lesson is not None else None,
-                ),
-            )
-    except Exception:
-        logger.exception("Failed to record api_call")
+    params = (
+        endpoint[:100],
+        question[:500],
+        model[:100],
+        input_tokens,
+        output_tokens,
+        input_chars,
+        output_chars,
+        cost_usd,
+        duration_ms,
+        success,
+        (error or "")[:1000] or None,
+        (ip_address or "")[:64] or None,
+        (city or "")[:128] or None,
+        (region or "")[:128] or None,
+        (country or "")[:128] or None,
+        (user_agent or "")[:500] or None,
+        Jsonb(lesson) if lesson is not None else None,
+    )
+    _bg(_do_record_api_call, params)
 
 
 def _normalize_question(q: str) -> str:
@@ -236,7 +265,7 @@ def get_cached_lesson(question: str, ttl_days: int = 30) -> dict[str, Any] | Non
         return None
     qhash = question_hash(question)
     try:
-        with _pool.connection() as conn, conn.cursor() as cur:
+        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             if ttl_days > 0:
                 cur.execute(
                     """
@@ -264,23 +293,28 @@ def get_cached_lesson(question: str, ttl_days: int = 30) -> dict[str, Any] | Non
             )
             return row[0]
     except Exception:
-        logger.exception("Cache read failed")
+        logger.exception("Cache read failed — skipping")
         return None
 
 
-def pin_cached_lesson(question: str) -> None:
-    """Mark a cached lesson as pinned so it never expires (called on thumbs-up)."""
+def _do_pin_cached_lesson(qhash: str) -> None:
     if _pool is None:
         return
-    qhash = question_hash(question)
     try:
-        with _pool.connection() as conn, conn.cursor() as cur:
+        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute(
                 "UPDATE cached_lessons SET pinned = true WHERE question_hash = %s",
                 (qhash,),
             )
     except Exception:
-        logger.exception("Pin cached lesson failed")
+        logger.exception("Pin cached lesson failed — skipping")
+
+
+def pin_cached_lesson(question: str) -> None:
+    """Mark a cached lesson as pinned (thumbs-up). Fire-and-forget."""
+    if _pool is None:
+        return
+    _bg(_do_pin_cached_lesson, question_hash(question))
 
 
 def get_lesson_from_calls(question: str) -> dict[str, Any] | None:
@@ -288,7 +322,7 @@ def get_lesson_from_calls(question: str) -> dict[str, Any] | None:
     if _pool is None:
         return None
     try:
-        with _pool.connection() as conn, conn.cursor() as cur:
+        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT lesson FROM api_calls
@@ -301,50 +335,61 @@ def get_lesson_from_calls(question: str) -> dict[str, Any] | None:
             row = cur.fetchone()
             return row[0] if row else None
     except Exception:
-        logger.exception("get_lesson_from_calls failed")
+        logger.exception("get_lesson_from_calls failed — skipping")
         return None
 
 
-def delete_cached_lesson(question: str) -> None:
-    """Remove a cached lesson so it will be regenerated on next request."""
+def _do_delete_cached_lesson(qhash: str, label: str) -> None:
     if _pool is None:
         return
-    qhash = question_hash(question)
     try:
-        with _pool.connection() as conn, conn.cursor() as cur:
+        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute(
                 "DELETE FROM cached_lessons WHERE question_hash = %s",
                 (qhash,),
             )
-        logger.info("Deleted stale cache entry for: %s", question[:80])
+        logger.info("Deleted stale cache entry for: %s", label)
     except Exception:
-        logger.exception("Cache delete failed")
+        logger.exception("Cache delete failed — skipping")
 
 
-def save_cached_lesson(question: str, lesson: dict[str, Any]) -> None:
+def delete_cached_lesson(question: str) -> None:
+    """Remove a cached lesson so it will be regenerated on next request. Fire-and-forget."""
     if _pool is None:
         return
-    qhash = question_hash(question)
+    _bg(_do_delete_cached_lesson, question_hash(question), question[:80])
+
+
+def _do_save_cached_lesson(qhash: str, question: str, lesson: dict[str, Any]) -> None:
+    if _pool is None:
+        return
     try:
-        with _pool.connection() as conn, conn.cursor() as cur:
+        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO cached_lessons (question_hash, question, lesson)
                 VALUES (%s, %s, %s)
                 ON CONFLICT (question_hash) DO NOTHING
                 """,
-                (qhash, question[:500], Jsonb(lesson)),
+                (qhash, question, Jsonb(lesson)),
             )
     except Exception:
-        logger.exception("Cache write failed")
+        logger.exception("Cache write failed — skipping")
+
+
+def save_cached_lesson(question: str, lesson: dict[str, Any]) -> None:
+    """Insert a lesson into the cache. Fire-and-forget so the request thread is not delayed."""
+    if _pool is None:
+        return
+    _bg(_do_save_cached_lesson, question_hash(question), question[:500], lesson)
 
 
 def today_spend_usd() -> float:
-    """Sum of cost_usd across all api_calls in the last 24h. 0.0 on failure."""
+    """Sum of cost_usd across all api_calls in the last 24h. 0.0 on failure or DB unavailable."""
     if _pool is None:
         return 0.0
     try:
-        with _pool.connection() as conn, conn.cursor() as cur:
+        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT COALESCE(SUM(cost_usd), 0)
@@ -355,16 +400,16 @@ def today_spend_usd() -> float:
             row = cur.fetchone()
             return float(row[0]) if row and row[0] is not None else 0.0
     except Exception:
-        logger.exception("Budget query failed")
+        logger.exception("Budget query failed — skipping")
         return 0.0
 
 
 def ip_calls_last_hour(ip: str | None, endpoints: tuple[str, ...]) -> int:
-    """Count of api_calls from this IP hitting given endpoints in the last hour."""
+    """Count of api_calls from this IP hitting given endpoints in the last hour. 0 on failure."""
     if _pool is None or not ip:
         return 0
     try:
-        with _pool.connection() as conn, conn.cursor() as cur:
+        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT COUNT(*)
@@ -378,5 +423,5 @@ def ip_calls_last_hour(ip: str | None, endpoints: tuple[str, ...]) -> int:
             row = cur.fetchone()
             return int(row[0]) if row else 0
     except Exception:
-        logger.exception("IP rate-limit query failed")
+        logger.exception("IP rate-limit query failed — skipping")
         return 0

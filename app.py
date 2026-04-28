@@ -481,9 +481,9 @@ def admin_clear_cache():
         return jsonify({"ok": False, "error": "forbidden"}), 403
     if not db_enabled:
         return jsonify({"ok": False, "error": "DB not enabled"}), 503
-    from lesson_platform.db import _pool
+    from lesson_platform.db import _pool, _POOL_TIMEOUT_S
     try:
-        with _pool.connection() as conn, conn.cursor() as cur:
+        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute("DELETE FROM cached_lessons")
             deleted = cur.rowcount
         logger.info("Admin cleared cache: %d rows deleted", deleted)
