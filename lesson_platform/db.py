@@ -425,3 +425,286 @@ def ip_calls_last_hour(ip: str | None, endpoints: tuple[str, ...]) -> int:
     except Exception:
         logger.exception("IP rate-limit query failed — skipping")
         return 0
+
+
+# ---------------------------------------------------------------------------
+# Admin dashboard queries — read-only, fail-safe (return empty/zero on error)
+# ---------------------------------------------------------------------------
+# All admin queries reuse the existing api_calls table. Cost is grouped by
+# `endpoint` to attribute spend to Claude / Flux / TTS / cache.
+_LESSON_GEN_ENDPOINTS = ("/lesson", "/api/lesson")
+_FLUX_ENDPOINT = "/internal/flux"
+_TTS_ENDPOINT = "/api/tts"
+
+
+def _safe_query(default, fn):
+    if _pool is None:
+        return default
+    try:
+        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+            return fn(cur)
+    except Exception:
+        logger.exception("Admin query failed — returning default")
+        return default
+
+
+def admin_overview() -> dict[str, Any]:
+    """Return headline numbers for the dashboard cards."""
+    def q(cur):
+        cur.execute("SELECT COUNT(*) FROM api_calls WHERE success = true AND endpoint = ANY(%s)",
+                    (list(_LESSON_GEN_ENDPOINTS),))
+        total_lessons = int(cur.fetchone()[0] or 0)
+
+        cur.execute("""
+            SELECT COUNT(*) FROM api_calls
+            WHERE success = true AND endpoint = ANY(%s)
+              AND created_at > NOW() - INTERVAL '1 day'
+        """, (list(_LESSON_GEN_ENDPOINTS),))
+        lessons_today = int(cur.fetchone()[0] or 0)
+
+        cur.execute("""
+            SELECT COUNT(DISTINCT ip_address) FROM api_calls
+            WHERE ip_address IS NOT NULL
+              AND created_at > NOW() - INTERVAL '1 day'
+        """)
+        unique_ips_today = int(cur.fetchone()[0] or 0)
+
+        cur.execute("SELECT COALESCE(SUM(cost_usd), 0) FROM api_calls WHERE created_at > NOW() - INTERVAL '1 day'")
+        cost_today = float(cur.fetchone()[0] or 0.0)
+
+        cur.execute("SELECT COALESCE(SUM(cost_usd), 0) FROM api_calls")
+        cost_all_time = float(cur.fetchone()[0] or 0.0)
+
+        cur.execute("""
+            SELECT COALESCE(AVG(cost_usd), 0) FROM api_calls
+            WHERE success = true AND endpoint = ANY(%s)
+        """, (list(_LESSON_GEN_ENDPOINTS),))
+        avg_cost_per_lesson = float(cur.fetchone()[0] or 0.0)
+
+        cur.execute("""
+            SELECT COALESCE(AVG(duration_ms), 0) FROM api_calls
+            WHERE success = true AND endpoint = ANY(%s)
+        """, (list(_LESSON_GEN_ENDPOINTS),))
+        avg_gen_ms = float(cur.fetchone()[0] or 0.0)
+
+        cur.execute("""
+            SELECT COUNT(*) FROM api_calls
+            WHERE success = false AND created_at > NOW() - INTERVAL '1 day'
+        """)
+        errors_today = int(cur.fetchone()[0] or 0)
+
+        return {
+            "total_lessons": total_lessons,
+            "lessons_today": lessons_today,
+            "unique_ips_today": unique_ips_today,
+            "cost_today": round(cost_today, 4),
+            "cost_all_time": round(cost_all_time, 4),
+            "avg_cost_per_lesson": round(avg_cost_per_lesson, 5),
+            "avg_gen_ms": int(avg_gen_ms),
+            "errors_today": errors_today,
+        }
+    return _safe_query({
+        "total_lessons": 0, "lessons_today": 0, "unique_ips_today": 0,
+        "cost_today": 0.0, "cost_all_time": 0.0, "avg_cost_per_lesson": 0.0,
+        "avg_gen_ms": 0, "errors_today": 0,
+    }, q)
+
+
+def admin_lessons_by_day(days: int = 14) -> list[dict[str, Any]]:
+    def q(cur):
+        cur.execute("""
+            SELECT DATE(created_at) AS d, COUNT(*) AS n
+            FROM api_calls
+            WHERE success = true AND endpoint = ANY(%s)
+              AND created_at > NOW() - INTERVAL '1 day' * %s
+            GROUP BY d ORDER BY d
+        """, (list(_LESSON_GEN_ENDPOINTS), days))
+        return [{"date": str(r[0]), "count": int(r[1])} for r in cur.fetchall()]
+    return _safe_query([], q)
+
+
+def admin_lessons_by_hour() -> list[dict[str, Any]]:
+    def q(cur):
+        cur.execute("""
+            SELECT EXTRACT(HOUR FROM created_at)::int AS h, COUNT(*) AS n
+            FROM api_calls
+            WHERE success = true AND endpoint = ANY(%s)
+              AND created_at > NOW() - INTERVAL '7 days'
+            GROUP BY h ORDER BY h
+        """, (list(_LESSON_GEN_ENDPOINTS),))
+        rows = {int(r[0]): int(r[1]) for r in cur.fetchall()}
+        return [{"hour": h, "count": rows.get(h, 0)} for h in range(24)]
+    return _safe_query([{"hour": h, "count": 0} for h in range(24)], q)
+
+
+def admin_device_split() -> dict[str, int]:
+    def q(cur):
+        cur.execute("""
+            SELECT user_agent FROM api_calls
+            WHERE user_agent IS NOT NULL AND endpoint = ANY(%s)
+              AND created_at > NOW() - INTERVAL '30 days'
+        """, (list(_LESSON_GEN_ENDPOINTS),))
+        mobile = desktop = 0
+        for (ua,) in cur.fetchall():
+            ua_l = (ua or "").lower()
+            if any(k in ua_l for k in ("iphone", "android", "mobile", "ipad")):
+                mobile += 1
+            else:
+                desktop += 1
+        return {"mobile": mobile, "desktop": desktop}
+    return _safe_query({"mobile": 0, "desktop": 0}, q)
+
+
+def admin_top_questions(limit: int = 15) -> list[dict[str, Any]]:
+    def q(cur):
+        cur.execute("""
+            SELECT question, COUNT(*) AS n
+            FROM api_calls
+            WHERE success = true AND endpoint = ANY(%s)
+            GROUP BY question
+            ORDER BY n DESC
+            LIMIT %s
+        """, (list(_LESSON_GEN_ENDPOINTS), limit))
+        return [{"question": r[0], "count": int(r[1])} for r in cur.fetchall()]
+    return _safe_query([], q)
+
+
+def admin_cost_by_day(days: int = 14) -> list[dict[str, Any]]:
+    def q(cur):
+        cur.execute("""
+            SELECT DATE(created_at) AS d,
+                   COALESCE(SUM(CASE WHEN endpoint = ANY(%s) THEN cost_usd ELSE 0 END), 0) AS claude,
+                   COALESCE(SUM(CASE WHEN endpoint = %s        THEN cost_usd ELSE 0 END), 0) AS flux,
+                   COALESCE(SUM(CASE WHEN endpoint = %s        THEN cost_usd ELSE 0 END), 0) AS tts
+            FROM api_calls
+            WHERE created_at > NOW() - INTERVAL '1 day' * %s
+            GROUP BY d ORDER BY d
+        """, (list(_LESSON_GEN_ENDPOINTS), _FLUX_ENDPOINT, _TTS_ENDPOINT, days))
+        out = []
+        for r in cur.fetchall():
+            claude_c, flux_c, tts_c = float(r[1] or 0), float(r[2] or 0), float(r[3] or 0)
+            out.append({
+                "date": str(r[0]),
+                "claude": round(claude_c, 5),
+                "flux": round(flux_c, 5),
+                "tts": round(tts_c, 5),
+                "total": round(claude_c + flux_c + tts_c, 5),
+            })
+        return out
+    return _safe_query([], q)
+
+
+def admin_cost_by_provider() -> list[dict[str, Any]]:
+    def q(cur):
+        cur.execute("""
+            SELECT
+              CASE
+                WHEN endpoint = ANY(%s) THEN 'Claude'
+                WHEN endpoint = %s        THEN 'Flux'
+                WHEN endpoint = %s        THEN 'OpenAI TTS'
+                ELSE endpoint
+              END AS provider,
+              COALESCE(SUM(cost_usd), 0) AS total
+            FROM api_calls
+            GROUP BY provider
+            ORDER BY total DESC
+        """, (list(_LESSON_GEN_ENDPOINTS), _FLUX_ENDPOINT, _TTS_ENDPOINT))
+        return [{"provider": r[0], "cost": round(float(r[1] or 0), 5)} for r in cur.fetchall()]
+    return _safe_query([], q)
+
+
+def admin_recent_lessons(limit: int = 50) -> list[dict[str, Any]]:
+    """Per-lesson cost rows: pair each lesson generation with surrounding
+    Flux + TTS calls within a small time window."""
+    def q(cur):
+        cur.execute("""
+            SELECT id, created_at, question, model, cost_usd, duration_ms,
+                   ip_address, user_agent
+            FROM api_calls
+            WHERE success = true AND endpoint = ANY(%s)
+            ORDER BY created_at DESC
+            LIMIT %s
+        """, (list(_LESSON_GEN_ENDPOINTS), limit))
+        lessons = cur.fetchall()
+        out = []
+        for row in lessons:
+            lesson_id, created, question, model, claude_cost, duration_ms, ip, ua = row
+            # Sum Flux + TTS within the 5 min window after this lesson
+            cur.execute("""
+                SELECT
+                  COALESCE(SUM(CASE WHEN endpoint = %s THEN cost_usd ELSE 0 END), 0) AS flux,
+                  COALESCE(SUM(CASE WHEN endpoint = %s THEN cost_usd ELSE 0 END), 0) AS tts,
+                  COALESCE(SUM(CASE WHEN endpoint = %s THEN duration_ms ELSE 0 END), 0) AS flux_ms
+                FROM api_calls
+                WHERE created_at BETWEEN %s AND %s + INTERVAL '5 minutes'
+                  AND success = true
+            """, (_FLUX_ENDPOINT, _TTS_ENDPOINT, _FLUX_ENDPOINT, created, created))
+            flux_cost, tts_cost, flux_ms = cur.fetchone()
+            flux_cost, tts_cost, flux_ms = float(flux_cost or 0), float(tts_cost or 0), int(flux_ms or 0)
+            ua_l = (ua or "").lower()
+            device = "mobile" if any(k in ua_l for k in ("iphone", "android", "mobile", "ipad")) else "desktop"
+            out.append({
+                "id": int(lesson_id),
+                "created_at": created.isoformat() if created else None,
+                "question": question,
+                "claude_model": model,
+                "claude_cost": round(float(claude_cost or 0), 5),
+                "flux_cost": round(flux_cost, 5),
+                "tts_cost": round(tts_cost, 5),
+                "total_cost": round(float(claude_cost or 0) + flux_cost + tts_cost, 5),
+                "duration_ms": int(duration_ms or 0) + flux_ms,
+                "device": device,
+            })
+        return out
+    return _safe_query([], q)
+
+
+def admin_perf_by_day(days: int = 14) -> list[dict[str, Any]]:
+    def q(cur):
+        cur.execute("""
+            SELECT DATE(created_at) AS d,
+                   COALESCE(AVG(CASE WHEN endpoint = ANY(%s) THEN duration_ms END), 0) AS claude_ms,
+                   COALESCE(AVG(CASE WHEN endpoint = %s        THEN duration_ms END), 0) AS flux_ms
+            FROM api_calls
+            WHERE success = true AND created_at > NOW() - INTERVAL '1 day' * %s
+            GROUP BY d ORDER BY d
+        """, (list(_LESSON_GEN_ENDPOINTS), _FLUX_ENDPOINT, days))
+        return [{"date": str(r[0]), "claude_ms": int(r[1] or 0), "flux_ms": int(r[2] or 0)} for r in cur.fetchall()]
+    return _safe_query([], q)
+
+
+def admin_slowest_lessons(limit: int = 10) -> list[dict[str, Any]]:
+    def q(cur):
+        cur.execute("""
+            SELECT created_at, question, duration_ms, cost_usd
+            FROM api_calls
+            WHERE success = true AND endpoint = ANY(%s)
+            ORDER BY duration_ms DESC
+            LIMIT %s
+        """, (list(_LESSON_GEN_ENDPOINTS), limit))
+        return [{
+            "created_at": r[0].isoformat() if r[0] else None,
+            "question": r[1],
+            "duration_ms": int(r[2] or 0),
+            "cost": round(float(r[3] or 0), 5),
+        } for r in cur.fetchall()]
+    return _safe_query([], q)
+
+
+def admin_recent_errors(limit: int = 30) -> list[dict[str, Any]]:
+    def q(cur):
+        cur.execute("""
+            SELECT created_at, endpoint, question, error, ip_address
+            FROM api_calls
+            WHERE success = false
+            ORDER BY created_at DESC
+            LIMIT %s
+        """, (limit,))
+        return [{
+            "created_at": r[0].isoformat() if r[0] else None,
+            "endpoint": r[1],
+            "question": r[2],
+            "error": r[3],
+            "ip": r[4],
+        } for r in cur.fetchall()]
+    return _safe_query([], q)

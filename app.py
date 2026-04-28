@@ -13,6 +13,8 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import secrets
+
 from dotenv import load_dotenv
 from flask import (
     Flask,
@@ -22,10 +24,22 @@ from flask import (
     render_template,
     request,
     send_from_directory,
+    session,
     url_for,
 )
 
 from lesson_platform import (
+    admin_cost_by_day,
+    admin_cost_by_provider,
+    admin_device_split,
+    admin_lessons_by_day,
+    admin_lessons_by_hour,
+    admin_overview,
+    admin_perf_by_day,
+    admin_recent_errors,
+    admin_recent_lessons,
+    admin_slowest_lessons,
+    admin_top_questions,
     check_question,
     delete_cached_lesson,
     extract_and_lookup,
@@ -53,6 +67,8 @@ logger = logging.getLogger(__name__)
 
 settings = load_settings()
 app.secret_key = settings.flask_secret_key
+from datetime import timedelta as _td
+app.permanent_session_lifetime = _td(days=7)
 db_enabled = init_db()
 
 
@@ -535,6 +551,64 @@ def admin_clear_cache():
     except Exception as exc:
         logger.exception("Admin clear-cache failed")
         return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Admin dashboard — read-only views over api_calls. Never touches lesson path.
+# ---------------------------------------------------------------------------
+def _admin_authed() -> bool:
+    return bool(session.get("admin"))
+
+
+def _admin_password() -> str:
+    return os.environ.get("ADMIN_PASSWORD", "")
+
+
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login():
+    if request.method == "POST":
+        provided = request.form.get("password", "")
+        expected = _admin_password()
+        if not expected:
+            return render_template("admin_login.html",
+                                   error="Admin not configured (ADMIN_PASSWORD missing)."), 503
+        if secrets.compare_digest(provided.encode(), expected.encode()):
+            session["admin"] = True
+            session.permanent = True
+            return redirect(url_for("admin_dashboard"))
+        return render_template("admin_login.html", error="Wrong password."), 401
+    if _admin_authed():
+        return redirect(url_for("admin_dashboard"))
+    return render_template("admin_login.html", error=None)
+
+
+@app.route("/admin/logout", methods=["POST", "GET"])
+def admin_logout():
+    session.pop("admin", None)
+    return redirect(url_for("admin_login"))
+
+
+@app.route("/admin", methods=["GET"])
+def admin_dashboard():
+    if not _admin_authed():
+        return redirect(url_for("admin_login"))
+    if not db_enabled:
+        return render_template("admin.html", db_enabled=False, data={})
+    data = {
+        "overview": admin_overview(),
+        "lessons_by_day": admin_lessons_by_day(14),
+        "lessons_by_hour": admin_lessons_by_hour(),
+        "device_split": admin_device_split(),
+        "top_questions": admin_top_questions(15),
+        "cost_by_day": admin_cost_by_day(14),
+        "cost_by_provider": admin_cost_by_provider(),
+        "recent_lessons": admin_recent_lessons(50),
+        "perf_by_day": admin_perf_by_day(14),
+        "slowest_lessons": admin_slowest_lessons(10),
+        "recent_errors": admin_recent_errors(30),
+    }
+    return render_template("admin.html", db_enabled=True, data=data,
+                           daily_budget=settings.daily_budget_usd)
 
 
 @app.route("/favicon.ico")

@@ -2,6 +2,17 @@ from .ai_generation import generate_lesson
 from .config import load_settings
 from .guardrails import check_question
 from .db import (
+    admin_cost_by_day,
+    admin_cost_by_provider,
+    admin_device_split,
+    admin_lessons_by_day,
+    admin_lessons_by_hour,
+    admin_overview,
+    admin_perf_by_day,
+    admin_recent_errors,
+    admin_recent_lessons,
+    admin_slowest_lessons,
+    admin_top_questions,
     delete_cached_lesson,
     get_cached_lesson,
     get_lesson_from_calls,
@@ -36,4 +47,15 @@ __all__ = [
     "ip_calls_last_hour",
     "render_spec",
     "generate_image",
+    "admin_overview",
+    "admin_lessons_by_day",
+    "admin_lessons_by_hour",
+    "admin_device_split",
+    "admin_top_questions",
+    "admin_cost_by_day",
+    "admin_cost_by_provider",
+    "admin_recent_lessons",
+    "admin_perf_by_day",
+    "admin_slowest_lessons",
+    "admin_recent_errors",
 ]
