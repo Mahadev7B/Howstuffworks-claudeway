@@ -331,7 +331,33 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
 
 @app.route("/", methods=["GET"])
 def home():
-    return render_template("index.html", examples=EXAMPLE_QUESTIONS)
+    prefill = (request.args.get("q") or "").strip()[:200]
+    return render_template("index.html", examples=EXAMPLE_QUESTIONS, prefill=prefill)
+
+
+def _lookup_only(question: str, ctx: dict) -> dict | None:
+    """Return a cached lesson without ever calling Claude/Flux.
+
+    Checks the in-memory recent cache and the persisted DB cache. Returns
+    None if neither has the lesson — caller should redirect rather than
+    regenerate.
+    """
+    recent = _recent_get(question)
+    if recent is not None:
+        return recent
+    cached = get_cached_lesson(question, settings.lesson_cache_ttl_days) if db_enabled else None
+    if cached is None:
+        return None
+    cached.setdefault("meta", {})["from_cache"] = True
+    _attach_slide_images(cached, ctx)
+    slides = cached.get("slides", [])
+    if slides and not any(s.get("image_data_url") for s in slides):
+        logger.warning("Cached lesson has no renderable images — busting cache: %s", question)
+        delete_cached_lesson(question)
+        return None
+    # Refresh the in-memory cache so a follow-up Back/refresh stays instant
+    _recent_put(question, cached)
+    return cached
 
 
 @app.route("/lesson", methods=["GET", "POST"])
@@ -351,6 +377,18 @@ def lesson():
         return render_template("error.html", question=question, error=blocked), 400
 
     ctx = _client_context()
+
+    # GET = navigation (Back, refresh, share link). NEVER regenerate here.
+    # If the lesson isn't cached, send the user back to the home screen with
+    # the question pre-filled so they have to explicitly click Ask.
+    if request.method == "GET":
+        cached = _lookup_only(question, ctx)
+        if cached is None:
+            logger.info("GET /lesson cache miss — redirecting to home: %s", question[:80])
+            return redirect(url_for("home", q=question))
+        return render_template("lesson.html", question=question, lesson=cached)
+
+    # POST = explicit form submission (no-JS fallback). Generate if needed.
     data, err = _track_lesson("/lesson", question, ctx)
     if err is not None:
         if err == RATE_LIMIT_ERROR:
