@@ -120,9 +120,39 @@ _OFFTOPIC_MSG = (
     "or \"How was the wheel invented?\""
 )
 
+# Phrases that indicate an advice / safety / habits question. Presence of any
+# of these passes the topic filter so the lesson generator can produce a
+# balanced "What it is / Good / Not-so-good / Smart use" lesson instead.
+_ADVICE_PHRASES = (
+    "is it good", "is it bad", "is it ok", "is it okay", "is it safe",
+    "is it healthy", "is it harmful", "is it fine",
+    "good for", "bad for", "safe for", "healthy for", "harmful for",
+    "should kids", "should children", "should i", "should we", "should my",
+    "how much", "how long", "too much", "too long",
+    "long hours", "screen time", "addiction", "addictive",
+)
+_ADVICE_KEYWORDS = {
+    "safe", "safety", "healthy", "unhealthy", "harmful",
+    "habit", "habits", "addiction", "addictive",
+    "kids", "child", "children", "teen", "teens", "teenager",
+}
+
 
 def _tokenize(text: str) -> list[str]:
     return re.findall(r"[a-z]+", text.lower())
+
+
+def is_advice_question(question: str) -> bool:
+    """True if the question is asking for advice/safety/habits guidance.
+
+    These should be answered with a balanced lesson rather than rejected
+    by the topic filter.
+    """
+    q_lower = question.lower()
+    if any(phrase in q_lower for phrase in _ADVICE_PHRASES):
+        return True
+    tokens = set(_tokenize(q_lower))
+    return bool(tokens & _ADVICE_KEYWORDS)
 
 
 def check_question(question: str) -> str | None:
@@ -138,7 +168,11 @@ def check_question(question: str) -> str | None:
         if term in q_lower:
             return _HARD_BLOCK_MSG
 
-    # Layer 2 — soft topic check
+    # Layer 2a — advice / safety / habits questions bypass the topic filter
+    if is_advice_question(question):
+        return None
+
+    # Layer 2b — soft topic check
     # Build a set of meaningful words + bigrams from the question
     words = set(tokens) - _STOPWORDS
     bigrams = {tokens[i] + " " + tokens[i + 1] for i in range(len(tokens) - 1)}

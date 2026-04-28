@@ -39,6 +39,17 @@ Question types and how to handle them:
 • "What is X?" — describe what it is and why it's interesting.
 • Everyday objects (shoes, pencils, bread, glass, etc.) — explain origin or how they work.
 • Nature questions (animals, plants, weather, space) — explain simply.
+• Advice / safety / habits questions ("Is X good for kids?", "Is X safe?",
+  "Should kids do X?", "Is too much X bad?", "How long should kids…") —
+  build a BALANCED lesson, not a yes/no verdict:
+    Slide 1: What it is — simple plain explanation of the thing.
+    Slide 2: Good side — real benefits kids can get from it.
+    Slide 3: Not-so-good side — what can happen with too much, in a calm way.
+    Slide 4: Smart use — friendly tips for using it well (limits, breaks,
+             balance with other activities, asking a grown-up).
+  Tone for these: neutral, kid-friendly, never scary, never strict.
+  Avoid extreme statements. Do NOT say "never do this" or "this is dangerous".
+  Use phrases like "a little is fine", "balance is best", "take breaks".
 
 Content rules — be concise, every field must be SHORT:
 - title: max 6 words.
