@@ -60,7 +60,7 @@ db_enabled = init_db()
 # is served instantly when the user taps Open Lesson (GET /lesson?q=...).
 # Keyed by normalized question; entry expires after 10 minutes.
 _RECENT_LESSONS: dict[str, tuple[float, dict]] = {}
-_RECENT_TTL_S = 600
+_RECENT_TTL_S = 3600  # 1 hour — long enough that refresh after reading a lesson stays a hit
 
 
 def _recent_key(question: str) -> str:
@@ -386,7 +386,11 @@ def lesson():
         if cached is None:
             logger.info("GET /lesson cache miss — redirecting to home: %s", question[:80])
             return redirect(url_for("home", q=question))
-        return render_template("lesson.html", question=question, lesson=cached)
+        resp = app.make_response(render_template("lesson.html", question=question, lesson=cached))
+        # Browser-cache the rendered page for 10 minutes so a Refresh hits the
+        # browser cache and never reaches our server.
+        resp.headers["Cache-Control"] = "private, max-age=600"
+        return resp
 
     # POST = explicit form submission (no-JS fallback). Generate if needed.
     data, err = _track_lesson("/lesson", question, ctx)
@@ -395,7 +399,9 @@ def lesson():
             friendly = "Too many questions. Please try again later."
             return render_template("error.html", question=question, error=friendly), 429
         return render_template("error.html", question=question, error=err), 500
-    return render_template("lesson.html", question=question, lesson=data)
+    resp = app.make_response(render_template("lesson.html", question=question, lesson=data))
+    resp.headers["Cache-Control"] = "private, max-age=600"
+    return resp
 
 
 @app.route("/api/lesson", methods=["POST"])
