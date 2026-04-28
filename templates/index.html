@@ -175,22 +175,31 @@
     openLessonBtn.addEventListener('click', () => {
       const q = openLessonBtn.dataset.question || input.value.trim();
       if (!q) return;
-      // Use replace() so the loading-screen state is NOT in browser history.
+      // Use replace() so the loading overlay state is NOT in browser history.
       // Pressing Back from /lesson then returns to the previous real page
-      // (the home view) without touching /api/lesson.
+      // (the home view) without re-running /api/lesson.
       window.location.replace('/lesson?q=' + encodeURIComponent(q));
     });
 
-    // BFCache restore (back from /lesson on Safari/Chrome): reset to the
-    // home/question screen and ensure no in-flight loading state is shown.
-    window.addEventListener('pageshow', (e) => {
-      if (e.persisted) {
-        cancelled = true;
-        if (activeAbort) { try { activeAbort.abort(); } catch (err) {} }
-        if (activeTimer) { clearInterval(activeTimer); activeTimer = null; }
-        userInitiated = false;
-        resetLoadingUI();
-      }
+    // Defensive init: whenever this script runs (initial load OR BFCache
+    // restore), make sure the loading overlay is hidden and no submit logic
+    // can re-fire. resetLoadingUI() is idempotent, so calling it eagerly is
+    // safe and guarantees the user lands on a clean home/question screen.
+    function fullReset() {
+      cancelled = true;
+      if (activeAbort) { try { activeAbort.abort(); } catch (err) {} }
+      if (activeTimer) { clearInterval(activeTimer); activeTimer = null; }
+      userInitiated = false;
+      resetLoadingUI();
+    }
+    fullReset();
+
+    // pageshow fires on every navigation INTO this page, including browser
+    // Back from /lesson (BFCache) and a normal page refresh. Always reset —
+    // this guarantees no API call happens on Back or Refresh and that the
+    // user sees the home screen, not a stale loading overlay.
+    window.addEventListener('pageshow', () => {
+      fullReset();
     });
 
     function askQuestion(question) {
