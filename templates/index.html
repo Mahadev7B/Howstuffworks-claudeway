@@ -80,10 +80,15 @@
 
     const QUESTIONS = {{ examples | tojson }};
 
+    // True only when the user has explicitly clicked Ask / a chip / mic-final
+    // in this page view. Reset to false on BFCache restore so a back-button
+    // restore from /lesson cannot cause any submit logic to run.
+    let userInitiated = false;
+
     document.querySelectorAll('.chip').forEach(chip => {
       chip.addEventListener('click', () => {
         const q = QUESTIONS[parseInt(chip.dataset.idx, 10)];
-        if (q) { input.value = q; askQuestion(q); }
+        if (q) { input.value = q; userInitiated = true; askQuestion(q); }
       });
     });
 
@@ -169,11 +174,32 @@
 
     openLessonBtn.addEventListener('click', () => {
       const q = openLessonBtn.dataset.question || input.value.trim();
-      if (q) window.location.href = '/lesson?q=' + encodeURIComponent(q);
+      if (!q) return;
+      // Use replace() so the loading-screen state is NOT in browser history.
+      // Pressing Back from /lesson then returns to the previous real page
+      // (the home view) without touching /api/lesson.
+      window.location.replace('/lesson?q=' + encodeURIComponent(q));
+    });
+
+    // BFCache restore (back from /lesson on Safari/Chrome): reset to the
+    // home/question screen and ensure no in-flight loading state is shown.
+    window.addEventListener('pageshow', (e) => {
+      if (e.persisted) {
+        cancelled = true;
+        if (activeAbort) { try { activeAbort.abort(); } catch (err) {} }
+        if (activeTimer) { clearInterval(activeTimer); activeTimer = null; }
+        userInitiated = false;
+        resetLoadingUI();
+      }
     });
 
     function askQuestion(question) {
       if (!question || !question.trim()) return;
+      // Guard: only run if the user actually triggered this in-page. Defends
+      // against synthetic submits that browsers may fire when restoring a
+      // page from BFCache.
+      if (!userInitiated) return;
+      userInitiated = false;
       question = question.trim();
       if (question.length > 200) question = question.slice(0, 200);
 
@@ -240,6 +266,10 @@
 
     form.addEventListener('submit', (e) => {
       e.preventDefault();
+      // Only treat this as a real submit when triggered by an actual user
+      // gesture (e.isTrusted is false for synthetic events from page restores).
+      if (!e.isTrusted) return;
+      userInitiated = true;
       askQuestion(input.value);
     });
 
