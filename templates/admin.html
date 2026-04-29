@@ -35,32 +35,66 @@
       </div>
     {% else %}
 
-    <h2 class="h5 mb-3">Overview</h2>
+    <h2 class="h5 mb-3">Overview <small class="text-muted">(real lesson generations only — cache hits excluded)</small></h2>
     <div class="row g-3">
       {% set ov = data.overview %}
       <div class="col-6 col-md-3">
-        <div class="card card-stat p-3"><div class="label">Total lessons</div><div class="value">{{ ov.total_lessons }}</div></div>
+        <div class="card card-stat p-3">
+          <div class="label">Total lessons</div>
+          <div class="value">{{ ov.total_lessons }}</div>
+          <div class="small text-muted">all time, generated</div>
+        </div>
       </div>
       <div class="col-6 col-md-3">
-        <div class="card card-stat p-3"><div class="label">Lessons today</div><div class="value">{{ ov.lessons_today }}</div></div>
+        <div class="card card-stat p-3">
+          <div class="label">Lessons today</div>
+          <div class="value">{{ ov.lessons_today }}</div>
+          <div class="small text-muted">since midnight {{ admin_tz }}</div>
+        </div>
       </div>
       <div class="col-6 col-md-3">
-        <div class="card card-stat p-3"><div class="label">Unique IPs today <small class="text-muted">(approx.)</small></div><div class="value">{{ ov.unique_ips_today }}</div></div>
+        <div class="card card-stat p-3">
+          <div class="label">Unique visitors today</div>
+          <div class="value">{{ ov.unique_ips_today }}</div>
+          <div class="small text-muted">approx., distinct IPs</div>
+        </div>
       </div>
       <div class="col-6 col-md-3">
-        <div class="card card-stat p-3"><div class="label">Cost today</div><div class="value">${{ '%.4f'|format(ov.cost_today) }} <small class="text-muted">/ ${{ '%.2f'|format(daily_budget) }}</small></div></div>
+        <div class="card card-stat p-3">
+          <div class="label">Cost today</div>
+          <div class="value">${{ '%.4f'|format(ov.cost_today) }}</div>
+          <div class="small text-muted">budget ${{ '%.2f'|format(daily_budget) }} · all providers</div>
+        </div>
       </div>
       <div class="col-6 col-md-3">
-        <div class="card card-stat p-3"><div class="label">Cost all-time</div><div class="value">${{ '%.4f'|format(ov.cost_all_time) }}</div></div>
+        <div class="card card-stat p-3">
+          <div class="label">Cost all-time</div>
+          <div class="value">${{ '%.4f'|format(ov.cost_all_time) }}</div>
+          <div class="small text-muted">Claude + Flux + TTS</div>
+        </div>
       </div>
       <div class="col-6 col-md-3">
-        <div class="card card-stat p-3"><div class="label">Avg cost / lesson</div><div class="value">${{ '%.5f'|format(ov.avg_cost_per_lesson) }}</div></div>
+        <div class="card card-stat p-3">
+          <div class="label">Avg cost / lesson</div>
+          <div class="value">${{ '%.5f'|format(ov.avg_cost_per_lesson) }}</div>
+          <div class="small text-muted">total spend ÷ lessons</div>
+        </div>
       </div>
       <div class="col-6 col-md-3">
-        <div class="card card-stat p-3"><div class="label">Avg generation time</div><div class="value">{{ (ov.avg_gen_ms/1000)|round(1) }}s</div></div>
+        <div class="card card-stat p-3">
+          <div class="label">Avg generation time</div>
+          <div class="value">{{ (ov.avg_gen_ms/1000)|round(1) }}s</div>
+          <div class="small text-muted">
+            Claude {{ (ov.avg_claude_ms/1000)|round(1) }}s + Flux {{ (ov.avg_flux_ms/1000)|round(1) }}s
+          </div>
+        </div>
       </div>
       <div class="col-6 col-md-3">
-        <div class="card card-stat p-3" style="border-left-color:#E24B4A;"><div class="label">Errors today</div><div class="value">{{ ov.errors_today }}</div></div>
+        <div class="card card-stat p-3" style="border-left-color:#E24B4A;">
+          <div class="label">Lesson errors today</div>
+          <div class="value">{{ ov.errors_today }}</div>
+          <div class="small text-muted">{{ ov.errors_today_total }} total errors (incl. TTS / Flux)</div>
+        </div>
       </div>
     </div>
 
