@@ -607,8 +607,10 @@ def admin_dashboard():
         "slowest_lessons": admin_slowest_lessons(10),
         "recent_errors": admin_recent_errors(30),
     }
+    from lesson_platform.db import ADMIN_TZ
     return render_template("admin.html", db_enabled=True, data=data,
-                           daily_budget=settings.daily_budget_usd)
+                           daily_budget=settings.daily_budget_usd,
+                           admin_tz=ADMIN_TZ)
 
 
 @app.route("/favicon.ico")

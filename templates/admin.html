@@ -20,6 +20,7 @@
   <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
     <div class="container-fluid">
       <span class="navbar-brand">HowStuffWorks · Admin</span>
+      <span class="badge bg-secondary me-auto">All times in {{ admin_tz }}</span>
       <a href="/" class="btn btn-sm btn-outline-light me-2">View site</a>
       <form method="post" action="{{ url_for('admin_logout') }}" class="d-inline">
         <button type="submit" class="btn btn-sm btn-outline-light">Logout</button>
@@ -111,7 +112,7 @@
             <tbody>
               {% for r in data.slowest_lessons %}
                 <tr>
-                  <td class="nowrap">{{ r.created_at[:16].replace('T',' ') if r.created_at else '—' }}</td>
+                  <td class="nowrap">{{ r.created_at or '—' }}</td>
                   <td class="truncate" title="{{ r.question }}">{{ r.question }}</td>
                   <td class="nowrap">{{ (r.duration_ms/1000)|round(1) }}s</td>
                   <td class="nowrap">${{ '%.4f'|format(r.cost) }}</td>
@@ -144,7 +145,7 @@
           <tbody>
             {% for r in data.recent_lessons %}
               <tr>
-                <td class="nowrap">{{ r.created_at[:16].replace('T',' ') if r.created_at else '—' }}</td>
+                <td class="nowrap">{{ r.created_at or '—' }}</td>
                 <td class="truncate" title="{{ r.question }}">{{ r.question }}</td>
                 <td class="nowrap">${{ '%.4f'|format(r.claude_cost) }}</td>
                 <td class="nowrap">${{ '%.4f'|format(r.flux_cost) }}</td>
@@ -171,7 +172,7 @@
           <tbody>
             {% for e in data.recent_errors %}
               <tr>
-                <td class="nowrap">{{ e.created_at[:16].replace('T',' ') if e.created_at else '—' }}</td>
+                <td class="nowrap">{{ e.created_at or '—' }}</td>
                 <td class="nowrap"><code>{{ e.endpoint }}</code></td>
                 <td class="truncate" title="{{ e.question }}">{{ e.question }}</td>
                 <td><pre class="err text-danger">{{ e.error }}</pre></td>
