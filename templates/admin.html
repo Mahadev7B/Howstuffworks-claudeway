@@ -49,7 +49,7 @@
         <div class="card card-stat p-3">
           <div class="label">Lessons today</div>
           <div class="value">{{ ov.lessons_today }}</div>
-          <div class="small text-muted">since midnight {{ admin_tz }}</div>
+          <div class="small text-muted">since {{ ov.today_start_iso[:16].replace('T', ' ') }} {{ admin_tz }}</div>
         </div>
       </div>
       <div class="col-6 col-md-3">

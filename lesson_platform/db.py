@@ -5,7 +5,13 @@ import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 from typing import Any
+
+try:
+    from zoneinfo import ZoneInfo  # Py 3.9+
+except ImportError:  # pragma: no cover
+    ZoneInfo = None  # type: ignore
 
 import psycopg
 from psycopg.types.json import Jsonb
@@ -440,11 +446,27 @@ _TTS_ENDPOINT = "/api/tts"
 # (Eastern Time, handles EST/EDT automatically). Override via ADMIN_TZ env var
 # with any IANA timezone name (e.g. "America/New_York", "Asia/Kolkata", "UTC").
 ADMIN_TZ = os.getenv("ADMIN_TZ", "America/New_York")
-# "Start of today in ADMIN_TZ", as a timestamptz comparable to created_at.
-_TODAY_START_SQL = f"((NOW() AT TIME ZONE '{ADMIN_TZ}')::date) AT TIME ZONE '{ADMIN_TZ}'"
-# Date in ADMIN_TZ for grouping.
 _LOCAL_DATE_SQL = f"DATE(created_at AT TIME ZONE '{ADMIN_TZ}')"
 _LOCAL_HOUR_SQL = f"EXTRACT(HOUR FROM created_at AT TIME ZONE '{ADMIN_TZ}')::int"
+
+
+def today_start_local() -> datetime:
+    """Return the timezone-aware datetime at midnight ADMIN_TZ today.
+
+    Computed in Python and passed as a SQL parameter so we don't rely on
+    Postgres timezone arithmetic for the day boundary. Comparable directly
+    to `timestamptz` columns.
+    """
+    if ZoneInfo is not None:
+        try:
+            tz = ZoneInfo(ADMIN_TZ)
+            now = datetime.now(tz)
+            return now.replace(hour=0, minute=0, second=0, microsecond=0)
+        except Exception:
+            logger.warning("ADMIN_TZ %r not found — falling back to UTC", ADMIN_TZ)
+    # Last-resort fallback: UTC midnight, with explicit UTC offset.
+    from datetime import timezone as _tz
+    return datetime.now(_tz.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 def _safe_query(default, fn):
@@ -467,6 +489,8 @@ def admin_overview() -> dict[str, Any]:
     """Return headline numbers for the dashboard cards."""
     def q(cur):
         endpoints = list(_LESSON_GEN_ENDPOINTS)
+        today_start = today_start_local()
+        logger.info("Admin overview: today_start=%s (tz=%s)", today_start.isoformat(), ADMIN_TZ)
 
         # Real lesson generations (excludes cache hits and old GET-only rows).
         cur.execute(f"SELECT COUNT(*) FROM api_calls WHERE {_REAL_LESSON_FILTER}", (endpoints,))
@@ -474,28 +498,25 @@ def admin_overview() -> dict[str, Any]:
 
         cur.execute(f"""
             SELECT COUNT(*) FROM api_calls
-            WHERE {_REAL_LESSON_FILTER} AND created_at >= {_TODAY_START_SQL}
-        """, (endpoints,))
+            WHERE {_REAL_LESSON_FILTER} AND created_at >= %s
+        """, (endpoints, today_start))
         lessons_today = int(cur.fetchone()[0] or 0)
 
-        # Unique visitors today (approx by distinct IP across all endpoints).
-        cur.execute(f"""
+        cur.execute("""
             SELECT COUNT(DISTINCT ip_address) FROM api_calls
-            WHERE ip_address IS NOT NULL AND created_at >= {_TODAY_START_SQL}
-        """)
+            WHERE ip_address IS NOT NULL AND created_at >= %s
+        """, (today_start,))
         unique_ips_today = int(cur.fetchone()[0] or 0)
 
-        # Total spend (Claude + Flux + TTS combined) — sums all api_calls rows.
-        cur.execute(f"SELECT COALESCE(SUM(cost_usd), 0) FROM api_calls WHERE created_at >= {_TODAY_START_SQL}")
+        cur.execute("SELECT COALESCE(SUM(cost_usd), 0) FROM api_calls WHERE created_at >= %s",
+                    (today_start,))
         cost_today = float(cur.fetchone()[0] or 0.0)
 
         cur.execute("SELECT COALESCE(SUM(cost_usd), 0) FROM api_calls")
         cost_all_time = float(cur.fetchone()[0] or 0.0)
 
-        # Avg cost per lesson = (all-time spend across providers) / (real lessons).
         avg_cost_per_lesson = (cost_all_time / total_lessons) if total_lessons else 0.0
 
-        # Avg total generation time = avg Claude duration + avg Flux duration.
         cur.execute(f"""
             SELECT COALESCE(AVG(duration_ms), 0) FROM api_calls
             WHERE {_REAL_LESSON_FILTER}
@@ -508,18 +529,14 @@ def admin_overview() -> dict[str, Any]:
         """, (_FLUX_ENDPOINT,))
         avg_flux_ms = float(cur.fetchone()[0] or 0.0)
 
-        # Errors today — split into lesson generation failures vs other (TTS/Flux).
-        cur.execute(f"""
+        cur.execute("""
             SELECT COUNT(*) FROM api_calls
-            WHERE success = false AND endpoint = ANY(%s)
-              AND created_at >= {_TODAY_START_SQL}
-        """, (endpoints,))
+            WHERE success = false AND endpoint = ANY(%s) AND created_at >= %s
+        """, (endpoints, today_start))
         lesson_errors_today = int(cur.fetchone()[0] or 0)
 
-        cur.execute(f"""
-            SELECT COUNT(*) FROM api_calls
-            WHERE success = false AND created_at >= {_TODAY_START_SQL}
-        """)
+        cur.execute("SELECT COUNT(*) FROM api_calls WHERE success = false AND created_at >= %s",
+                    (today_start,))
         all_errors_today = int(cur.fetchone()[0] or 0)
 
         return {
@@ -534,12 +551,14 @@ def admin_overview() -> dict[str, Any]:
             "avg_gen_ms": int(avg_claude_ms + avg_flux_ms),
             "errors_today": lesson_errors_today,
             "errors_today_total": all_errors_today,
+            "today_start_iso": today_start.isoformat(),
         }
     return _safe_query({
         "total_lessons": 0, "lessons_today": 0, "unique_ips_today": 0,
         "cost_today": 0.0, "cost_all_time": 0.0, "avg_cost_per_lesson": 0.0,
         "avg_claude_ms": 0, "avg_flux_ms": 0, "avg_gen_ms": 0,
         "errors_today": 0, "errors_today_total": 0,
+        "today_start_iso": "",
     }, q)
 
 
