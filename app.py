@@ -29,17 +29,7 @@ from flask import (
 )
 
 from lesson_platform import (
-    admin_cost_by_day,
-    admin_cost_by_provider,
-    admin_device_split,
-    admin_lessons_by_day,
-    admin_lessons_by_hour,
-    admin_overview,
-    admin_perf_by_day,
-    admin_recent_errors,
-    admin_recent_lessons,
-    admin_slowest_lessons,
-    admin_top_questions,
+    admin_load_all,
     check_question,
     delete_cached_lesson,
     extract_and_lookup,
@@ -594,19 +584,11 @@ def admin_dashboard():
         return redirect(url_for("admin_login"))
     if not db_enabled:
         return render_template("admin.html", db_enabled=False, data={})
-    data = {
-        "overview": admin_overview(),
-        "lessons_by_day": admin_lessons_by_day(14),
-        "lessons_by_hour": admin_lessons_by_hour(),
-        "device_split": admin_device_split(),
-        "top_questions": admin_top_questions(15),
-        "cost_by_day": admin_cost_by_day(14),
-        "cost_by_provider": admin_cost_by_provider(),
-        "recent_lessons": admin_recent_lessons(50),
-        "perf_by_day": admin_perf_by_day(14),
-        "slowest_lessons": admin_slowest_lessons(10),
-        "recent_errors": admin_recent_errors(30),
-    }
+    data = admin_load_all(
+        days_lessons=14, days_cost=14, days_perf=14,
+        limit_questions=15, limit_recent=50,
+        limit_slowest=10, limit_errors=30,
+    )
     from lesson_platform.db import ADMIN_TZ
     return render_template("admin.html", db_enabled=True, data=data,
                            daily_budget=settings.daily_budget_usd,

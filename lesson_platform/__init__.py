@@ -2,6 +2,7 @@ from .ai_generation import generate_lesson
 from .config import load_settings
 from .guardrails import check_question
 from .db import (
+    admin_load_all,
     admin_cost_by_day,
     admin_cost_by_provider,
     admin_device_split,
@@ -30,6 +31,7 @@ from .renderer import render as render_spec
 from .tts import synthesize
 
 __all__ = [
+    "admin_load_all",
     "generate_lesson",
     "check_question",
     "load_settings",
