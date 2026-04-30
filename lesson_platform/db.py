@@ -459,7 +459,7 @@ ADMIN_IP_PREFIXES: list[str] = [ip for ip in _raw_admin_ips if ip.endswith(":")]
 # Comma-separated cities to exclude (e.g. datacenter cities like Ashburn).
 # ADMIN_EXCLUDE_CITIES=Ashburn,Frankfurt
 ADMIN_EXCLUDE_CITIES: list[str] = [
-    c.strip() for c in os.getenv("ADMIN_EXCLUDE_CITIES", "Ashburn").split(",") if c.strip()
+    c.strip() for c in os.getenv("ADMIN_EXCLUDE_CITIES", "Ashburn,New York,Ohio,Columbus").split(",") if c.strip()
 ]
 
 
