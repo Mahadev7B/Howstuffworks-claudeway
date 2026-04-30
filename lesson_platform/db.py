@@ -19,10 +19,11 @@ from psycopg_pool import ConnectionPool
 
 logger = logging.getLogger(__name__)
 
-_pool: ConnectionPool | None = None
+# Two separate pools so admin dashboard reads never starve lesson-generation writes.
+_pool: ConnectionPool | None = None        # lesson path: writes + cache + rate-limit
+_admin_pool: ConnectionPool | None = None  # admin dashboard reads only
 
 # Hard cap on how long ANY db operation may wait for a pool connection.
-# If the pool is exhausted we skip the op rather than block lesson generation.
 _POOL_TIMEOUT_S = 3.0
 # libpq-level connect timeout (when the pool has to open a new socket).
 _CONNECT_TIMEOUT_S = 5
@@ -111,8 +112,8 @@ def _check_connection(conn) -> None:
 
 
 def init_db() -> bool:
-    """Create the pool and ensure schema exists. Returns True if DB is available."""
-    global _pool
+    """Create both pools and ensure schema exists. Returns True if DB is available."""
+    global _pool, _admin_pool
     dsn = os.getenv("DATABASE_URL")
     if not dsn:
         logger.warning("DATABASE_URL not set — DB storage disabled")
@@ -122,7 +123,18 @@ def init_db() -> bool:
             dsn,
             min_size=1,
             max_size=4,
-            timeout=_POOL_TIMEOUT_S,                      # default checkout timeout
+            timeout=_POOL_TIMEOUT_S,
+            kwargs={"autocommit": True, "connect_timeout": _CONNECT_TIMEOUT_S},
+            check=_check_connection,
+            reconnect_timeout=10,
+        )
+        # Separate pool for admin reads: max 1 connection, longer timeout.
+        # Keeps admin dashboard from starving lesson-path writes.
+        _admin_pool = ConnectionPool(
+            dsn,
+            min_size=0,
+            max_size=1,
+            timeout=30.0,
             kwargs={"autocommit": True, "connect_timeout": _CONNECT_TIMEOUT_S},
             check=_check_connection,
             reconnect_timeout=10,
@@ -134,6 +146,7 @@ def init_db() -> bool:
     except Exception:
         logger.exception("DB init failed")
         _pool = None
+        _admin_pool = None
         return False
 
 
@@ -512,10 +525,10 @@ def today_start_local() -> datetime:
 
 
 def _safe_query(default, fn):
-    if _pool is None:
+    if _admin_pool is None:
         return default
     try:
-        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        with _admin_pool.connection(timeout=30.0) as conn, conn.cursor() as cur:
             return fn(cur)
     except Exception:
         logger.exception("Admin query failed — returning default")
