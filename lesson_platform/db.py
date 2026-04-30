@@ -449,22 +449,37 @@ ADMIN_TZ = os.getenv("ADMIN_TZ", "America/New_York")
 _LOCAL_DATE_SQL = f"DATE(created_at AT TIME ZONE '{ADMIN_TZ}')"
 _LOCAL_HOUR_SQL = f"EXTRACT(HOUR FROM created_at AT TIME ZONE '{ADMIN_TZ}')::int"
 
-# Comma-separated list of IPs to exclude from all admin analytics.
-# Set ADMIN_IPS env var, e.g. "1.2.3.4,5.6.7.8"
-ADMIN_IPS: list[str] = [
-    ip.strip() for ip in os.getenv("ADMIN_IPS", "").split(",") if ip.strip()
-]
+# Comma-separated IPs or IPv6 prefixes to exclude from all admin analytics.
+# Full IPs:    ADMIN_IPS=1.2.3.4,2a02:26f7:1234:5678::1
+# Prefixes:    ADMIN_IPS=2a02:26f7:1234:   (trailing colon = prefix match)
+# Mix both:    ADMIN_IPS=192.168.1.1,2a02:26f7:abcd:
+_raw_admin_ips = [ip.strip() for ip in os.getenv("ADMIN_IPS", "").split(",") if ip.strip()]
+ADMIN_IPS: list[str] = [ip for ip in _raw_admin_ips if not ip.endswith(":")]
+ADMIN_IP_PREFIXES: list[str] = [ip for ip in _raw_admin_ips if ip.endswith(":")]
 
 
-def _exclude_admin_ip_sql(param_offset: int = 0) -> tuple[str, list]:
+def _exclude_admin_ip_sql() -> tuple[str, list]:
     """Return (sql_fragment, params) to append to a WHERE clause.
 
-    param_offset is unused (kept for signature clarity); params is empty when
-    no ADMIN_IPS are configured, so callers can always unconditionally append it.
+    Handles exact IP matches and prefix matches (for rotating IPv6 addresses).
+    Returns ("", []) when no ADMIN_IPS are configured.
     """
-    if not ADMIN_IPS:
+    if not ADMIN_IPS and not ADMIN_IP_PREFIXES:
         return "", []
-    return "AND (ip_address IS NULL OR ip_address != ALL(%s))", [ADMIN_IPS]
+
+    clauses: list[str] = []
+    params: list = []
+
+    if ADMIN_IPS:
+        clauses.append("ip_address != ALL(%s)")
+        params.append(ADMIN_IPS)
+
+    for prefix in ADMIN_IP_PREFIXES:
+        clauses.append("ip_address NOT LIKE %s")
+        params.append(prefix + "%")
+
+    inner = " AND ".join(clauses)
+    return f"AND (ip_address IS NULL OR ({inner}))", params
 
 
 def today_start_local() -> datetime:
@@ -615,7 +630,7 @@ def admin_load_all(
             "errors_today": lesson_errors_today,
             "errors_today_total": all_errors_today,
             "today_start_iso": today_start.isoformat(),
-            "admin_ips_excluded": len(ADMIN_IPS),
+            "admin_ips_excluded": len(ADMIN_IPS) + len(ADMIN_IP_PREFIXES),
         }
 
         # ── Lessons by day ────────────────────────────────────────────────────
