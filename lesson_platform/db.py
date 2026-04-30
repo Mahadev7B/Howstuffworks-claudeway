@@ -122,26 +122,29 @@ def init_db() -> bool:
         _pool = ConnectionPool(
             dsn,
             min_size=1,
-            max_size=4,
+            max_size=3,
             timeout=_POOL_TIMEOUT_S,
             kwargs={"autocommit": True, "connect_timeout": _CONNECT_TIMEOUT_S},
             check=_check_connection,
             reconnect_timeout=10,
         )
-        # Separate pool for admin reads: max 1 connection, longer timeout.
-        # Keeps admin dashboard from starving lesson-path writes.
+        # Separate pool for admin reads — open=False so no connection is made
+        # at startup; it opens lazily on first admin page load.
+        # max_size=1 so at most one admin query runs at a time.
         _admin_pool = ConnectionPool(
             dsn,
             min_size=0,
             max_size=1,
             timeout=30.0,
+            open=False,
             kwargs={"autocommit": True, "connect_timeout": _CONNECT_TIMEOUT_S},
             check=_check_connection,
             reconnect_timeout=10,
         )
+        _admin_pool.open(wait=False)
         with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute(SCHEMA)
-        logger.info("DB ready (feedback + api_calls)")
+        logger.info("DB ready (feedback + api_calls, admin pool lazy)")
         return True
     except Exception:
         logger.exception("DB init failed")
