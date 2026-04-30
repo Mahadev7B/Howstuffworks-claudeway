@@ -20,7 +20,16 @@
   <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
     <div class="container-fluid">
       <span class="navbar-brand">HowStuffWorks · Admin</span>
-      <span class="badge bg-secondary me-auto">All times in {{ admin_tz }}</span>
+      <span class="badge bg-secondary me-2">All times in {{ admin_tz }}</span>
+      {% if data.overview and data.overview.admin_ips_excluded %}
+        <span class="badge bg-warning text-dark me-auto" title="Set ADMIN_IPS env var to control this">
+          {{ data.overview.admin_ips_excluded }} admin IP{{ 's' if data.overview.admin_ips_excluded != 1 }} excluded
+        </span>
+      {% else %}
+        <span class="badge bg-danger me-auto" title="Set ADMIN_IPS=your.ip.address to exclude your own traffic">
+          Admin IPs not filtered
+        </span>
+      {% endif %}
       <a href="/" class="btn btn-sm btn-outline-light me-2">View site</a>
       <form method="post" action="{{ url_for('admin_logout') }}" class="d-inline">
         <button type="submit" class="btn btn-sm btn-outline-light">Logout</button>
