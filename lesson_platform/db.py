@@ -452,21 +452,24 @@ _LOCAL_HOUR_SQL = f"EXTRACT(HOUR FROM created_at AT TIME ZONE '{ADMIN_TZ}')::int
 # Comma-separated IPs or IPv6 prefixes to exclude from all admin analytics.
 # Full IPs:    ADMIN_IPS=1.2.3.4,2a02:26f7:1234:5678::1
 # Prefixes:    ADMIN_IPS=2a02:26f7:1234:   (trailing colon = prefix match)
-# Mix both:    ADMIN_IPS=192.168.1.1,2a02:26f7:abcd:
 _raw_admin_ips = [ip.strip() for ip in os.getenv("ADMIN_IPS", "").split(",") if ip.strip()]
 ADMIN_IPS: list[str] = [ip for ip in _raw_admin_ips if not ip.endswith(":")]
 ADMIN_IP_PREFIXES: list[str] = [ip for ip in _raw_admin_ips if ip.endswith(":")]
+
+# Comma-separated cities to exclude (e.g. datacenter cities like Ashburn).
+# ADMIN_EXCLUDE_CITIES=Ashburn,Frankfurt
+ADMIN_EXCLUDE_CITIES: list[str] = [
+    c.strip() for c in os.getenv("ADMIN_EXCLUDE_CITIES", "Ashburn").split(",") if c.strip()
+]
 
 
 def _exclude_admin_ip_sql() -> tuple[str, list]:
     """Return (sql_fragment, params) to append to a WHERE clause.
 
-    Handles exact IP matches and prefix matches (for rotating IPv6 addresses).
-    Returns ("", []) when no ADMIN_IPS are configured.
+    Excludes by exact/prefix IP match and by city (for datacenter traffic that
+    rotates IPs, e.g. Render/AWS us-east-1 appearing as Ashburn, Virginia).
+    Returns ("", []) when nothing is configured.
     """
-    if not ADMIN_IPS and not ADMIN_IP_PREFIXES:
-        return "", []
-
     clauses: list[str] = []
     params: list = []
 
@@ -478,8 +481,15 @@ def _exclude_admin_ip_sql() -> tuple[str, list]:
         clauses.append("ip_address NOT LIKE %s")
         params.append(prefix + "%")
 
+    if ADMIN_EXCLUDE_CITIES:
+        clauses.append("(city IS NULL OR city != ALL(%s))")
+        params.append(ADMIN_EXCLUDE_CITIES)
+
+    if not clauses:
+        return "", []
+
     inner = " AND ".join(clauses)
-    return f"AND (ip_address IS NULL OR ({inner}))", params
+    return f"AND ({inner})", params
 
 
 def today_start_local() -> datetime:
@@ -630,7 +640,7 @@ def admin_load_all(
             "errors_today": lesson_errors_today,
             "errors_today_total": all_errors_today,
             "today_start_iso": today_start.isoformat(),
-            "admin_ips_excluded": len(ADMIN_IPS) + len(ADMIN_IP_PREFIXES),
+            "admin_ips_excluded": len(ADMIN_IPS) + len(ADMIN_IP_PREFIXES) + len(ADMIN_EXCLUDE_CITIES),
         }
 
         # ── Lessons by day ────────────────────────────────────────────────────
