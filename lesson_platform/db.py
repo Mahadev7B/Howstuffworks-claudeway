@@ -501,6 +501,8 @@ _ADMIN_DEFAULTS = {
     "perf_by_day": [],
     "slowest_lessons": [],
     "recent_errors": [],
+    "lessons_by_country": [],
+    "lessons_by_region": [],
 }
 
 
@@ -750,6 +752,29 @@ def admin_load_all(
                           "error": r[3], "ip": r[4]}
                          for r in cur.fetchall()]
 
+        # ── Lessons by country (all time) ─────────────────────────────────────
+        cur.execute(f"""
+            SELECT COALESCE(country, 'Unknown') AS c, COUNT(*) AS n
+            FROM api_calls
+            WHERE {_REAL_LESSON_FILTER} AND country IS NOT NULL
+            GROUP BY c ORDER BY n DESC
+            LIMIT 30
+        """, (endpoints,))
+        lessons_by_country = [{"country": r[0], "count": int(r[1])} for r in cur.fetchall()]
+
+        # ── Lessons by region/state (all time) ────────────────────────────────
+        cur.execute(f"""
+            SELECT COALESCE(country, 'Unknown') AS c,
+                   COALESCE(region, 'Unknown')  AS r,
+                   COUNT(*) AS n
+            FROM api_calls
+            WHERE {_REAL_LESSON_FILTER} AND region IS NOT NULL
+            GROUP BY c, r ORDER BY n DESC
+            LIMIT 100
+        """, (endpoints,))
+        lessons_by_region = [{"country": r[0], "region": r[1], "count": int(r[2])}
+                             for r in cur.fetchall()]
+
         return {
             "overview": overview,
             "lessons_by_day": lessons_by_day,
@@ -762,9 +787,59 @@ def admin_load_all(
             "perf_by_day": perf_by_day,
             "slowest_lessons": slowest_lessons,
             "recent_errors": recent_errors,
+            "lessons_by_country": lessons_by_country,
+            "lessons_by_region": lessons_by_region,
         }
 
     return _safe_query(defaults, _run)
+
+
+def admin_lessons_filtered(
+    *,
+    country: str | None = None,
+    region: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """Return recent lessons filtered by country and/or region. One pool checkout."""
+    endpoints = list(_LESSON_GEN_ENDPOINTS)
+
+    def _run(cur):
+        clauses = [_REAL_LESSON_FILTER]
+        params: list[Any] = [endpoints]
+        if country:
+            clauses.append("country = %s")
+            params.append(country)
+        if region:
+            clauses.append("region = %s")
+            params.append(region)
+        params.append(limit)
+        cur.execute(f"""
+            SELECT
+              to_char(created_at AT TIME ZONE '{ADMIN_TZ}', 'YYYY-MM-DD HH24:MI'),
+              question, country, region, city, cost_usd, duration_ms, user_agent
+            FROM api_calls
+            WHERE {' AND '.join(clauses)}
+            ORDER BY created_at DESC
+            LIMIT %s
+        """, params)
+        out = []
+        for r in cur.fetchall():
+            created_local, question, ctry, rgn, city, cost, dur_ms, ua = r
+            ua_l = (ua or "").lower()
+            device = "mobile" if any(k in ua_l for k in ("iphone", "android", "mobile", "ipad")) else "desktop"
+            out.append({
+                "created_at": created_local,
+                "question": question,
+                "country": ctry or "—",
+                "region": rgn or "—",
+                "city": city or "—",
+                "cost": round(float(cost or 0), 5),
+                "duration_ms": int(dur_ms or 0),
+                "device": device,
+            })
+        return out
+
+    return _safe_query([], _run)
 
 
 # Individual wrappers kept for backwards-compat; all delegate to admin_load_all

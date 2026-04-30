@@ -196,6 +196,64 @@
       </div>
     </div>
 
+    <h2 class="h5 mt-5 mb-3">Geography</h2>
+    <div class="row g-3">
+      <div class="col-lg-5">
+        <div class="card p-3">
+          <h6>Lessons by country</h6>
+          <canvas id="chartByCountry" height="200"></canvas>
+        </div>
+      </div>
+      <div class="col-lg-7">
+        <div class="card p-3">
+          <h6>Lessons by state / region</h6>
+          <canvas id="chartByRegion" height="200"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <h2 class="h5 mt-5 mb-3">Filter by location</h2>
+    <div class="card p-3">
+      <div class="row g-2 align-items-end mb-3">
+        <div class="col-auto">
+          <label class="form-label mb-1" for="filterCountry">Country</label>
+          <select id="filterCountry" class="form-select form-select-sm" style="min-width:160px;">
+            <option value="">All countries</option>
+          </select>
+        </div>
+        <div class="col-auto">
+          <label class="form-label mb-1" for="filterRegion">State / Region</label>
+          <select id="filterRegion" class="form-select form-select-sm" style="min-width:180px;" disabled>
+            <option value="">All regions</option>
+          </select>
+        </div>
+        <div class="col-auto">
+          <button id="filterApply" class="btn btn-sm btn-primary">Apply</button>
+          <button id="filterReset" class="btn btn-sm btn-outline-secondary ms-1">Reset</button>
+        </div>
+        <div class="col-auto ms-auto text-muted small" id="filterStatus"></div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0" id="locationTable">
+          <thead class="table-light">
+            <tr>
+              <th>When</th>
+              <th>Question</th>
+              <th>Country</th>
+              <th>State/Region</th>
+              <th>City</th>
+              <th>Device</th>
+              <th class="nowrap">Time</th>
+              <th class="nowrap">Cost</th>
+            </tr>
+          </thead>
+          <tbody id="locationTableBody">
+            <tr><td colspan="8" class="text-muted">Select a filter and click Apply</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <h2 class="h5 mt-5 mb-3">Recent errors</h2>
     <div class="card p-0">
       <div class="table-responsive">
@@ -279,6 +337,92 @@
         { label: 'Claude (ms)', data: pbd.map(r => r.claude_ms), borderColor: '#7F77DD', tension: 0.3 },
         { label: 'Flux (ms)',   data: pbd.map(r => r.flux_ms),   borderColor: '#EF9F27', tension: 0.3 },
       ]);
+
+    // ── Geography charts ──────────────────────────────────────────────────────
+    const byCountry = DATA.lessons_by_country || [];
+    doughnut('chartByCountry', byCountry.map(r => r.country), byCountry.map(r => r.count));
+
+    const byRegion = DATA.lessons_by_region || [];
+    barChart('chartByRegion',
+      byRegion.slice(0, 20).map(r => r.region + (byRegion.length > 1 ? ' (' + r.country + ')' : '')),
+      [{ label: 'Lessons', data: byRegion.slice(0, 20).map(r => r.count), backgroundColor: '#7F77DD' }]);
+
+    // ── Location filter ───────────────────────────────────────────────────────
+    const allRegions = DATA.lessons_by_region || [];
+    const countrySelect = document.getElementById('filterCountry');
+    const regionSelect  = document.getElementById('filterRegion');
+    const applyBtn      = document.getElementById('filterApply');
+    const resetBtn      = document.getElementById('filterReset');
+    const statusEl      = document.getElementById('filterStatus');
+    const tbody         = document.getElementById('locationTableBody');
+
+    // Populate country dropdown from data already in page
+    const countries = [...new Set((DATA.lessons_by_country || []).map(r => r.country))];
+    countries.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c; opt.textContent = c;
+      countrySelect.appendChild(opt);
+    });
+
+    countrySelect.addEventListener('change', () => {
+      const chosen = countrySelect.value;
+      regionSelect.innerHTML = '<option value="">All regions</option>';
+      if (chosen) {
+        allRegions.filter(r => r.country === chosen).forEach(r => {
+          const opt = document.createElement('option');
+          opt.value = r.region; opt.textContent = r.region + ' (' + r.count + ')';
+          regionSelect.appendChild(opt);
+        });
+        regionSelect.disabled = false;
+      } else {
+        regionSelect.disabled = true;
+      }
+    });
+
+    async function loadFiltered() {
+      const country = countrySelect.value;
+      const region  = regionSelect.value;
+      const params  = new URLSearchParams();
+      if (country) params.set('country', country);
+      if (region)  params.set('region', region);
+      statusEl.textContent = 'Loading…';
+      applyBtn.disabled = true;
+      try {
+        const res = await fetch('/admin/lessons-by-location?' + params.toString());
+        const json = await res.json();
+        const rows = json.lessons || [];
+        statusEl.textContent = rows.length + ' rows';
+        if (!rows.length) {
+          tbody.innerHTML = '<tr><td colspan="8" class="text-muted">No lessons found for this filter</td></tr>';
+          return;
+        }
+        tbody.innerHTML = rows.map(r => `
+          <tr>
+            <td class="nowrap">${r.created_at || '—'}</td>
+            <td class="truncate" title="${r.question}">${r.question}</td>
+            <td>${r.country}</td>
+            <td>${r.region}</td>
+            <td>${r.city}</td>
+            <td>${r.device}</td>
+            <td class="nowrap">${(r.duration_ms/1000).toFixed(1)}s</td>
+            <td class="nowrap">$${r.cost.toFixed(4)}</td>
+          </tr>`).join('');
+      } catch(e) {
+        statusEl.textContent = 'Error';
+        console.error(e);
+      } finally {
+        applyBtn.disabled = false;
+      }
+    }
+
+    applyBtn.addEventListener('click', loadFiltered);
+    resetBtn.addEventListener('click', () => {
+      countrySelect.value = '';
+      regionSelect.innerHTML = '<option value="">All regions</option>';
+      regionSelect.disabled = true;
+      tbody.innerHTML = '<tr><td colspan="8" class="text-muted">Select a filter and click Apply</td></tr>';
+      statusEl.textContent = '';
+    });
   </script>
 </body>
 </html>

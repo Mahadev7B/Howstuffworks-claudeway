@@ -3,6 +3,7 @@ from .config import load_settings
 from .guardrails import check_question
 from .db import (
     admin_load_all,
+    admin_lessons_filtered,
     admin_cost_by_day,
     admin_cost_by_provider,
     admin_device_split,
@@ -32,6 +33,7 @@ from .tts import synthesize
 
 __all__ = [
     "admin_load_all",
+    "admin_lessons_filtered",
     "generate_lesson",
     "check_question",
     "load_settings",

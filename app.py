@@ -30,6 +30,7 @@ from flask import (
 
 from lesson_platform import (
     admin_load_all,
+    admin_lessons_filtered,
     check_question,
     delete_cached_lesson,
     extract_and_lookup,
@@ -593,6 +594,19 @@ def admin_dashboard():
     return render_template("admin.html", db_enabled=True, data=data,
                            daily_budget=settings.daily_budget_usd,
                            admin_tz=ADMIN_TZ)
+
+
+@app.route("/admin/lessons-by-location", methods=["GET"])
+def admin_lessons_by_location():
+    """JSON: recent lessons filtered by country/region. Used by the location filter UI."""
+    if not _admin_authed():
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+    if not db_enabled:
+        return jsonify({"ok": False, "lessons": []}), 503
+    country = request.args.get("country") or None
+    region = request.args.get("region") or None
+    rows = admin_lessons_filtered(country=country, region=region, limit=100)
+    return jsonify({"ok": True, "lessons": rows})
 
 
 @app.route("/favicon.ico")
