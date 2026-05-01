@@ -681,6 +681,8 @@ button {
   text-align: center;
 }
 #quizLaunch { margin-bottom: 1.5rem; }
+.quiz-invite { margin: 0 0 0.75rem; font-size: 1rem; color: var(--ink-muted); }
+.quiz-skip   { margin: 0.5rem 0 0; font-size: 0.82rem; color: var(--ink-soft); }
 
 #quizBody {
   background: var(--surface);

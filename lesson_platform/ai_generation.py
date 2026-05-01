@@ -245,9 +245,10 @@ Rules:
 - Each question tests basic understanding from the lesson only.
 - 3 answer options per question, exactly one correct.
 - Language: short sentences, easy words, clear meaning.
-- Tone: fun, encouraging, playful.
-- Never use tricky, negative, or discouraging wording.
-- Each explanation is one simple sentence saying why the answer is correct."""
+- Questions should feel inviting and low-pressure — like a fun game, not a test.
+- Tone: warm, playful, encouraging. Never tricky, negative, or discouraging.
+- Wrong answers should be plausible but clearly different — never mean or silly.
+- Each explanation is one simple, positive sentence saying why the answer is correct."""
 
 
 def generate_quiz(lesson: dict[str, Any], settings: Settings) -> dict[str, Any]:

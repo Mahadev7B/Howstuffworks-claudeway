@@ -90,7 +90,9 @@
 
     <section class="quiz-section" id="quizSection">
       <div id="quizLaunch">
-        <button class="primary" id="quizBtn">🎯 Take the quiz!</button>
+        <p class="quiz-invite">Want to see how much you remember? It's just for fun! 😊</p>
+        <button class="primary" id="quizBtn">🎯 Try the quiz</button>
+        <p class="quiz-skip">No pressure — you can always skip!</p>
       </div>
       <div id="quizBody" hidden></div>
     </section>
@@ -389,7 +391,7 @@
 
         quizBody.innerHTML = `
           <h3 class="quiz-title">Quick Quiz 🎉</h3>
-          <p class="quiz-sub">Answer all ${total} questions!</p>
+          <p class="quiz-sub">Just for fun — give it a go! No wrong answers count against you.</p>
           <div id="quizQuestions"></div>
           <div id="quizResult" hidden>
             <p class="quiz-score" id="quizScore"></p>
