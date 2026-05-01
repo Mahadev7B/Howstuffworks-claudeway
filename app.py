@@ -560,6 +560,56 @@ def admin_clear_cache():
         return jsonify({"ok": False, "error": str(exc)}), 500
 
 
+@app.route("/admin/delete-cached-lesson", methods=["POST"])
+def admin_delete_cached_lesson():
+    """Delete a single cached lesson by question text. Requires admin session."""
+    if not _admin_authed():
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+    if not db_enabled:
+        return jsonify({"ok": False, "error": "DB not enabled"}), 503
+    question = (request.get_json(silent=True) or {}).get("question", "").strip()
+    if not question:
+        return jsonify({"ok": False, "error": "question is required"}), 400
+    from lesson_platform.db import _pool, _POOL_TIMEOUT_S, question_hash
+    try:
+        qhash = question_hash(question)
+        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM cached_lessons WHERE question_hash = %s", (qhash,))
+            deleted = cur.rowcount
+        logger.info("Admin deleted cached lesson: %s (found=%s)", question[:80], deleted > 0)
+        return jsonify({"ok": True, "deleted": deleted > 0})
+    except Exception as exc:
+        logger.exception("Admin delete-cached-lesson failed")
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.route("/admin/cached-lessons", methods=["GET"])
+def admin_cached_lessons():
+    """List all cached lessons. Requires admin session."""
+    if not _admin_authed():
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+    if not db_enabled:
+        return jsonify({"ok": False, "error": "DB not enabled"}), 503
+    from lesson_platform.db import _pool, _POOL_TIMEOUT_S, ADMIN_TZ
+    try:
+        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT question,
+                       hit_count,
+                       pinned,
+                       to_char(created_at AT TIME ZONE '{ADMIN_TZ}', 'YYYY-MM-DD HH24:MI') AS created,
+                       to_char(last_hit_at  AT TIME ZONE '{ADMIN_TZ}', 'YYYY-MM-DD HH24:MI') AS last_hit
+                FROM cached_lessons
+                ORDER BY hit_count DESC, created_at DESC
+            """)
+            rows = [{"question": r[0], "hits": r[1], "pinned": r[2],
+                     "created": r[3], "last_hit": r[4]} for r in cur.fetchall()]
+        return jsonify({"ok": True, "lessons": rows})
+    except Exception as exc:
+        logger.exception("Admin cached-lessons list failed")
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
 # ---------------------------------------------------------------------------
 # Admin dashboard — read-only views over api_calls. Never touches lesson path.
 # ---------------------------------------------------------------------------

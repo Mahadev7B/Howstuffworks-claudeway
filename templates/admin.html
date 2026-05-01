@@ -263,6 +263,13 @@
       </div>
     </div>
 
+    <h2 class="h5 mt-5 mb-3">Cached lessons
+      <button class="btn btn-sm btn-outline-secondary ms-2" id="cacheLoadBtn">Load</button>
+    </h2>
+    <div class="card p-3" id="cachePanel">
+      <p class="text-muted small mb-0">Click Load to see cached lessons.</p>
+    </div>
+
     <h2 class="h5 mt-5 mb-3">Recent errors</h2>
     <div class="card p-0">
       <div class="table-responsive">
@@ -423,6 +430,73 @@
         applyBtn.disabled = false;
       }
     }
+
+    // ── Cache management ──────────────────────────────────────────────────────
+    const cacheLoadBtn = document.getElementById('cacheLoadBtn');
+    const cachePanel   = document.getElementById('cachePanel');
+
+    cacheLoadBtn.addEventListener('click', async () => {
+      cacheLoadBtn.disabled = true;
+      cacheLoadBtn.textContent = 'Loading…';
+      try {
+        const res  = await fetch('/admin/cached-lessons');
+        const data = await res.json();
+        const rows = data.lessons || [];
+        if (!rows.length) {
+          cachePanel.innerHTML = '<p class="text-muted small mb-0">No cached lessons.</p>';
+          return;
+        }
+        cachePanel.innerHTML = `
+          <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0" id="cacheTable">
+              <thead class="table-light">
+                <tr><th>Question</th><th class="nowrap">Hits</th><th class="nowrap">Pinned</th><th class="nowrap">Created</th><th class="nowrap">Last hit</th><th></th></tr>
+              </thead>
+              <tbody>
+                ${rows.map(r => `
+                  <tr id="crow-${CSS.escape(r.question)}">
+                    <td class="truncate" title="${r.question}">${r.question}</td>
+                    <td class="nowrap">${r.hits}</td>
+                    <td class="nowrap">${r.pinned ? '📌' : ''}</td>
+                    <td class="nowrap">${r.created || '—'}</td>
+                    <td class="nowrap">${r.last_hit || '—'}</td>
+                    <td class="nowrap">
+                      <button class="btn btn-sm btn-outline-danger cache-del-btn"
+                              data-q="${r.question.replace(/"/g, '&quot;')}">Delete</button>
+                    </td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>`;
+
+        cachePanel.querySelectorAll('.cache-del-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const q = btn.dataset.q;
+            if (!confirm('Delete cached lesson for:\n"' + q + '"?')) return;
+            btn.disabled = true;
+            btn.textContent = '…';
+            const r = await fetch('/admin/delete-cached-lesson', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ question: q }),
+            });
+            const d = await r.json();
+            if (d.ok) {
+              btn.closest('tr').remove();
+            } else {
+              btn.disabled = false;
+              btn.textContent = 'Delete';
+              alert('Error: ' + d.error);
+            }
+          });
+        });
+      } catch(e) {
+        cachePanel.innerHTML = '<p class="text-danger small">Failed to load cache.</p>';
+      } finally {
+        cacheLoadBtn.disabled = false;
+        cacheLoadBtn.textContent = 'Refresh';
+      }
+    });
 
     applyBtn.addEventListener('click', loadFiltered);
     resetBtn.addEventListener('click', () => {
