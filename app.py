@@ -115,12 +115,43 @@ FEEDBACK_HOURLY_LIMIT = 10  # per IP
 # Sentinel returned by _guardrail_check when the rate limit is the reason
 RATE_LIMIT_ERROR = "rate_limit"
 
+# Words in an image prompt that cause Flux to render garbled text.
+# If any are found, the prompt is rewritten to a safe scene-only version.
+_FLUX_BANNED_PROMPT_WORDS = {
+    "arrow", "arrows", "label", "labels", "labeled", "labelled",
+    "diagram", "diagrams", "callout", "callouts", "pointing",
+    "text overlay", "annotation", "annotated", "caption",
+}
+
+_FLUX_STYLE_SUFFIX = (
+    "children's educational storybook illustration, "
+    "flat bright colors, soft rounded shapes, no text, no labels"
+)
+
+
+def _sanitize_flux_prompt(prompt: str, slide_title: str, subject: str) -> str:
+    """Return a safe prompt, replacing it if it contains diagram/arrow language."""
+    words = set(prompt.lower().split())
+    if words & _FLUX_BANNED_PROMPT_WORDS:
+        logger.warning("Flux prompt contained banned words — rewriting: %s", prompt[:120])
+        return (
+            f"A cheerful illustrated scene showing {subject}, {slide_title.lower()}, "
+            f"bright and colorful, simple composition, "
+            f"{_FLUX_STYLE_SUFFIX}"
+        )
+    return prompt
+
 
 def _render_with_flux(slide: dict, ctx: dict) -> bool:
     """Generate image via Flux Schnell. Returns True on success. Records api_call."""
     prompt = (slide.get("image_prompt") or "").strip()
     if not prompt:
         return False
+    prompt = _sanitize_flux_prompt(
+        prompt,
+        slide.get("title", ""),
+        slide.get("subject", ""),
+    )
     negative_prompt = (slide.get("image_negative_prompt") or "").strip() or None
     started = time.time()
     try:
@@ -182,6 +213,9 @@ def _attach_slide_images(lesson: dict, ctx: dict | None = None) -> None:
         ctx = {"ip_address": None, "city": None, "region": None,
                "country": None, "user_agent": None}
     use_flux = settings.image_provider == "flux" and bool(settings.fal_api_key)
+    subject = lesson.get("subject", "")
+    for s in lesson.get("slides", []):
+        s.setdefault("subject", subject)
     slides = [s for s in lesson.get("slides", []) if not s.get("image_data_url")]
     rendered_flux = rendered_mpl = 0
 
