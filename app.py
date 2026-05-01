@@ -125,15 +125,38 @@ _FLUX_BANNED_PROMPT_WORDS = {
 }
 
 _FLUX_STYLE_SUFFIX = (
-    "children's educational storybook illustration, "
-    "flat bright colors, soft rounded shapes, no text, no labels"
+    "visually engaging educational illustration, topic-appropriate colors, "
+    "clean composition, no text, no letters, no words, no numbers, "
+    "no labels, no diagrams, no arrows, no writing of any kind."
 )
+
+
+_NEGATION_TOKENS = {"no", "without", "free", "lacking", "minus"}
+
+
+def _has_unsafe_banned_word(prompt: str) -> bool:
+    """True only if a banned word appears as a positive instruction.
+
+    The system prompt ENDS every image_prompt with phrases like
+    "no text, no letters, no words" — those are negations telling Flux NOT to
+    render text, and must not trigger the sanitizer. We only want to catch
+    positive constructions like "diagram with labels" or "caption saying X".
+    """
+    import re as _re
+    tokens = _re.findall(r"[a-z]+", prompt.lower())
+    for i, tok in enumerate(tokens):
+        if tok not in _FLUX_BANNED_PROMPT_WORDS:
+            continue
+        prev = tokens[i - 1] if i > 0 else ""
+        if prev in _NEGATION_TOKENS:
+            continue  # "no text", "without labels" — safe
+        return True
+    return False
 
 
 def _sanitize_flux_prompt(prompt: str, slide_title: str, subject: str) -> str:
     """Return a safe prompt, replacing it if it contains diagram/arrow language."""
-    words = set(prompt.lower().split())
-    if words & _FLUX_BANNED_PROMPT_WORDS:
+    if _has_unsafe_banned_word(prompt):
         logger.warning("Flux prompt contained banned words — rewriting: %s", prompt[:120])
         return (
             f"A cheerful illustrated scene showing {subject}, {slide_title.lower()}, "
