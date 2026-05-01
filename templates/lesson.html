@@ -479,6 +479,21 @@
       preloadAudio(0);
       preloadAudio(1);
 
+      // If the user just clicked "Open Lesson" on the home page, auto-start
+      // narration. The flag is set during that click (a user gesture), which
+      // satisfies most browsers' autoplay policies for the new document.
+      try {
+        if (sessionStorage.getItem('autoplay') === '1') {
+          sessionStorage.removeItem('autoplay');
+          unlockAudio();
+          // Tiny defer so layout/audio element are fully ready before play.
+          setTimeout(() => {
+            setAuto(true);
+            speakCurrent(autoAdvance);
+          }, 50);
+        }
+      } catch (e) {}
+
       const fbSection = document.getElementById('feedback');
       const fbButtons = Array.from(document.querySelectorAll('.fb-btn'));
       const fbComment = document.getElementById('fb-comment');

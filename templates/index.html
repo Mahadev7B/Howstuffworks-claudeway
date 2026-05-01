@@ -176,6 +176,10 @@
     openLessonBtn.addEventListener('click', () => {
       const q = openLessonBtn.dataset.question || input.value.trim();
       if (!q) return;
+      // Tell the lesson page to start narration immediately on load. The click
+      // itself is the user gesture browsers require to allow audio playback;
+      // the lesson page picks up the flag and plays from slide 1.
+      try { sessionStorage.setItem('autoplay', '1'); } catch (e) {}
       // Use replace() so the loading overlay state is NOT in browser history.
       // Pressing Back from /lesson then returns to the previous real page
       // (the home view) without re-running /api/lesson.
