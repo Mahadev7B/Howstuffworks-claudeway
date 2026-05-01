@@ -1,10 +1,9 @@
 """Topic guardrails for incoming questions.
 
-Two layers:
-1. Hard-block: explicit/body-part content — never reaches Claude.
-2. Soft-check: question must relate to science, technology, nature, math,
-   history, inventions, everyday objects, or how the world works.
-   Unrelated questions (celebrity gossip, gambling, politics, etc.) get a friendly redirect.
+Single hard-block layer: explicit/inappropriate content never reaches Claude.
+Everything else is allowed through — Claude's system prompt is the source of
+truth for kid-safe handling (sensitive topics get a gentle deflection, advice
+questions get a balanced lesson, etc.).
 """
 import re
 
@@ -158,30 +157,14 @@ def is_advice_question(question: str) -> bool:
 def check_question(question: str) -> str | None:
     """Return an error message if the question should be blocked, else None.
 
-    None means the question is allowed through.
+    None means the question is allowed through. Only explicit/inappropriate
+    content is blocked here; topical filtering and sensitive-topic deflection
+    are handled by Claude's system prompt.
     """
     q_lower = question.lower()
-    tokens = _tokenize(q_lower)
 
-    # Layer 1 — hard block: substring match for explicit terms
     for term in _HARD_BLOCK:
         if term in q_lower:
             return _HARD_BLOCK_MSG
 
-    # Layer 2a — advice / safety / habits questions bypass the topic filter
-    if is_advice_question(question):
-        return None
-
-    # Layer 2b — soft topic check
-    # Build a set of meaningful words + bigrams from the question
-    words = set(tokens) - _STOPWORDS
-    bigrams = {tokens[i] + " " + tokens[i + 1] for i in range(len(tokens) - 1)}
-    candidates = words | bigrams
-
-    # Check if any allowed topic keyword appears in the question
-    for topic in _ALLOWED_TOPICS:
-        if topic in q_lower or topic in candidates:
-            return None  # on-topic, allow
-
-    # Nothing matched — off-topic redirect
-    return _OFFTOPIC_MSG
+    return None
