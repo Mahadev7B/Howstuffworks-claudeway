@@ -82,13 +82,14 @@ Content rules — be concise, every field must be SHORT:
 - Never say "I can't answer that" — always create a lesson.
 
 image_prompt rules (35–55 words):
-- One main subject, simple centered composition, bright kid-friendly colors.
+- One main subject, clear composition, rich and vibrant colors.
 - Show the slide's key idea visually — characters, objects, scenes, arrows, and diagrams are all fine.
+- Style should feel like a high-quality illustrated children's book (think Pixar concept art or National Geographic Kids) — detailed, vivid, engaging. NOT babyish or overly cartoonish.
 - NEVER ask Flux to render readable text, words, letters, numbers, labels, or captions — it cannot do this and will produce garbled foreign-looking gibberish instead.
 - Do NOT use words like "labeled", "with text", "caption", "words saying", "written on", "reading".
-- Always end with: "children's educational storybook illustration, flat bright colors, soft rounded shapes, no text, no labels."
+- Always end with: "high quality children's book illustration, vibrant colors, detailed and engaging, no text, no labels."
 
-image_negative_prompt: always exactly "text, letters, numbers, labels, captions, words, logo, watermark, scary, realistic photo, cluttered background"
+image_negative_prompt: always exactly "text, letters, numbers, labels, captions, words, logo, watermark, scary, baby cartoon, overly simple, clipart, cluttered background"
 
 Output format — a single JSON object, no markdown fences:
 
