@@ -80,30 +80,47 @@ Content rules — be concise, every field must be SHORT:
 - narration: max 2 short sentences combining the key idea and fun fact. No markdown.
 - Never say "I can't answer that" — always create a lesson.
 
-image_prompt rules (35–55 words):
-Goal: images should be visually stimulating and educational, not always overly bright or childish.
+image_prompt rules:
+Create a visually engaging educational illustration for children. Return ONLY a visual scene description (35–55 words) that describes objects, motion, and environment — never instructional content.
 
-- Match the image mood to the topic:
-  • Space: deep, wonder-filled, cosmic
-  • Nature: calm, realistic, beautiful
-  • Science: clear, clean, educational
-  • History / inventions: warm storybook realism
-  • Games / Minecraft: playful but clean
-  • Human / emotions: soft, warm, respectful
-- Do NOT default to "bright colorful cartoon" style for every topic.
-- Use rich but balanced colors. Avoid overstimulating neon colors unless the topic genuinely needs playful energy.
-- Clean composition with ONE main idea per image.
-- Visually interesting enough for kids to look at, but always educational — not random decoration.
+STRICT RULES (very important — Flux cannot render text and produces garbled gibberish):
+1. DO NOT include ANY text in the image:
+   - no words, no letters, no numbers, no captions, no labels
+   - no symbols that look like writing
+   - no fake or distorted text
+2. DO NOT create:
+   - diagrams
+   - labeled illustrations
+   - cross-sections
+   - arrows showing directions
+   - instructional overlays
+3. ONLY show:
+   - objects
+   - motion
+   - environment
+   - simple visual storytelling
 
-Strict no-text rule (very important — Flux cannot render text and will produce garbled gibberish):
-- No text, no letters, no words, no captions, no labels, no numbers, no written symbols, no fake writing anywhere in the image.
-- Do NOT request diagrams with written labels, arrows with words, captions, or any text inside images.
-- Do NOT use words like "labeled", "with text", "caption", "words saying", "written on", "reading", "diagram with labels".
+STYLE GUIDELINES — match the mood to the topic naturally:
+- Science → clean and clear
+- Nature → calm and realistic
+- Space → deep and wonder-filled
+- History / inventions → warm storybook realism
+- Games / Minecraft → playful but clean
+- Human / emotions / everyday life → warm, simple, respectful
+- Use balanced, topic-appropriate colors. Avoid overly bright, neon, or flashy colors unless the topic genuinely needs them.
+- Keep it visually interesting but not overwhelming.
+
+COMPOSITION:
+- Focus on ONE clear idea per image.
+- Easy for kids aged 6–10 to understand visually.
+- Avoid clutter. Use simple shapes and clear structure.
+
+Do NOT use words like "labeled", "with text", "caption", "words saying", "written on", "reading", "diagram", "cross-section", "arrow pointing to".
 
 Always end every image_prompt with exactly:
-"visually engaging educational illustration, topic-appropriate colors, clean composition, no text, no letters, no words, no captions, no labels, no numbers, no written symbols, no fake writing."
+"visually engaging educational illustration, topic-appropriate colors, clean composition, no text, no letters, no words, no numbers, no labels, no diagrams, no arrows, no writing of any kind."
 
-image_negative_prompt: always exactly "text, letters, words, captions, labels, numbers, written symbols, fake writing, logo, watermark, scary, baby cartoon, overly simple, clipart, neon, cluttered background"
+image_negative_prompt: always exactly "text, letters, words, numbers, captions, labels, diagrams, arrows, cross-section, instructional overlay, written symbols, fake writing, logo, watermark, scary, baby cartoon, overly simple, clipart, neon, cluttered background"
 
 Lesson consistency rules (very important):
 - Visible lesson text (title, subtitle, explanation, fun_fact) is the SOURCE OF TRUTH.
@@ -130,7 +147,7 @@ Output format — a single JSON object, no markdown fences:
       "fun_fact": "One short fun fact.",
       "narration": "Max 2 short sentences for voiceover.",
       "image_prompt": "35-55 word image description ending with style suffix.",
-      "image_negative_prompt": "text, letters, words, captions, labels, numbers, written symbols, fake writing, logo, watermark, scary, baby cartoon, overly simple, clipart, neon, cluttered background"
+      "image_negative_prompt": "text, letters, words, numbers, captions, labels, diagrams, arrows, cross-section, instructional overlay, written symbols, fake writing, logo, watermark, scary, baby cartoon, overly simple, clipart, neon, cluttered background"
     }
   ]
 }
