@@ -301,6 +301,9 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
     if cached is not None:
         cached.setdefault("meta", {})["from_cache"] = True
         logger.info("Cache hit for question: %s", question)
+        # Were images already baked into the cached lesson row?
+        slides_before = cached.get("slides", [])
+        had_images = bool(slides_before) and all(s.get("image_data_url") for s in slides_before)
         # Cache may or may not have rendered images embedded; ensure they exist.
         _attach_slide_images(cached, ctx)
         # If every slide is still missing an image the cached spec is broken — bust it.
@@ -310,6 +313,14 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
             delete_cached_lesson(question)
             cached = None
         else:
+            # Auto-heal: if we just generated images for a previously text-only
+            # cache entry, write the now-image-containing lesson back so future
+            # hits skip Flux entirely.
+            if not had_images and all(s.get("image_data_url") for s in slides):
+                logger.info("Backfilling images into cached lesson: %s", question[:80])
+                save_cached_lesson(question, cached)
+            # Refresh the in-memory recent cache so back/refresh stays instant.
+            _recent_put(question, cached)
             record_api_call(
                 endpoint=endpoint,
                 question=question,
@@ -511,7 +522,10 @@ def api_feedback():
         return jsonify({"ok": False, "error": str(exc)}), 500
 
     if rating == "up" and db_enabled:
-        lesson_data = get_lesson_from_calls(question)
+        # Prefer the in-memory recent cache — it holds the lesson WITH
+        # image_data_url attached, so future cache hits can skip Flux entirely.
+        # Fall back to api_calls (text-only) if the recent cache has expired.
+        lesson_data = _recent_get(question) or get_lesson_from_calls(question)
         if lesson_data:
             save_cached_lesson(question, lesson_data)
             pin_cached_lesson(question)
