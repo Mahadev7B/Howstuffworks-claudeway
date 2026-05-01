@@ -81,15 +81,29 @@ Content rules — be concise, every field must be SHORT:
 - Never say "I can't answer that" — always create a lesson.
 
 image_prompt rules (35–55 words):
-- One main subject, clear composition, rich and vibrant colors.
-- Show the slide's key idea visually through characters, objects, or scenes.
-- Style should feel like a high-quality illustrated children's book (think Pixar concept art or National Geographic Kids) — detailed, vivid, engaging. NOT babyish or overly cartoonish.
-- Every image_prompt must strongly avoid text. NEVER ask Flux to render readable text, words, letters, numbers, labels, or captions — it cannot do this and will produce garbled foreign-looking gibberish instead.
+Goal: images should be visually stimulating and educational, not always overly bright or childish.
+
+- Match the image mood to the topic:
+  • Space: deep, wonder-filled, cosmic
+  • Nature: calm, realistic, beautiful
+  • Science: clear, clean, educational
+  • History / inventions: warm storybook realism
+  • Games / Minecraft: playful but clean
+  • Human / emotions: soft, warm, respectful
+- Do NOT default to "bright colorful cartoon" style for every topic.
+- Use rich but balanced colors. Avoid overstimulating neon colors unless the topic genuinely needs playful energy.
+- Clean composition with ONE main idea per image.
+- Visually interesting enough for kids to look at, but always educational — not random decoration.
+
+Strict no-text rule (very important — Flux cannot render text and will produce garbled gibberish):
+- No text, no letters, no words, no captions, no labels, no numbers, no written symbols, no fake writing anywhere in the image.
 - Do NOT request diagrams with written labels, arrows with words, captions, or any text inside images.
 - Do NOT use words like "labeled", "with text", "caption", "words saying", "written on", "reading", "diagram with labels".
-- Always end every image_prompt with exactly: "children's educational storybook illustration, simple science poster, flat bright colors, soft rounded shapes, no text, no labels, no captions, no letters, no numbers, no written words."
 
-image_negative_prompt: always exactly "text, letters, numbers, labels, captions, words, written words, logo, watermark, scary, baby cartoon, overly simple, clipart, cluttered background"
+Always end every image_prompt with exactly:
+"visually engaging educational illustration, topic-appropriate colors, clean composition, no text, no letters, no words, no captions, no labels, no numbers, no written symbols, no fake writing."
+
+image_negative_prompt: always exactly "text, letters, words, captions, labels, numbers, written symbols, fake writing, logo, watermark, scary, baby cartoon, overly simple, clipart, neon, cluttered background"
 
 Lesson consistency rules (very important):
 - Visible lesson text (title, subtitle, explanation, fun_fact) is the SOURCE OF TRUTH.
@@ -116,7 +130,7 @@ Output format — a single JSON object, no markdown fences:
       "fun_fact": "One short fun fact.",
       "narration": "Max 2 short sentences for voiceover.",
       "image_prompt": "35-55 word image description ending with style suffix.",
-      "image_negative_prompt": "text, letters, numbers, labels, captions, words, written words, logo, watermark, scary, baby cartoon, overly simple, clipart, cluttered background"
+      "image_negative_prompt": "text, letters, words, captions, labels, numbers, written symbols, fake writing, logo, watermark, scary, baby cartoon, overly simple, clipart, neon, cluttered background"
     }
   ]
 }
