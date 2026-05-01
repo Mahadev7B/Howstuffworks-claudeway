@@ -24,7 +24,7 @@ _pool: ConnectionPool | None = None
 # Hard cap on how long lesson-path operations wait for a pool connection.
 # Admin uses a longer timeout (see _ADMIN_POOL_TIMEOUT_S) so it queues rather
 # than fails, but still uses the same pool to avoid hitting Neon connection limits.
-_POOL_TIMEOUT_S = 3.0
+_POOL_TIMEOUT_S = 5.0
 _ADMIN_POOL_TIMEOUT_S = 30.0
 # libpq-level connect timeout (when the pool has to open a new socket).
 _CONNECT_TIMEOUT_S = 5
@@ -123,7 +123,7 @@ def init_db() -> bool:
         _pool = ConnectionPool(
             dsn,
             min_size=1,
-            max_size=4,
+            max_size=6,
             timeout=_POOL_TIMEOUT_S,
             kwargs={"autocommit": True, "connect_timeout": _CONNECT_TIMEOUT_S},
             check=_check_connection,
@@ -392,10 +392,24 @@ def save_cached_lesson(question: str, lesson: dict[str, Any]) -> None:
     _bg(_do_save_cached_lesson, question_hash(question), question[:500], lesson)
 
 
+# Cache the budget total in-process. Recomputing on every TTS call exhausts
+# the pool during lesson playback (4 slides × N users × prefetch).
+_BUDGET_CACHE_TTL_S = 60.0
+_budget_cache: tuple[float, float] | None = None  # (timestamp, value)
+
+
 def today_spend_usd() -> float:
-    """Sum of cost_usd across all api_calls in the last 24h. 0.0 on failure or DB unavailable."""
+    """Sum of cost_usd across all api_calls in the last 24h. Cached for 60s.
+
+    Returns 0.0 on failure or when DB unavailable. The cache is fine because
+    daily budget enforcement only needs to be approximately correct.
+    """
+    global _budget_cache
     if _pool is None:
         return 0.0
+    now = time.time()
+    if _budget_cache is not None and now - _budget_cache[0] < _BUDGET_CACHE_TTL_S:
+        return _budget_cache[1]
     try:
         with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute(
@@ -406,10 +420,13 @@ def today_spend_usd() -> float:
                 """
             )
             row = cur.fetchone()
-            return float(row[0]) if row and row[0] is not None else 0.0
+            value = float(row[0]) if row and row[0] is not None else 0.0
+            _budget_cache = (now, value)
+            return value
     except Exception:
         logger.exception("Budget query failed — skipping")
-        return 0.0
+        # Serve last known good value if we have one, else 0.0
+        return _budget_cache[1] if _budget_cache is not None else 0.0
 
 
 def ip_calls_last_hour(ip: str | None, endpoints: tuple[str, ...]) -> int:
