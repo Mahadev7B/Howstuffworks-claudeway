@@ -32,6 +32,7 @@ from lesson_platform import (
     admin_load_all,
     admin_lessons_filtered,
     check_question,
+    generate_quiz,
     delete_cached_lesson,
     extract_and_lookup,
     generate_image,
@@ -436,6 +437,21 @@ def api_lesson():
             }), 429
         return jsonify({"ok": False, "error": err}), 500
     return jsonify({"ok": True, "lesson": data})
+
+
+@app.route("/api/quiz", methods=["POST"])
+def api_quiz():
+    """Generate a 3-question quiz from a lesson. Expects {lesson: {...}}."""
+    payload = request.get_json(silent=True) or {}
+    lesson = payload.get("lesson")
+    if not isinstance(lesson, dict) or not lesson.get("slides"):
+        return jsonify({"ok": False, "error": "lesson is required"}), 400
+    try:
+        quiz = generate_quiz(lesson, settings)
+        return jsonify({"ok": True, "quiz": quiz})
+    except Exception as exc:
+        logger.exception("Quiz generation failed")
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 @app.route("/api/feedback", methods=["POST"])

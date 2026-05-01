@@ -1,4 +1,4 @@
-from .ai_generation import generate_lesson
+from .ai_generation import generate_lesson, generate_quiz
 from .config import load_settings
 from .guardrails import check_question
 from .db import (
@@ -35,6 +35,7 @@ __all__ = [
     "admin_load_all",
     "admin_lessons_filtered",
     "generate_lesson",
+    "generate_quiz",
     "check_question",
     "load_settings",
     "init_db",

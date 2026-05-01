@@ -211,6 +211,75 @@ def _validate_lesson(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+_QUIZ_TOOL: dict[str, Any] = {
+    "name": "produce_quiz",
+    "description": "Output a 3-question multiple-choice quiz based on a lesson.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "questions": {
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "question":      {"type": "string"},
+                        "options":       {"type": "array", "minItems": 3, "maxItems": 3,
+                                          "items": {"type": "string"}},
+                        "correct_index": {"type": "integer", "minimum": 0, "maximum": 2},
+                        "explanation":   {"type": "string"},
+                    },
+                    "required": ["question", "options", "correct_index", "explanation"],
+                },
+            },
+        },
+        "required": ["questions"],
+    },
+}
+
+_QUIZ_SYSTEM = """You generate short, fun multiple-choice quizzes for kids aged 6–10 based on a lesson they just read.
+
+Rules:
+- Create exactly 3 questions.
+- Each question tests basic understanding from the lesson only.
+- 3 answer options per question, exactly one correct.
+- Language: short sentences, easy words, clear meaning.
+- Tone: fun, encouraging, playful.
+- Never use tricky, negative, or discouraging wording.
+- Each explanation is one simple sentence saying why the answer is correct."""
+
+
+def generate_quiz(lesson: dict[str, Any], settings: Settings) -> dict[str, Any]:
+    """Generate a 3-question quiz from a lesson dict. Returns {questions: [...]}."""
+    if not settings.anthropic_api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY is missing.")
+
+    # Build a compact lesson summary to send to Claude
+    slides_text = "\n".join(
+        f"Slide {s['number']}: {s['title']} — {s['explanation']} Fun fact: {s.get('fun_fact', '')}"
+        for s in lesson.get("slides", [])
+    )
+    lesson_summary = f"Lesson title: {lesson.get('title', '')}\n\n{slides_text}"
+
+    client = Anthropic(api_key=settings.anthropic_api_key)
+    response = client.messages.create(
+        model=settings.anthropic_model,
+        max_tokens=800,
+        system=_QUIZ_SYSTEM,
+        tools=[_QUIZ_TOOL],
+        tool_choice={"type": "tool", "name": "produce_quiz"},
+        messages=[{"role": "user", "content": f"Here is the lesson:\n\n{lesson_summary}\n\nNow create the quiz."}],
+    )
+
+    tool_block = next(
+        (b for b in response.content if getattr(b, "type", None) == "tool_use"), None
+    )
+    if tool_block is None:
+        raise ValueError("Quiz: no tool_use block in Claude response")
+    return tool_block.input
+
+
 def generate_lesson(question: str, settings: Settings) -> dict[str, Any]:
     """Generate a 4-slide lesson from a child's question.
 

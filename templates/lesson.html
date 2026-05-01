@@ -88,6 +88,13 @@
       <p class="fb-status" id="fb-status" role="status"></p>
     </section>
 
+    <section class="quiz-section" id="quizSection">
+      <div id="quizLaunch">
+        <button class="primary" id="quizBtn">🎯 Take the quiz!</button>
+      </div>
+      <div id="quizBody" hidden></div>
+    </section>
+
     <section class="next-question">
       <a href="{{ url_for('home') }}" class="new-question-link">← Ask a new question</a>
     </section>
@@ -343,6 +350,108 @@
 
       if ('speechSynthesis' in window) {
         speechSynthesis.onvoiceschanged = () => {};
+      }
+
+      // ── Quiz ──────────────────────────────────────────────────────────────
+      const quizBtn  = document.getElementById('quizBtn');
+      const quizBody = document.getElementById('quizBody');
+      const LESSON_DATA = {{ lesson | tojson }};
+      let quizLoaded = false;
+
+      quizBtn.addEventListener('click', async () => {
+        if (quizLoaded) return;
+        quizBtn.disabled = true;
+        quizBtn.textContent = '⏳ Generating quiz…';
+        try {
+          const res = await fetch('/api/quiz', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lesson: LESSON_DATA }),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.ok) throw new Error(data.error || 'Quiz failed');
+          renderQuiz(data.quiz);
+          quizLoaded = true;
+          quizBtn.hidden = true;
+        } catch (err) {
+          quizBtn.disabled = false;
+          quizBtn.textContent = '🎯 Take the quiz!';
+          quizBody.innerHTML = '<p class="quiz-error">Could not load quiz. Try again!</p>';
+          quizBody.hidden = false;
+        }
+      });
+
+      function renderQuiz(quiz) {
+        const questions = quiz.questions || [];
+        let score = 0;
+        let answered = 0;
+        const total = questions.length;
+
+        quizBody.innerHTML = `
+          <h3 class="quiz-title">Quick Quiz 🎉</h3>
+          <p class="quiz-sub">Answer all ${total} questions!</p>
+          <div id="quizQuestions"></div>
+          <div id="quizResult" hidden>
+            <p class="quiz-score" id="quizScore"></p>
+            <button class="primary" id="quizRetry">🔄 Try again</button>
+          </div>`;
+        quizBody.hidden = false;
+
+        const container = document.getElementById('quizQuestions');
+
+        questions.forEach((q, qi) => {
+          const block = document.createElement('div');
+          block.className = 'quiz-q';
+          block.innerHTML = `
+            <p class="quiz-question"><strong>Q${qi + 1}.</strong> ${q.question}</p>
+            <div class="quiz-options">
+              ${q.options.map((opt, oi) =>
+                `<button class="quiz-opt" data-qi="${qi}" data-oi="${oi}">${opt}</button>`
+              ).join('')}
+            </div>
+            <p class="quiz-explain" hidden></p>`;
+          container.appendChild(block);
+        });
+
+        container.addEventListener('click', e => {
+          const btn = e.target.closest('.quiz-opt');
+          if (!btn || btn.disabled) return;
+          const qi = parseInt(btn.dataset.qi);
+          const oi = parseInt(btn.dataset.oi);
+          const q = questions[qi];
+          const block = container.querySelectorAll('.quiz-q')[qi];
+          const opts = block.querySelectorAll('.quiz-opt');
+          const explain = block.querySelector('.quiz-explain');
+
+          opts.forEach(b => b.disabled = true);
+          const correct = oi === q.correct_index;
+          btn.classList.add(correct ? 'correct' : 'wrong');
+          opts[q.correct_index].classList.add('correct');
+          explain.textContent = (correct ? '✅ ' : '❌ ') + q.explanation;
+          explain.hidden = false;
+          if (correct) score++;
+          answered++;
+          if (answered === total) showResult();
+        });
+
+        function showResult() {
+          const resultEl = document.getElementById('quizResult');
+          const scoreEl = document.getElementById('quizScore');
+          const msg = score === total ? '🌟 Perfect score! Amazing!' :
+                      score >= total - 1 ? '🎉 Great job! Almost perfect!' :
+                      score >= 1 ? '👍 Good try! You can do it!' : '💪 Keep learning — you got this!';
+          scoreEl.textContent = `You got ${score} out of ${total}! ${msg}`;
+          resultEl.hidden = false;
+        }
+
+        document.getElementById('quizRetry').addEventListener('click', () => {
+          quizLoaded = false;
+          quizBtn.hidden = false;
+          quizBtn.disabled = false;
+          quizBtn.textContent = '🎯 Take the quiz!';
+          quizBody.innerHTML = '';
+          quizBody.hidden = true;
+        });
       }
 
       // Always start at slide 1 regardless of any residual DOM state
