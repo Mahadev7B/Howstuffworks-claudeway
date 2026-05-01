@@ -162,10 +162,17 @@
       document.addEventListener('click', unlockAudio, { once: true });
 
       function slideText(idx) {
+        // Read ONLY the text that's visible on the slide — title, subtitle,
+        // explanation, fun fact. The hidden `narration` field is no longer used.
         const s = slides[idx];
-        const narration = s.dataset.narration || '';
-        const funfact   = s.dataset.funfact   || '';
-        return funfact ? narration + ' Fun fact! ' + funfact : narration;
+        const pick = sel => (s.querySelector(sel)?.textContent || '').trim();
+        const parts = [
+          pick('h2'),                // slide title
+          pick('.slide-sub'),        // subtitle
+          pick('.explanation'),      // main explanation
+          pick('.fun-fact'),         // "Fun fact: ..."
+        ].filter(Boolean);
+        return parts.join('. ').replace(/\.\s*\./g, '.');
       }
 
       function speakWithBrowser(onDone) {
