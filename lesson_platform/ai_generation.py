@@ -83,12 +83,12 @@ Content rules — be concise, every field must be SHORT:
 
 image_prompt rules (35–55 words):
 - One main subject, simple centered composition, bright kid-friendly colors.
-- Show the slide's key idea visually through characters, objects, and scenes only.
-- NEVER describe arrows, labels, diagrams, callouts, text overlays, or directional indicators — Flux cannot render text and will produce garbled gibberish.
-- NEVER use words like "labeled", "showing", "diagram", "arrows pointing", "with text".
+- Show the slide's key idea visually — characters, objects, scenes, arrows, and diagrams are all fine.
+- NEVER ask Flux to render readable text, words, letters, numbers, labels, or captions — it cannot do this and will produce garbled foreign-looking gibberish instead.
+- Do NOT use words like "labeled", "with text", "caption", "words saying", "written on", "reading".
 - Always end with: "children's educational storybook illustration, flat bright colors, soft rounded shapes, no text, no labels."
 
-image_negative_prompt: always exactly "text, labels, letters, numbers, arrows, diagrams, callouts, logo, watermark, scary, realistic photo, cluttered background"
+image_negative_prompt: always exactly "text, letters, numbers, labels, captions, words, logo, watermark, scary, realistic photo, cluttered background"
 
 Output format — a single JSON object, no markdown fences:
 
@@ -104,7 +104,7 @@ Output format — a single JSON object, no markdown fences:
       "fun_fact": "One short fun fact.",
       "narration": "Max 2 short sentences for voiceover.",
       "image_prompt": "35-55 word image description ending with style suffix.",
-      "image_negative_prompt": "text, labels, letters, numbers, arrows, diagrams, callouts, logo, watermark, scary, realistic photo, cluttered background"
+      "image_negative_prompt": "text, letters, numbers, labels, captions, words, logo, watermark, scary, realistic photo, cluttered background"
     }
   ]
 }

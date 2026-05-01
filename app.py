@@ -115,12 +115,13 @@ FEEDBACK_HOURLY_LIMIT = 10  # per IP
 # Sentinel returned by _guardrail_check when the rate limit is the reason
 RATE_LIMIT_ERROR = "rate_limit"
 
-# Words in an image prompt that cause Flux to render garbled text.
-# If any are found, the prompt is rewritten to a safe scene-only version.
+# Phrases that cause Flux to attempt rendering text, producing garbled results.
+# Arrows and diagrams are fine visually — only text/word rendering is the issue.
 _FLUX_BANNED_PROMPT_WORDS = {
-    "arrow", "arrows", "label", "labels", "labeled", "labelled",
-    "diagram", "diagrams", "callout", "callouts", "pointing",
-    "text overlay", "annotation", "annotated", "caption",
+    "text", "label", "labels", "labeled", "labelled",
+    "caption", "callout", "callouts", "annotation", "annotated",
+    "text overlay", "written", "writing", "word", "words",
+    "letter", "letters", "number", "numbers", "says", "reads",
 }
 
 _FLUX_STYLE_SUFFIX = (
