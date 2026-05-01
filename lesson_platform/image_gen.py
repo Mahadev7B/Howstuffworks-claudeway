@@ -1,4 +1,4 @@
-"""Flux Schnell image generation via fal.ai.
+"""Flux image generation via fal.ai (Schnell or Dev).
 
 Returns (image_bytes, mime, cost_usd) or raises on failure.
 """
@@ -14,7 +14,6 @@ from .config import Settings
 
 logger = logging.getLogger(__name__)
 
-# Flux Schnell on fal.ai pricing as of late 2025: ~$0.003/megapixel.
 _SIZE_TO_MP = {
     "square": 1.0,
     "square_hd": 1.0,
@@ -23,12 +22,19 @@ _SIZE_TO_MP = {
     "landscape_4_3": 0.79,
     "landscape_16_9": 0.59,
 }
-_PRICE_PER_MP = 0.003
+
+# fal.ai pricing per megapixel (as of late 2025).
+_PRICE_PER_MP_BY_MODEL = {
+    "fal-ai/flux/schnell": 0.003,
+    "fal-ai/flux/dev":     0.025,
+    "fal-ai/flux-pro":     0.05,
+}
+_DEFAULT_PRICE_PER_MP = 0.025
 _POLL_INTERVAL = 1.0   # seconds between status checks (fal default is 0.1)
 
 
-def _estimate_cost(size: str) -> float:
-    return _SIZE_TO_MP.get(size, 0.6) * _PRICE_PER_MP
+def _estimate_cost(model: str, size: str) -> float:
+    return _SIZE_TO_MP.get(size, 0.6) * _PRICE_PER_MP_BY_MODEL.get(model, _DEFAULT_PRICE_PER_MP)
 
 
 def generate_image(
@@ -45,13 +51,19 @@ def generate_image(
 
     os.environ["FAL_KEY"] = settings.fal_api_key
 
+    is_schnell = "schnell" in settings.flux_model
     arguments: dict[str, Any] = {
         "prompt": prompt,
         "image_size": settings.flux_image_size,
-        "num_inference_steps": 4,
+        # Schnell is a 4-step distilled model; Dev/Pro need ~28 steps.
+        "num_inference_steps": 4 if is_schnell else 28,
         "num_images": 1,
         "enable_safety_checker": True,
     }
+    # Dev/Pro support guidance_scale (CFG) and respect negative prompts well.
+    # Schnell ignores both — passing them is harmless but useless.
+    if not is_schnell:
+        arguments["guidance_scale"] = 3.5
     if negative_prompt:
         arguments["negative_prompt"] = negative_prompt
 
@@ -90,5 +102,5 @@ def generate_image(
     if not data:
         raise RuntimeError("Flux image was empty")
 
-    cost = _estimate_cost(settings.flux_image_size)
+    cost = _estimate_cost(settings.flux_model, settings.flux_image_size)
     return data, content_type or "image/png", cost
