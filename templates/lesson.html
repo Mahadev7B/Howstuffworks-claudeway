@@ -26,6 +26,7 @@
           class="slide {% if loop.first %}active{% endif %}"
           data-slide="{{ loop.index }}"
           data-narration="{{ slide.narration }}"
+          data-funfact="{{ slide.fun_fact }}"
         >
           <div class="slide-head">
             <p class="slide-num">Slide {{ loop.index }} of {{ lesson.slides|length }}</p>
@@ -160,6 +161,13 @@
       document.addEventListener('pointerdown', unlockAudio, { once: true });
       document.addEventListener('click', unlockAudio, { once: true });
 
+      function slideText(idx) {
+        const s = slides[idx];
+        const narration = s.dataset.narration || '';
+        const funfact   = s.dataset.funfact   || '';
+        return funfact ? narration + ' Fun fact! ' + funfact : narration;
+      }
+
       function speakWithBrowser(onDone) {
         if (!('speechSynthesis' in window)) {
           statusEl.textContent = 'Your browser does not support voiceover.';
@@ -167,7 +175,7 @@
           return;
         }
         speechSynthesis.cancel();
-        const text = slides[current].dataset.narration || '';
+        const text = slideText(current);
         const utter = new SpeechSynthesisUtterance(text);
         utter.rate = rate;
         utter.pitch = 1.05;
@@ -200,7 +208,7 @@
       async function getAudioUrl(idx) {
         if (audioCache.has(idx)) return audioCache.get(idx);
         if (audioInflight.has(idx)) return audioInflight.get(idx);
-        const text = slides[idx].dataset.narration || '';
+        const text = slideText(idx);
         const promise = (async () => {
           const res = await fetch('/api/tts', {
             method: 'POST',
