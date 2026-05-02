@@ -386,11 +386,18 @@ def delete_cached_lesson(question: str) -> None:
 def _do_save_cached_lesson(qhash: str, question: str, lesson: dict[str, Any]) -> None:
     if _pool is None:
         return
+    # Strip images before writing — base64 images are ~1MB per lesson and hold
+    # the connection for several seconds, exhausting the pool under load.
+    # Auto-heal in _track_lesson regenerates images from Flux on cache hit.
+    lesson_slim = {
+        **lesson,
+        "slides": [
+            {k: v for k, v in s.items() if k != "image_data_url"}
+            for s in lesson.get("slides", [])
+        ],
+    }
     try:
         with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
-            # UPSERT so a re-thumbs-up on a previously cached (text-only) entry
-            # replaces it with the newer copy that has image_data_url baked in.
-            # Preserves hit_count, last_hit_at, pinned, created_at.
             cur.execute(
                 """
                 INSERT INTO cached_lessons (question_hash, question, lesson)
@@ -398,7 +405,7 @@ def _do_save_cached_lesson(qhash: str, question: str, lesson: dict[str, Any]) ->
                 ON CONFLICT (question_hash) DO UPDATE
                   SET lesson = EXCLUDED.lesson
                 """,
-                (qhash, question, Jsonb(lesson)),
+                (qhash, question, Jsonb(lesson_slim)),
             )
     except Exception:
         logger.exception("Cache write failed — skipping")

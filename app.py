@@ -370,13 +370,9 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
             delete_cached_lesson(question)
             cached = None
         else:
-            # Auto-heal: if we just generated images for a previously text-only
-            # cache entry, write the now-image-containing lesson back so future
-            # hits skip Flux entirely.
-            if not had_images and all(s.get("image_data_url") for s in slides):
-                logger.info("Backfilling images into cached lesson: %s", question[:80])
-                save_cached_lesson(question, cached)
             # Refresh the in-memory recent cache so back/refresh stays instant.
+            # (Images are never stored in DB — auto-heal runs Flux on every DB
+            # cache hit, and _recent_put keeps images alive for the process lifetime.)
             _recent_put(question, cached)
             record_api_call(
                 endpoint=endpoint,
