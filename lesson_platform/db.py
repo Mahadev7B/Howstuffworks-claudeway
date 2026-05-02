@@ -387,7 +387,7 @@ def _do_save_cached_lesson(qhash: str, question: str, lesson: dict[str, Any]) ->
     if _pool is None:
         return
     try:
-        with _pool.connection(timeout=_BG_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             # UPSERT so a re-thumbs-up on a previously cached (text-only) entry
             # replaces it with the newer copy that has image_data_url baked in.
             # Preserves hit_count, last_hit_at, pinned, created_at.
