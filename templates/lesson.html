@@ -495,17 +495,43 @@
           sessionStorage.removeItem('slide1audio');
 
           if (b64) {
-            // Inject the prefetched audio directly — no fetch, no async gap.
+            // Safari requires audioEl.play() synchronously — any await/Promise
+            // tick before play() breaks the gesture chain. Decode the base64
+            // audio and play directly, bypassing the async speakCurrent path.
             const binary = atob(b64);
             const bytes = new Uint8Array(binary.length);
             for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
             const blob = new Blob([bytes], { type: 'audio/mpeg' });
             const url = URL.createObjectURL(blob);
             audioCache.set(0, url);
-          }
 
-          setAuto(true);
-          speakCurrent(autoAdvance);
+            audioEl.src = url;
+            audioEl.playbackRate = rate;
+            audioEl.onplay = () => {
+              statusEl.textContent = 'Reading slide 1 of ' + total + '…';
+              readBtn.textContent = '⏹ Stop';
+            };
+            audioEl.onended = () => {
+              readBtn.textContent = '🔊 Read this slide';
+              autoAdvance();
+            };
+            audioEl.onerror = () => {
+              readBtn.textContent = '🔊 Read this slide';
+              speakWithBrowser(autoAdvance);
+            };
+            setAuto(true);
+            preloadAudio(1);
+            preloadAudio(2);
+            audioEl.play().catch(() => {
+              // Gesture was still rejected — fall back to async path
+              speakWithBrowser(autoAdvance);
+            });
+          } else {
+            // No prefetched audio (TTS failed during prefetch) — async path,
+            // may not autoplay on Safari but will work on Chrome/Firefox.
+            setAuto(true);
+            speakCurrent(autoAdvance);
+          }
         }
       } catch (e) {}
 
