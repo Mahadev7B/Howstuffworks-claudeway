@@ -247,16 +247,12 @@
 
       async function speakCurrent(onDone) {
         stopAllAudio();
-        if (serverTtsDisabled) return speakWithBrowser(onDone);
-
         statusEl.textContent = 'Loading voice for slide ' + (current + 1) + '…';
         readBtn.textContent = '⏹ Stop';
-        // Prefetch upcoming slides while this one plays
         preloadAudio(current + 1);
         preloadAudio(current + 2);
         try {
           const url = await getAudioUrl(current);
-          // Re-create Audio element each time to avoid Safari stale-src issues
           audioEl.pause();
           audioEl.src = url;
           audioEl.load();
@@ -270,14 +266,14 @@
           };
           audioEl.onerror = () => {
             readBtn.textContent = '🔊 Read this slide';
-            statusEl.textContent = 'Audio playback error.';
-            if (onDone) onDone();
+            statusEl.textContent = 'Audio error. Tap ▶ Play to try again.';
           };
           await audioEl.play();
         } catch (err) {
-          console.warn('Server TTS failed, falling back to browser:', err);
-          serverTtsDisabled = true;
-          speakWithBrowser(onDone);
+          console.warn('Server TTS failed:', err);
+          readBtn.textContent = '🔊 Read this slide';
+          statusEl.textContent = 'Voice unavailable. Tap ▶ Play to retry.';
+          setAuto(false);
         }
       }
 
@@ -517,18 +513,20 @@
             };
             audioEl.onerror = () => {
               readBtn.textContent = '🔊 Read this slide';
-              speakWithBrowser(autoAdvance);
+              setAuto(false);
+              statusEl.textContent = 'Audio error. Tap ▶ Play to try again.';
             };
             setAuto(true);
             preloadAudio(1);
             preloadAudio(2);
             audioEl.play().catch(() => {
-              // Gesture was still rejected — fall back to async path
-              speakWithBrowser(autoAdvance);
+              // Autoplay blocked — don't fall back to browser voice.
+              // The ▶ Play button is already visible; prompt the user to tap it.
+              setAuto(false);
+              statusEl.textContent = 'Tap ▶ Play to hear the lesson.';
             });
           } else {
-            // No prefetched audio (TTS failed during prefetch) — async path,
-            // may not autoplay on Safari but will work on Chrome/Firefox.
+            // No prefetched audio (TTS failed) — try async Nova path anyway.
             setAuto(true);
             speakCurrent(autoAdvance);
           }
