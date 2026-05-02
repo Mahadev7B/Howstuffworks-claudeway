@@ -26,6 +26,10 @@ _pool: ConnectionPool | None = None
 # than fails, but still uses the same pool to avoid hitting Neon connection limits.
 _POOL_TIMEOUT_S = 5.0
 _ADMIN_POOL_TIMEOUT_S = 30.0
+# Background fire-and-forget writes get a much shorter timeout — they are
+# non-critical telemetry. If the pool is busy, drop the write immediately
+# rather than blocking a slot for 5 seconds and starving synchronous callers.
+_BG_POOL_TIMEOUT_S = 0.5
 # libpq-level connect timeout (when the pool has to open a new socket).
 _CONNECT_TIMEOUT_S = 5
 
@@ -152,7 +156,7 @@ def _do_save_feedback(params: tuple) -> None:
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
     """
     try:
-        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        with _pool.connection(timeout=_BG_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute(sql, params)
     except Exception:
         logger.exception("Failed to save feedback")
@@ -190,7 +194,7 @@ def _do_record_api_call(params: tuple) -> None:
     if _pool is None:
         return
     try:
-        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        with _pool.connection(timeout=_BG_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO api_calls
@@ -308,7 +312,7 @@ def _do_pin_cached_lesson(qhash: str) -> None:
     if _pool is None:
         return
     try:
-        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        with _pool.connection(timeout=_BG_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute(
                 "UPDATE cached_lessons SET pinned = true WHERE question_hash = %s",
                 (qhash,),
@@ -350,7 +354,7 @@ def _do_delete_cached_lesson(qhash: str, label: str) -> None:
     if _pool is None:
         return
     try:
-        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        with _pool.connection(timeout=_BG_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute(
                 "DELETE FROM cached_lessons WHERE question_hash = %s",
                 (qhash,),
@@ -371,7 +375,7 @@ def _do_save_cached_lesson(qhash: str, question: str, lesson: dict[str, Any]) ->
     if _pool is None:
         return
     try:
-        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        with _pool.connection(timeout=_BG_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             # UPSERT so a re-thumbs-up on a previously cached (text-only) entry
             # replaces it with the newer copy that has image_data_url baked in.
             # Preserves hit_count, last_hit_at, pinned, created_at.
@@ -397,7 +401,7 @@ def save_cached_lesson(question: str, lesson: dict[str, Any]) -> None:
 
 # Cache the budget total in-process. Recomputing on every TTS call exhausts
 # the pool during lesson playback (4 slides × N users × prefetch).
-_BUDGET_CACHE_TTL_S = 60.0
+_BUDGET_CACHE_TTL_S = 300.0
 _budget_cache: tuple[float, float] | None = None  # (timestamp, value)
 
 
