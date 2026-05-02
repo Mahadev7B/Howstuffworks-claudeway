@@ -31,7 +31,7 @@ _CONNECT_TIMEOUT_S = 5
 
 # Background executor for fire-and-forget writes (record_api_call, cache writes,
 # pin updates). Lesson generation must never wait on these.
-_bg_writer = ThreadPoolExecutor(max_workers=2, thread_name_prefix="db-bg")
+_bg_writer = ThreadPoolExecutor(max_workers=4, thread_name_prefix="db-bg")
 
 
 def _bg(fn, *args, **kwargs):
@@ -123,7 +123,7 @@ def init_db() -> bool:
         _pool = ConnectionPool(
             dsn,
             min_size=1,
-            max_size=6,
+            max_size=8,
             timeout=_POOL_TIMEOUT_S,
             kwargs={"autocommit": True, "connect_timeout": _CONNECT_TIMEOUT_S},
             check=_check_connection,
@@ -141,6 +141,21 @@ def init_db() -> bool:
 
 def enabled() -> bool:
     return _pool is not None
+
+
+def _do_save_feedback(params: tuple) -> None:
+    if _pool is None:
+        return
+    sql = """
+        INSERT INTO feedback
+          (question, rating, comment, ip_address, city, region, country, user_agent)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+    """
+    try:
+        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+    except Exception:
+        logger.exception("Failed to save feedback")
 
 
 def save_feedback(
@@ -168,23 +183,7 @@ def save_feedback(
         (country or "")[:128] or None,
         (user_agent or "")[:500] or None,
     )
-    sql = """
-        INSERT INTO feedback
-          (question, rating, comment, ip_address, city, region, country, user_agent)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-    """
-    # Retry once on stale-connection errors (SSL reset, server timeout, etc.)
-    for attempt in range(2):
-        try:
-            with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
-                cur.execute(sql, params)
-            return
-        except psycopg.OperationalError:
-            if attempt == 0:
-                logger.warning("Feedback insert hit stale connection, retrying…")
-                time.sleep(0.1)
-            else:
-                raise
+    _bg(_do_save_feedback, params)
 
 
 def _do_record_api_call(params: tuple) -> None:
@@ -433,10 +432,21 @@ def today_spend_usd() -> float:
         return _budget_cache[1] if _budget_cache is not None else 0.0
 
 
+# Per-IP rate-limit cache: avoids a DB hit on every lesson/feedback request.
+# Key: (ip, endpoints_tuple). Value: (timestamp, count).
+_IP_RATE_CACHE: dict[tuple, tuple[float, int]] = {}
+_IP_RATE_CACHE_TTL_S = 30.0
+
+
 def ip_calls_last_hour(ip: str | None, endpoints: tuple[str, ...]) -> int:
     """Count of api_calls from this IP hitting given endpoints in the last hour. 0 on failure."""
     if _pool is None or not ip:
         return 0
+    cache_key = (ip, endpoints)
+    now = time.time()
+    cached = _IP_RATE_CACHE.get(cache_key)
+    if cached is not None and now - cached[0] < _IP_RATE_CACHE_TTL_S:
+        return cached[1]
     try:
         with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute(
@@ -450,10 +460,12 @@ def ip_calls_last_hour(ip: str | None, endpoints: tuple[str, ...]) -> int:
                 (ip, list(endpoints)),
             )
             row = cur.fetchone()
-            return int(row[0]) if row else 0
+            count = int(row[0]) if row else 0
+            _IP_RATE_CACHE[cache_key] = (now, count)
+            return count
     except Exception:
         logger.exception("IP rate-limit query failed — skipping")
-        return 0
+        return cached[1] if cached is not None else 0
 
 
 # ---------------------------------------------------------------------------

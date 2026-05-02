@@ -207,6 +207,28 @@
       fullReset();
     });
 
+    function slide1Text(lesson) {
+      const s = lesson.slides[0];
+      const parts = [
+        (s.title || '').trim(),
+        (s.subtitle || '').trim(),
+        (s.explanation || '').trim(),
+        s.fun_fact ? ('Fun fact: ' + s.fun_fact).trim() : '',
+      ].filter(Boolean);
+      return parts.join('. ').replace(/\.\s*\./g, '.');
+    }
+
+    function prefetchTts(text) {
+      return fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      }).then(res => {
+        if (!res.ok) throw new Error('TTS prefetch failed');
+        return res.arrayBuffer();
+      });
+    }
+
     function askQuestion(question) {
       if (!question || !question.trim()) return;
       // Guard: only run if the user actually triggered this in-page. Defends
@@ -253,12 +275,22 @@
         clearInterval(activeTimer);
         activeTimer = null;
         if (data.ok) {
-          // Keep the game running. Reveal the Open Lesson button and let
-          // the user decide when to navigate.
-          loadingMsg.textContent = 'Your lesson is ready!';
           openLessonBtn.dataset.question = question;
-          openLessonBtn.hidden = false;
-          cancelBtn.textContent = 'Cancel';
+          if (data.lesson && data.lesson.slides && data.lesson.slides.length) {
+            loadingMsg.textContent = 'Warming up the voice…';
+            prefetchTts(slide1Text(data.lesson))
+              .catch(() => {})
+              .finally(() => {
+                if (cancelled) return;
+                loadingMsg.textContent = 'Your lesson is ready!';
+                openLessonBtn.hidden = false;
+                cancelBtn.textContent = 'Cancel';
+              });
+          } else {
+            loadingMsg.textContent = 'Your lesson is ready!';
+            openLessonBtn.hidden = false;
+            cancelBtn.textContent = 'Cancel';
+          }
         } else {
           const errMsg = (data.error || 'Something went wrong.');
           loadingMsg.textContent = '⚠ ' + errMsg;

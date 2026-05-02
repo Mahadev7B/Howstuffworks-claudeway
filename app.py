@@ -8,9 +8,11 @@ Images: Claude-generated SVG (free).
 Voiceover: browser Web Speech API (free).
 """
 import base64
+import hashlib
 import logging
 import os
 import time
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import secrets
@@ -94,6 +96,38 @@ def _recent_put(question: str, data: dict) -> None:
         cutoff = time.time() - _RECENT_TTL_S
         for k in [k for k, (ts, _) in _RECENT_LESSONS.items() if ts < cutoff]:
             _RECENT_LESSONS.pop(k, None)
+
+
+# Server-side TTS cache — keyed by SHA256(text), LRU, 1hr TTL, max 64 entries.
+# Warm on home-page prefetch, hit instantly when the lesson page loads.
+_TTS_CACHE: OrderedDict[str, tuple[float, bytes]] = OrderedDict()
+_TTS_CACHE_MAX = 64
+_TTS_CACHE_TTL_S = 3600
+
+
+def _tts_cache_key(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def _tts_cache_get(text: str) -> bytes | None:
+    key = _tts_cache_key(text)
+    entry = _TTS_CACHE.get(key)
+    if entry is None:
+        return None
+    ts, audio = entry
+    if time.time() - ts > _TTS_CACHE_TTL_S:
+        _TTS_CACHE.pop(key, None)
+        return None
+    _TTS_CACHE.move_to_end(key)
+    return audio
+
+
+def _tts_cache_put(text: str, audio: bytes) -> None:
+    key = _tts_cache_key(text)
+    _TTS_CACHE[key] = (time.time(), audio)
+    _TTS_CACHE.move_to_end(key)
+    if len(_TTS_CACHE) > _TTS_CACHE_MAX:
+        _TTS_CACHE.popitem(last=False)
 
 
 EXAMPLE_QUESTIONS = [
@@ -538,11 +572,7 @@ def api_feedback():
     if ip_calls_last_hour(ctx.get("ip_address"), ("/api/feedback",)) >= FEEDBACK_HOURLY_LIMIT:
         return jsonify({"ok": False, "error": "Too many feedback submissions. Try again later."}), 429
 
-    try:
-        save_feedback(question, rating, comment, **ctx)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Feedback save failed")
-        return jsonify({"ok": False, "error": str(exc)}), 500
+    save_feedback(question, rating, comment, **ctx)
 
     if rating == "up" and db_enabled:
         # Prefer the in-memory recent cache — it holds the lesson WITH
@@ -576,8 +606,13 @@ def api_tts():
     if len(text) > 4096:
         text = text[:4096]
 
+    # Cache hit — return instantly, no OpenAI call, no budget check, no DB write.
+    cached_audio = _tts_cache_get(text)
+    if cached_audio is not None:
+        logger.info("TTS cache hit (%d chars)", len(text))
+        return Response(cached_audio, mimetype="audio/mpeg")
+
     ctx = _client_context()
-    # Budget check applies to TTS too — same pool
     spent = today_spend_usd()
     if spent >= settings.daily_budget_usd:
         return jsonify({"ok": False, "error": "Daily budget reached"}), 503
@@ -600,6 +635,7 @@ def api_tts():
         return jsonify({"ok": False, "error": str(exc)}), 500
 
     duration_ms = int((time.time() - started) * 1000)
+    _tts_cache_put(text, audio_bytes)
     record_api_call(
         endpoint="/api/tts",
         question=text[:500],
