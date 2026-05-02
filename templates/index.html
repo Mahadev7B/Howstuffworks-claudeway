@@ -154,6 +154,7 @@
     let activeAbort = null;
     let activeTimer = null;
     let cancelled = false;
+    let slide1AudioBytes = null;  // ArrayBuffer from TTS prefetch, injected on navigation
 
     function resetLoadingUI() {
       loading.hidden = true;
@@ -176,13 +177,18 @@
     openLessonBtn.addEventListener('click', () => {
       const q = openLessonBtn.dataset.question || input.value.trim();
       if (!q) return;
-      // Tell the lesson page to start narration immediately on load. The click
-      // itself is the user gesture browsers require to allow audio playback;
-      // the lesson page picks up the flag and plays from slide 1.
-      try { sessionStorage.setItem('autoplay', '1'); } catch (e) {}
-      // Use replace() so the loading overlay state is NOT in browser history.
-      // Pressing Back from /lesson then returns to the previous real page
-      // (the home view) without re-running /api/lesson.
+      try {
+        // Pass prefetched audio bytes to the lesson page so it can play
+        // immediately without a fetch — required for Safari autoplay policy.
+        sessionStorage.removeItem('slide1audio');
+        if (slide1AudioBytes) {
+          const bytes = new Uint8Array(slide1AudioBytes);
+          let binary = '';
+          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+          sessionStorage.setItem('slide1audio', btoa(binary));
+        }
+        sessionStorage.setItem('autoplay', '1');
+      } catch (e) {}
       window.location.replace('/lesson?q=' + encodeURIComponent(q));
     });
 
@@ -226,6 +232,8 @@
       }).then(res => {
         if (!res.ok) throw new Error('TTS prefetch failed');
         return res.arrayBuffer();
+      }).then(buf => {
+        slide1AudioBytes = buf;
       });
     }
 
@@ -241,6 +249,7 @@
 
       // Reset state for a fresh request
       cancelled = false;
+      slide1AudioBytes = null;
       openLessonBtn.hidden = true;
       cancelBtn.hidden = false;
       cancelBtn.textContent = 'Stop';

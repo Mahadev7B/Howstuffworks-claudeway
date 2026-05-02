@@ -480,17 +480,32 @@
       preloadAudio(1);
 
       // If the user just clicked "Open Lesson" on the home page, auto-start
-      // narration. The flag is set during that click (a user gesture), which
-      // satisfies most browsers' autoplay policies for the new document.
+      // narration. The click is the user gesture; browsers allow autoplay on
+      // pages loaded via a user gesture click. Safari also requires the audio
+      // element to be played synchronously (no async fetch before .play()).
+      // To satisfy Safari: the home page stores the prefetched slide 1 audio
+      // as base64 in sessionStorage so we can inject it directly into the
+      // audio cache and call .play() without any network round-trip.
       try {
         if (sessionStorage.getItem('autoplay') === '1') {
           sessionStorage.removeItem('autoplay');
           unlockAudio();
-          // Tiny defer so layout/audio element are fully ready before play.
-          setTimeout(() => {
-            setAuto(true);
-            speakCurrent(autoAdvance);
-          }, 50);
+
+          const b64 = sessionStorage.getItem('slide1audio');
+          sessionStorage.removeItem('slide1audio');
+
+          if (b64) {
+            // Inject the prefetched audio directly — no fetch, no async gap.
+            const binary = atob(b64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            const blob = new Blob([bytes], { type: 'audio/mpeg' });
+            const url = URL.createObjectURL(blob);
+            audioCache.set(0, url);
+          }
+
+          setAuto(true);
+          speakCurrent(autoAdvance);
         }
       } catch (e) {}
 
