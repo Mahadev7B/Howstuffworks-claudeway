@@ -233,6 +233,18 @@ def record_api_call(
     returns immediately so lesson generation is never delayed by DB latency."""
     if _pool is None:
         return
+    # Strip image_data_url before storing — base64 images are ~1MB each and
+    # can be regenerated from Flux. Storing them blocks the connection for
+    # several seconds and exhausts the pool under concurrent load.
+    lesson_slim = None
+    if lesson is not None:
+        lesson_slim = {
+            **lesson,
+            "slides": [
+                {k: v for k, v in s.items() if k != "image_data_url"}
+                for s in lesson.get("slides", [])
+            ],
+        }
     params = (
         endpoint[:100],
         question[:500],
@@ -250,7 +262,7 @@ def record_api_call(
         (region or "")[:128] or None,
         (country or "")[:128] or None,
         (user_agent or "")[:500] or None,
-        Jsonb(lesson) if lesson is not None else None,
+        Jsonb(lesson_slim) if lesson_slim is not None else None,
     )
     _bg(_do_record_api_call, params)
 
