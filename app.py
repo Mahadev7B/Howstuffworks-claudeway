@@ -437,6 +437,11 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
     total_ms = int((time.time() - started) * 1000)
     logger.info("Flux render %dms | total request %dms", render_ms, total_ms)
     _recent_put(question, data)
+    # Always persist to DB immediately — so thumbs-up and redeploys never
+    # lose the lesson. Thumbs-up just marks it pinned; it doesn't need to
+    # re-save the lesson data.
+    if db_enabled:
+        save_cached_lesson(question, data)
     return data, None
 
 
@@ -575,14 +580,14 @@ def api_feedback():
     save_feedback(question, rating, comment, **ctx)
 
     if rating == "up" and db_enabled:
-        # Prefer the in-memory recent cache — it holds the lesson WITH
-        # image_data_url attached, so future cache hits can skip Flux entirely.
-        # Fall back to api_calls (text-only) if the recent cache has expired.
-        lesson_data = _recent_get(question) or get_lesson_from_calls(question)
+        # Lesson is already saved to cached_lessons on generation — just pin it.
+        # If for some reason it's missing (very first deploy, manual DB wipe),
+        # fall back to saving from in-memory cache.
+        lesson_data = _recent_get(question)
         if lesson_data:
             save_cached_lesson(question, lesson_data)
-            pin_cached_lesson(question)
-            logger.info("Cached and pinned thumbs-up lesson: %s", question[:80])
+        pin_cached_lesson(question)
+        logger.info("Pinned thumbs-up lesson: %s", question[:80])
 
     record_api_call(
         endpoint="/api/feedback",
