@@ -124,14 +124,23 @@ def init_db() -> bool:
         logger.warning("DATABASE_URL not set — DB storage disabled")
         return False
     try:
+        # Neon free tier has a tight concurrent-connection limit (~5) and
+        # closes idle connections aggressively. Settings tuned for that:
+        # - max_size=4: stay under Neon's limit so we never queue at the server
+        # - max_idle=60: recycle connections before Neon kills them
+        # - max_lifetime=300: hard recycle every 5min
+        # - reconnect_timeout=2: fail fast on dead connections instead of
+        #   piling up reconnect attempts that each take 10s
         _pool = ConnectionPool(
             dsn,
             min_size=1,
-            max_size=8,
+            max_size=4,
             timeout=_POOL_TIMEOUT_S,
+            max_idle=60,
+            max_lifetime=300,
             kwargs={"autocommit": True, "connect_timeout": _CONNECT_TIMEOUT_S},
             check=_check_connection,
-            reconnect_timeout=10,
+            reconnect_timeout=2,
         )
         with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute(SCHEMA)
