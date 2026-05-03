@@ -377,11 +377,12 @@ def get_cached_lesson(question: str, ttl_days: int = 30) -> dict[str, Any] | Non
     Pinned lessons (thumbs-up feedback) ignore TTL and never expire.
     ttl_days=0 disables expiry entirely.
     """
-    if _pool is None:
-        return None
     qhash = question_hash(question)
+    conn = _direct_connect()
+    if conn is None:
+        return None
     try:
-        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        with conn, conn.cursor() as cur:
             if ttl_days > 0:
                 cur.execute(
                     """
@@ -411,6 +412,11 @@ def get_cached_lesson(question: str, ttl_days: int = 30) -> dict[str, Any] | Non
     except Exception:
         logger.exception("Cache read failed — skipping")
         return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def _do_pin_cached_lesson(qhash: str) -> None:
@@ -443,10 +449,11 @@ def pin_cached_lesson(question: str) -> None:
 
 def get_lesson_from_calls(question: str) -> dict[str, Any] | None:
     """Return the most recent successfully-generated lesson for this question from api_calls."""
-    if _pool is None:
+    conn = _direct_connect()
+    if conn is None:
         return None
     try:
-        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        with conn, conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT lesson FROM api_calls
@@ -461,6 +468,11 @@ def get_lesson_from_calls(question: str) -> dict[str, Any] | None:
     except Exception:
         logger.exception("get_lesson_from_calls failed — skipping")
         return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def _do_delete_cached_lesson(qhash: str, label: str) -> None:
@@ -546,13 +558,14 @@ def today_spend_usd() -> float:
     daily budget enforcement only needs to be approximately correct.
     """
     global _budget_cache
-    if _pool is None:
-        return 0.0
     now = time.time()
     if _budget_cache is not None and now - _budget_cache[0] < _BUDGET_CACHE_TTL_S:
         return _budget_cache[1]
+    conn = _direct_connect()
+    if conn is None:
+        return 0.0
     try:
-        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        with conn, conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT COALESCE(SUM(cost_usd), 0)
@@ -566,8 +579,12 @@ def today_spend_usd() -> float:
             return value
     except Exception:
         logger.exception("Budget query failed — skipping")
-        # Serve last known good value if we have one, else 0.0
         return _budget_cache[1] if _budget_cache is not None else 0.0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 # Per-IP rate-limit cache: avoids a DB hit on every lesson/feedback request.
@@ -578,15 +595,18 @@ _IP_RATE_CACHE_TTL_S = 30.0
 
 def ip_calls_last_hour(ip: str | None, endpoints: tuple[str, ...]) -> int:
     """Count of api_calls from this IP hitting given endpoints in the last hour. 0 on failure."""
-    if _pool is None or not ip:
+    if not ip:
         return 0
     cache_key = (ip, endpoints)
     now = time.time()
     cached = _IP_RATE_CACHE.get(cache_key)
     if cached is not None and now - cached[0] < _IP_RATE_CACHE_TTL_S:
         return cached[1]
+    conn = _direct_connect()
+    if conn is None:
+        return 0
     try:
-        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        with conn, conn.cursor() as cur:
             cur.execute(
                 """
                 SELECT COUNT(*)
@@ -604,6 +624,11 @@ def ip_calls_last_hour(ip: str | None, endpoints: tuple[str, ...]) -> int:
     except Exception:
         logger.exception("IP rate-limit query failed — skipping")
         return cached[1] if cached is not None else 0
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -685,14 +710,25 @@ def today_start_local() -> datetime:
 
 
 def _safe_query(default, fn):
-    if _pool is None:
+    """Run an admin read query via direct connection (bypasses pool).
+
+    Admin queries are infrequent and read-only — using a dedicated connection
+    avoids the pool-starvation issues we hit with stale Neon connections.
+    """
+    conn = _direct_connect()
+    if conn is None:
         return default
     try:
-        with _pool.connection(timeout=_ADMIN_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        with conn, conn.cursor() as cur:
             return fn(cur)
     except Exception:
         logger.exception("Admin query failed — returning default")
         return default
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 # A "real lesson" = a successful generation that produced a lesson JSON. This
