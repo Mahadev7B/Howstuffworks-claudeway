@@ -45,6 +45,28 @@ def _bg(fn, *args, **kwargs):
     except Exception:
         logger.exception("Failed to schedule background DB write")
 
+
+def _direct_connect():
+    """Open a fresh psycopg connection bypassing the pool.
+
+    Used by fire-and-forget writes (telemetry, cache, feedback) so the pool
+    stays free for the user-facing read path (cache lookups, rate-limit,
+    budget). Slower per write (~50ms) but never blocks and never starves.
+    Returns None if DATABASE_URL isn't set.
+    """
+    dsn = os.getenv("DATABASE_URL")
+    if not dsn:
+        return None
+    try:
+        return psycopg.connect(
+            dsn,
+            autocommit=True,
+            connect_timeout=_CONNECT_TIMEOUT_S,
+        )
+    except Exception:
+        logger.exception("Failed to open direct DB connection")
+        return None
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS feedback (
   id         SERIAL PRIMARY KEY,
@@ -157,18 +179,24 @@ def enabled() -> bool:
 
 
 def _do_save_feedback(params: tuple) -> None:
-    if _pool is None:
-        return
     sql = """
         INSERT INTO feedback
           (question, rating, comment, ip_address, city, region, country, user_agent)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
     """
+    conn = _direct_connect()
+    if conn is None:
+        return
     try:
-        with _pool.connection(timeout=_BG_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        with conn, conn.cursor() as cur:
             cur.execute(sql, params)
     except Exception:
         logger.exception("Failed to save feedback")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def save_feedback(
@@ -200,10 +228,11 @@ def save_feedback(
 
 
 def _do_record_api_call(params: tuple) -> None:
-    if _pool is None:
+    conn = _direct_connect()
+    if conn is None:
         return
     try:
-        with _pool.connection(timeout=_BG_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        with conn, conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO api_calls
@@ -216,6 +245,11 @@ def _do_record_api_call(params: tuple) -> None:
             )
     except Exception:
         logger.exception("Failed to record api_call")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def record_api_call(
@@ -330,16 +364,22 @@ def get_cached_lesson(question: str, ttl_days: int = 30) -> dict[str, Any] | Non
 
 
 def _do_pin_cached_lesson(qhash: str) -> None:
-    if _pool is None:
+    conn = _direct_connect()
+    if conn is None:
         return
     try:
-        with _pool.connection(timeout=_BG_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        with conn, conn.cursor() as cur:
             cur.execute(
                 "UPDATE cached_lessons SET pinned = true WHERE question_hash = %s",
                 (qhash,),
             )
     except Exception:
         logger.exception("Pin cached lesson failed — skipping")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def pin_cached_lesson(question: str) -> None:
@@ -372,10 +412,11 @@ def get_lesson_from_calls(question: str) -> dict[str, Any] | None:
 
 
 def _do_delete_cached_lesson(qhash: str, label: str) -> None:
-    if _pool is None:
+    conn = _direct_connect()
+    if conn is None:
         return
     try:
-        with _pool.connection(timeout=_BG_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        with conn, conn.cursor() as cur:
             cur.execute(
                 "DELETE FROM cached_lessons WHERE question_hash = %s",
                 (qhash,),
@@ -383,6 +424,11 @@ def _do_delete_cached_lesson(qhash: str, label: str) -> None:
         logger.info("Deleted stale cache entry for: %s", label)
     except Exception:
         logger.exception("Cache delete failed — skipping")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def delete_cached_lesson(question: str) -> None:
@@ -393,11 +439,7 @@ def delete_cached_lesson(question: str) -> None:
 
 
 def _do_save_cached_lesson(qhash: str, question: str, lesson: dict[str, Any]) -> None:
-    if _pool is None:
-        return
-    # Strip images before writing — base64 images are ~1MB per lesson and hold
-    # the connection for several seconds, exhausting the pool under load.
-    # Auto-heal in _track_lesson regenerates images from Flux on cache hit.
+    # Strip images — auto-heal regenerates them from Flux on cache hit.
     lesson_slim = {
         **lesson,
         "slides": [
@@ -405,8 +447,11 @@ def _do_save_cached_lesson(qhash: str, question: str, lesson: dict[str, Any]) ->
             for s in lesson.get("slides", [])
         ],
     }
+    conn = _direct_connect()
+    if conn is None:
+        return
     try:
-        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        with conn, conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO cached_lessons (question_hash, question, lesson)
@@ -418,6 +463,11 @@ def _do_save_cached_lesson(qhash: str, question: str, lesson: dict[str, Any]) ->
             )
     except Exception:
         logger.exception("Cache write failed — skipping")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def save_cached_lesson(question: str, lesson: dict[str, Any]) -> None:
