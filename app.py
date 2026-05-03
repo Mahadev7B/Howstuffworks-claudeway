@@ -52,6 +52,7 @@ from lesson_platform import (
     synthesize,
     today_spend_usd,
 )
+from lesson_platform.db import get_pool_stats, get_write_stats
 
 load_dotenv()
 
@@ -64,6 +65,9 @@ app.secret_key = settings.flask_secret_key
 from datetime import timedelta as _td
 app.permanent_session_lifetime = _td(days=7)
 db_enabled = init_db()
+
+# App startup time, used by /debug/status to report uptime.
+_STARTED_AT = time.time()
 
 
 # Short-lived in-memory cache so a freshly-generated lesson (POST /api/lesson)
@@ -801,6 +805,39 @@ def healthz():
         "today_spend_usd": round(today_spend_usd(), 4),
         "daily_budget_usd": settings.daily_budget_usd,
     }
+
+
+@app.route("/debug/status", methods=["GET"])
+def debug_status():
+    """Operational health snapshot — DB pool, write counters, cache sizes.
+
+    Public but contains no secrets or PII. Useful for diagnosing whether
+    telemetry writes are succeeding, whether the pool is starving, etc.
+    """
+    import sys
+    return jsonify({
+        "ok": True,
+        "uptime_seconds": int(time.time() - _STARTED_AT),
+        "git_commit": os.environ.get("RENDER_GIT_COMMIT", "unknown")[:8],
+        "python": sys.version.split()[0],
+        "db": {
+            "enabled": db_enabled,
+            "pool": get_pool_stats(),
+            "writes": get_write_stats(),
+        },
+        "caches": {
+            "recent_lessons": len(_RECENT_LESSONS),
+            "tts_cache": len(_TTS_CACHE),
+        },
+        "settings": {
+            "image_provider": settings.image_provider,
+            "flux_model": settings.flux_model,
+            "anthropic_model": settings.anthropic_model,
+            "tts_model": settings.openai_tts_model,
+            "tts_voice": settings.openai_tts_voice,
+            "daily_budget_usd": settings.daily_budget_usd,
+        },
+    })
 
 
 if __name__ == "__main__":

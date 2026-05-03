@@ -37,6 +37,52 @@ _CONNECT_TIMEOUT_S = 5
 # pin updates). Lesson generation must never wait on these.
 _bg_writer = ThreadPoolExecutor(max_workers=4, thread_name_prefix="db-bg")
 
+# Observability counters for /debug/status endpoint.
+_write_stats = {
+    "writes_succeeded": 0,
+    "writes_failed": 0,
+    "last_success_at": None,   # ISO timestamp of last successful write
+    "last_failure_at": None,   # ISO timestamp of last failed write
+    "last_failure_reason": None,
+}
+
+
+def _record_write_success(label: str) -> None:
+    _write_stats["writes_succeeded"] += 1
+    _write_stats["last_success_at"] = datetime.utcnow().isoformat() + "Z"
+    _write_stats["last_success_label"] = label
+
+
+def _record_write_failure(label: str, exc: Exception) -> None:
+    _write_stats["writes_failed"] += 1
+    _write_stats["last_failure_at"] = datetime.utcnow().isoformat() + "Z"
+    _write_stats["last_failure_reason"] = f"{label}: {type(exc).__name__}: {str(exc)[:200]}"
+
+
+def get_write_stats() -> dict:
+    """Snapshot of write counters for /debug/status."""
+    return dict(_write_stats)
+
+
+def get_pool_stats() -> dict:
+    """Pool internal stats (size/idle/waiting) for /debug/status."""
+    if _pool is None:
+        return {"enabled": False}
+    try:
+        stats = _pool.get_stats()
+        return {
+            "enabled": True,
+            "pool_size": stats.get("pool_size", 0),
+            "pool_available": stats.get("pool_available", 0),
+            "requests_waiting": stats.get("requests_waiting", 0),
+            "requests_num": stats.get("requests_num", 0),
+            "requests_errors": stats.get("requests_errors", 0),
+            "requests_queued": stats.get("requests_queued", 0),
+            "connections_lost": stats.get("connections_lost", 0),
+        }
+    except Exception as exc:
+        return {"enabled": True, "error": str(exc)}
+
 
 def _bg(fn, *args, **kwargs):
     """Fire-and-forget DB write. Returns immediately; logs on submit failure."""
@@ -190,8 +236,10 @@ def _do_save_feedback(params: tuple) -> None:
     try:
         with conn, conn.cursor() as cur:
             cur.execute(sql, params)
-    except Exception:
+        _record_write_success("save_feedback")
+    except Exception as exc:
         logger.exception("Failed to save feedback")
+        _record_write_failure("save_feedback", exc)
     finally:
         try:
             conn.close()
@@ -243,8 +291,10 @@ def _do_record_api_call(params: tuple) -> None:
                 """,
                 params,
             )
-    except Exception:
+        _record_write_success("record_api_call")
+    except Exception as exc:
         logger.exception("Failed to record api_call")
+        _record_write_failure("record_api_call", exc)
     finally:
         try:
             conn.close()
@@ -373,8 +423,10 @@ def _do_pin_cached_lesson(qhash: str) -> None:
                 "UPDATE cached_lessons SET pinned = true WHERE question_hash = %s",
                 (qhash,),
             )
-    except Exception:
+        _record_write_success("pin_cached_lesson")
+    except Exception as exc:
         logger.exception("Pin cached lesson failed — skipping")
+        _record_write_failure("pin_cached_lesson", exc)
     finally:
         try:
             conn.close()
@@ -422,8 +474,10 @@ def _do_delete_cached_lesson(qhash: str, label: str) -> None:
                 (qhash,),
             )
         logger.info("Deleted stale cache entry for: %s", label)
-    except Exception:
+        _record_write_success("delete_cached_lesson")
+    except Exception as exc:
         logger.exception("Cache delete failed — skipping")
+        _record_write_failure("delete_cached_lesson", exc)
     finally:
         try:
             conn.close()
@@ -461,8 +515,10 @@ def _do_save_cached_lesson(qhash: str, question: str, lesson: dict[str, Any]) ->
                 """,
                 (qhash, question, Jsonb(lesson_slim)),
             )
-    except Exception:
+        _record_write_success("save_cached_lesson")
+    except Exception as exc:
         logger.exception("Cache write failed — skipping")
+        _record_write_failure("save_cached_lesson", exc)
     finally:
         try:
             conn.close()

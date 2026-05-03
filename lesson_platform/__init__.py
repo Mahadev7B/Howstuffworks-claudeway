@@ -18,6 +18,8 @@ from .db import (
     delete_cached_lesson,
     get_cached_lesson,
     get_lesson_from_calls,
+    get_pool_stats,
+    get_write_stats,
     init_db,
     ip_calls_last_hour,
     pin_cached_lesson,
