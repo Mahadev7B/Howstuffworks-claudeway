@@ -1002,12 +1002,14 @@ def admin_load_all(
                             "duration_ms": int(r[2] or 0), "cost": round(float(r[3] or 0), 5)}
                            for r in cur.fetchall()]
 
-        # ── Recent errors ─────────────────────────────────────────────────────
+        # ── Recent errors (last 24 hours only) ────────────────────────────────
         cur.execute(f"""
             SELECT to_char(created_at AT TIME ZONE '{ADMIN_TZ}', 'YYYY-MM-DD HH24:MI'),
                    endpoint, question, error, ip_address
             FROM api_calls
-            WHERE success = false {xip_sql}
+            WHERE success = false
+              AND created_at > NOW() - INTERVAL '1 day'
+              {xip_sql}
             ORDER BY created_at DESC
             LIMIT %s
         """, (*xip_params, limit_errors))
