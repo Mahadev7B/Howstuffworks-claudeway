@@ -150,18 +150,25 @@ def generate_images_batch(
 
     started = time.time()
     try:
-        # Submit all at once, then collect
+        # Submit all at once, then poll all in parallel via threads
         handles = [
             fal_client.submit(settings.flux_model, arguments=_base_args(p))
             for p in prompts
         ]
-        results = []
-        for handle in handles:
+
+        def _collect(handle):
             for _ in handle.iter_events(with_logs=False, interval=_POLL_INTERVAL):
                 pass
             resp = handle.client.get(handle.response_url)
             resp.raise_for_status()
-            results.append(resp.json())
+            return resp.json()
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+        with ThreadPoolExecutor(max_workers=len(handles)) as ex:
+            future_to_idx = {ex.submit(_collect, h): i for i, h in enumerate(handles)}
+            results = [None] * len(handles)
+            for fut in _as_completed(future_to_idx):
+                results[future_to_idx[fut]] = fut.result()
     except Exception as exc:
         logger.exception("Flux batch generation failed")
         raise RuntimeError(f"Flux batch generation failed: {exc}") from exc
