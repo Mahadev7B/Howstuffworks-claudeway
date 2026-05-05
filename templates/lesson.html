@@ -506,10 +506,6 @@
       show(0);
       updateProgress();
 
-      // Warm the cache so the very first Play feels instant
-      preloadAudio(0);
-      preloadAudio(1);
-
       // If the user just clicked "Open Lesson" on the home page, auto-start
       // narration. The click is the user gesture; browsers allow autoplay on
       // pages loaded via a user gesture click. Safari also requires the audio
@@ -567,6 +563,10 @@
           }
         }
       } catch (e) {}
+
+      // Warm slide cache — skip slide 0 if already injected from sessionStorage
+      preloadAudio(0);
+      preloadAudio(1);
 
       const fbSection = document.getElementById('feedback');
       const fbButtons = Array.from(document.querySelectorAll('.fb-btn'));
