@@ -920,8 +920,6 @@
       if (!loading.hidden) showGameError(e.message + ' (' + (e.filename || '').split('/').pop() + ':' + e.lineno + ')');
     });
 
-    let lastTickTime = 0;
-
     function safeTick() {
       lastTickTime = Date.now();
       try { tickCount++; tick(); } catch(e) { showGameError(e.message); }
