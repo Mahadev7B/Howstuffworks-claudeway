@@ -684,7 +684,7 @@
     function resetGame() {
       playerLane = 1;
       playerY    = H - 55;
-      speed      = 10;      // road scroll px/tick — fixed speed
+      speed      = 60;      // road scroll px/tick — fixed speed
       score      = 0;
       fuel       = 100;
       frame      = 0;
@@ -732,7 +732,7 @@
       // speed is constant — no ramp
 
       // Spawn traffic
-      const spawnInterval = Math.max(18, 35 - Math.floor(speed * 2));
+      const spawnInterval = 8;
       if (frame % spawnInterval === 0) spawnTraffic();
 
       // Spawn fuel cans
