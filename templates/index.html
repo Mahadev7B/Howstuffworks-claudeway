@@ -242,8 +242,39 @@
       color: var(--accent);
       font-size: 0.95rem;
     }
-    /* Loading overlay override for new theme */
-    .loading { background: rgba(255,248,240,0.96); }
+    /* Loading overlay — themed to match */
+    .loading { background: rgba(255,248,240,0.97); font-family: 'Fredoka', sans-serif; }
+    .loading-inner p { color: #2D3142; font-size: 1.1rem; }
+    .loading-inner p.muted { color: #6A4C93; font-size: 1rem; }
+    #loadingMsg { font-size: 1.3rem; font-weight: 600; color: #FF6B35; }
+    .loading-inner #game { border-color: #FF6B35; border-radius: 16px; }
+    .loading-inner #game:focus { box-shadow: 0 0 0 4px rgba(255,107,53,0.25); }
+    .big-btn {
+      background: linear-gradient(135deg, #FF6B35, #F7B801) !important;
+      color: white !important;
+      border: none !important;
+      border-radius: 50px !important;
+      font-family: 'Fredoka', sans-serif !important;
+      font-size: 1.2rem !important;
+      font-weight: 700 !important;
+      box-shadow: 0 8px 20px rgba(255,107,53,0.4) !important;
+    }
+    .secondary {
+      font-family: 'Fredoka', sans-serif;
+      border-color: rgba(106,76,147,0.3);
+      color: #6A4C93;
+      border-radius: 50px;
+      font-size: 1rem;
+    }
+    .secondary:hover { background: rgba(106,76,147,0.08); color: #6A4C93; }
+    .dpad-btn {
+      background: white;
+      border-color: #FF6B35;
+      color: #FF6B35;
+      border-radius: 14px;
+      font-size: 1.3rem;
+    }
+    .dpad-btn:active, .dpad-btn.pressed { background: #FFF3E8; border-color: #FF6B35; color: #FF6B35; }
     @media (max-width: 768px) {
       .hero h1 { font-size: 2.5rem; }
       .hero .tagline { font-size: 1.2rem; }
