@@ -3,15 +3,54 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{{ lesson.title }} — HowStuffWorks</title>
+  <title>{{ lesson.title }} — Ask Lil Owl</title>
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Fredoka', sans-serif; background: #FFF8F0; }
+    .lesson-header { background: #fff; border-radius: 20px; padding: 1.25rem 1.5rem; box-shadow: 0 4px 20px rgba(255,107,53,0.1); margin-bottom: 1.5rem; border: 2px solid rgba(255,107,53,0.15); }
+    .back { color: #FF6B35; font-weight: 600; font-size: 1rem; }
+    .back:hover { color: #6A4C93; text-decoration: none; }
+    .lesson-brand { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
+    .lesson-owl { font-size: 1.6rem; }
+    .lesson-brand-name { font-size: 1rem; font-weight: 700; color: #FF6B35; }
+    .lesson-titles .question { color: #6A4C93; font-weight: 500; text-transform: none; letter-spacing: 0; font-size: 0.95rem; }
+    .lesson-titles h1 { font-family: 'Fredoka', sans-serif; font-weight: 700; color: #2D3142; font-size: 2rem; }
+    .progress-fill { background: linear-gradient(90deg, #FF6B35, #F7B801); }
+    .deck { border: 2px solid rgba(255,107,53,0.15); border-radius: 20px; background: #fff; }
+    .slide h2 { font-family: 'Fredoka', sans-serif; color: #FF6B35; font-weight: 700; }
+    .fun-fact { background: #FFF3E8; border-left-color: #FF6B35; }
+    .fun-fact strong { color: #FF6B35; }
+    .controls { border-radius: 16px; border-color: rgba(255,107,53,0.2); }
+    .controls button.primary { background: linear-gradient(135deg, #FF6B35, #F7B801); border-color: #FF6B35; }
+    .controls button.primary:hover { background: #6A4C93; border-color: #6A4C93; }
+    .controls button.playing { background: #6A4C93; border-color: #6A4C93; }
+    .dot.on { background: #FF6B35; }
+    .dot:hover { background: #FF6B35; }
+    .feedback { border-radius: 16px; border-color: rgba(255,107,53,0.2); }
+    .feedback h3 { font-family: 'Fredoka', sans-serif; color: #FF6B35; }
+    .fb-btn.selected { background: #FFF3E8; border-color: #FF6B35; color: #FF6B35; }
+    #fb-submit { background: #FF6B35; }
+    #fb-submit:hover:not(:disabled) { background: #6A4C93; }
+    .quiz-section .primary { background: linear-gradient(135deg, #FF6B35, #F7B801); border: none; color: white; padding: 0.8rem 2rem; border-radius: 50px; font-family: 'Fredoka', sans-serif; font-size: 1.1rem; font-weight: 600; box-shadow: 0 4px 15px rgba(255,107,53,0.3); }
+    .quiz-title { font-family: 'Fredoka', sans-serif; color: #FF6B35; }
+    .quiz-opt { background: #FFF3E8; }
+    .quiz-opt:hover:not(:disabled) { border-color: #FF6B35; background: #FFE8D6; }
+    .new-question-link { color: #FF6B35; font-weight: 600; font-size: 1rem; }
+    .new-question-link:hover { color: #6A4C93; }
+    .lesson-footer { text-align: center; padding: 1.5rem; color: #6A4C93; font-size: 0.9rem; }
+  </style>
 </head>
 <body>
   <main class="lesson">
 
     <header class="lesson-header">
-      <a href="{{ url_for('home') }}" class="back">← New question</a>
+      <div class="lesson-brand">
+        <span class="lesson-owl">🦉</span>
+        <span class="lesson-brand-name">Ask Lil Owl</span>
+        <a href="{{ url_for('home') }}" class="back" style="margin-left:auto">← New question</a>
+      </div>
       <div class="lesson-titles">
         <p class="question">{{ question }}</p>
         <h1>{{ lesson.title }}</h1>
@@ -102,12 +141,8 @@
       <a href="{{ url_for('home') }}" class="new-question-link">← Ask a new question</a>
     </section>
 
-    <footer class="lesson-meta">
-      <span>Generated in {{ lesson.meta.generation_time_ms }}ms</span>
-      <span>·</span>
-      <span>{{ lesson.meta.input_tokens + lesson.meta.output_tokens }} tokens</span>
-      <span>·</span>
-      <span>~${{ '%.4f'|format(lesson.meta.estimated_cost_usd) }}</span>
+    <footer class="lesson-footer">
+      <p>Powered by AI ✨ Made with curiosity for curious minds 🦉</p>
     </footer>
   </main>
 
