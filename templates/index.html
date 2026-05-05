@@ -364,9 +364,9 @@
         <button type="button" id="openLessonBtn" class="primary big-btn" hidden>Open Lesson →</button>
         <button type="button" id="cancelBtn" class="secondary">Stop</button>
       </div>
-      <p class="muted">While you wait — collect the stars. Avoid the asteroid! <span id="elapsed">0s</span></p>
-      <canvas id="game" width="360" height="240" tabindex="0" aria-label="Space mini game"></canvas>
-      <p class="muted game-hint" id="gameHint">Arrow keys or W A S D · <span id="gameStatus">Stars: 0</span></p>
+      <p class="muted">While you wait — dodge traffic, collect fuel! <span id="elapsed">0s</span></p>
+      <canvas id="game" width="360" height="240" tabindex="0" aria-label="Car race mini game"></canvas>
+      <p class="muted game-hint" id="gameHint">← → to change lanes · <span id="gameStatus">Score: 0  ⛽ 100%</span></p>
       <div class="dpad" id="dpad">
         <button class="dpad-btn" data-dx="0"  data-dy="-1" aria-label="Up">▲</button>
         <div class="dpad-middle">
@@ -649,36 +649,265 @@
       askQuestion(input.value);
     });
 
-    // ---------- Space mini-game ---------------------------------------
+    // ---------- Car race mini-game ------------------------------------
+    // Top-down road: player car dodges oncoming traffic, collects fuel cans.
+    // Left/Right moves between 3 lanes. Up/Down changes speed tier.
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
     const gameStatus = document.getElementById('gameStatus');
-    const COLS = 12, ROWS = 8, CELL = 30;
-    let player, asteroid, stars, score, dir, gameLoopId, thrustFrame, frame;
-    let tickCount = 0;
+    const W = canvas.width, H = canvas.height;
 
-    // Visible debug overlay — shows errors on canvas so mobile users can see them
+    // Lane layout — 3 lanes centred on the road
+    const ROAD_LEFT  = W * 0.2;
+    const ROAD_RIGHT = W * 0.8;
+    const ROAD_W     = ROAD_RIGHT - ROAD_LEFT;
+    const LANE_W     = ROAD_W / 3;
+    const LANES      = [0, 1, 2];  // indices
+    function laneX(i) { return ROAD_LEFT + LANE_W * i + LANE_W / 2; }
+
+    // Game state
+    let playerLane, playerY, speed, score, fuel, frame, gameLoopId, tickCount, lastTickTime;
+    let traffic, fuelCans, roadOffset, stars; // `stars` alias kept so watchdog guard works
+
+    function resetGame() {
+      playerLane = 1;
+      playerY    = H - 55;
+      speed      = 3;       // road scroll px/tick
+      score      = 0;
+      fuel       = 100;
+      frame      = 0;
+      roadOffset = 0;
+      traffic    = [];
+      fuelCans   = [];
+      stars      = true;    // truthy sentinel for watchdog / maybeRestartLoop
+      updateStatus();
+    }
+
+    function updateStatus(extra) {
+      gameStatus.textContent = (extra ? extra + ' · ' : '') + 'Score: ' + score + '  ⛽ ' + Math.ceil(fuel) + '%';
+    }
+
+    // direction input — only left/right used for lane changes; up/down adjusts speed
+    // `dir` is set by the existing keydown / dpad handlers
+    let inputLane = 0;  // -1 left, 0 none, +1 right
+
+    function spawnTraffic() {
+      const lane = LANES[Math.floor(Math.random() * 3)];
+      const colors = ['#E74C3C','#3498DB','#2ECC71','#9B59B6','#E67E22'];
+      traffic.push({
+        lane,
+        y: -40,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        spd: speed * (0.4 + Math.random() * 0.3),
+      });
+    }
+
+    function spawnFuel() {
+      const lane = LANES[Math.floor(Math.random() * 3)];
+      fuelCans.push({ lane, y: -20 });
+    }
+
+    function tick() {
+      if (!stars) return;
+      frame++;
+      roadOffset = (roadOffset + speed) % 40;
+
+      // Drain fuel
+      fuel = Math.max(0, fuel - 0.18);
+
+      // Speed ramp every 120 ticks
+      if (frame % 120 === 0 && speed < 9) { speed += 0.5; }
+
+      // Spawn traffic
+      const spawnInterval = Math.max(18, 35 - Math.floor(speed * 2));
+      if (frame % spawnInterval === 0) spawnTraffic();
+
+      // Spawn fuel cans
+      if (frame % 70 === 0) spawnFuel();
+
+      // Apply horizontal input from dpad/keys (dir is set by existing handlers)
+      if (dir.x === -1) { playerLane = Math.max(0, playerLane - 1); dir = { x: 0, y: 0 }; }
+      if (dir.x ===  1) { playerLane = Math.min(2, playerLane + 1); dir = { x: 0, y: 0 }; }
+
+      // Move traffic
+      traffic.forEach(t => { t.y += t.spd + speed * 0.5; });
+      traffic = traffic.filter(t => t.y < H + 50);
+
+      // Move fuel cans
+      fuelCans.forEach(f => { f.y += speed * 0.6; });
+      fuelCans = fuelCans.filter(f => f.y < H + 30);
+
+      // Collision with traffic
+      const px = laneX(playerLane);
+      for (const t of traffic) {
+        if (t.lane === playerLane && Math.abs(t.y - playerY) < 32) {
+          updateStatus('Crash! 💥');
+          clearInterval(gameLoopId); gameLoopId = null;
+          setTimeout(() => { resetGame(); loop(); }, 1200);
+          draw(); return;
+        }
+      }
+
+      // Collect fuel cans
+      fuelCans = fuelCans.filter(f => {
+        if (f.lane === playerLane && Math.abs(f.y - playerY) < 28) {
+          fuel = Math.min(100, fuel + 25);
+          score++;
+          updateStatus();
+          return false;
+        }
+        return true;
+      });
+
+      // Score for surviving
+      if (frame % 10 === 0) { score++; updateStatus(); }
+
+      // Out of fuel
+      if (fuel <= 0) {
+        updateStatus('Out of fuel! ⛽');
+        clearInterval(gameLoopId); gameLoopId = null;
+        setTimeout(() => { resetGame(); loop(); }, 1200);
+        draw(); return;
+      }
+
+      draw();
+    }
+
+    function drawCar(cx, cy, color, isPlayer) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      // Shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.beginPath(); ctx.ellipse(2, 4, 13, 6, 0, 0, Math.PI * 2); ctx.fill();
+      // Body
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.roundRect(-12, -18, 24, 36, 5);
+      ctx.fill();
+      // Roof
+      ctx.fillStyle = isPlayer ? '#FFF8F0' : 'rgba(255,255,255,0.7)';
+      ctx.beginPath();
+      ctx.roundRect(-8, -12, 16, 18, 3);
+      ctx.fill();
+      // Windshield tint
+      ctx.fillStyle = isPlayer ? 'rgba(106,76,147,0.5)' : 'rgba(0,0,0,0.3)';
+      ctx.beginPath();
+      ctx.roundRect(-7, -11, 14, 8, 2);
+      ctx.fill();
+      // Wheels
+      ctx.fillStyle = '#222';
+      [[-13,-12],[-13,10],[13,-12],[13,10]].forEach(([wx,wy]) => {
+        ctx.beginPath(); ctx.ellipse(wx, wy, 4, 5, 0, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#555';
+        ctx.beginPath(); ctx.ellipse(wx, wy, 2, 3, 0, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#222';
+      });
+      // Headlights / taillights
+      if (isPlayer) {
+        ctx.fillStyle = '#FF6B35';
+        ctx.beginPath(); ctx.ellipse(-8, -20, 3, 2, 0, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(8,  -20, 3, 2, 0, 0, Math.PI*2); ctx.fill();
+      } else {
+        ctx.fillStyle = '#F7B801';
+        ctx.beginPath(); ctx.ellipse(-8, 20, 3, 2, 0, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(8,  20, 3, 2, 0, 0, Math.PI*2); ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    function drawFuelCan(cx, cy) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.fillStyle = '#F7B801';
+      ctx.beginPath(); ctx.roundRect(-8, -10, 16, 18, 3); ctx.fill();
+      ctx.fillStyle = '#FF6B35';
+      ctx.fillRect(-5, -13, 10, 5);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 9px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('⛽', 0, 4);
+      ctx.restore();
+    }
+
+    function draw() {
+      // Sky/grass
+      ctx.fillStyle = '#7EC850';
+      ctx.fillRect(0, 0, W, H);
+
+      // Road surface
+      ctx.fillStyle = '#555';
+      ctx.fillRect(ROAD_LEFT, 0, ROAD_W, H);
+
+      // Road edge lines
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(ROAD_LEFT, 0); ctx.lineTo(ROAD_LEFT, H); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ROAD_RIGHT, 0); ctx.lineTo(ROAD_RIGHT, H); ctx.stroke();
+
+      // Dashed lane dividers (scrolling)
+      ctx.strokeStyle = '#FFD700';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([20, 20]);
+      ctx.lineDashOffset = -roadOffset;
+      for (let i = 1; i < 3; i++) {
+        const x = ROAD_LEFT + LANE_W * i;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+      }
+      ctx.setLineDash([]);
+
+      // Roadside scenery — trees
+      const treeXs = [W * 0.05, W * 0.12, W * 0.88, W * 0.95];
+      treeXs.forEach((tx, i) => {
+        const ty = ((frame * (i % 2 === 0 ? 1.2 : 0.9) + i * 80) % (H + 60)) - 30;
+        ctx.fillStyle = '#2E7D32';
+        ctx.beginPath(); ctx.arc(tx, ty, 14, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#4CAF50';
+        ctx.beginPath(); ctx.arc(tx - 2, ty - 3, 10, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#5D4037';
+        ctx.fillRect(tx - 3, ty + 12, 6, 12);
+      });
+
+      // Fuel cans
+      fuelCans.forEach(f => drawFuelCan(laneX(f.lane), f.y));
+
+      // Traffic cars (oncoming = drawn before player)
+      traffic.forEach(t => drawCar(laneX(t.lane), t.y, t.color, false));
+
+      // Player car
+      drawCar(laneX(playerLane), playerY, '#FF6B35', true);
+
+      // Fuel bar
+      const barW = 80, barH = 10, barX = W - barW - 8, barY = 8;
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.beginPath(); ctx.roundRect(barX, barY, barW, barH, 4); ctx.fill();
+      ctx.fillStyle = fuel > 30 ? '#F7B801' : '#E74C3C';
+      ctx.beginPath(); ctx.roundRect(barX, barY, barW * fuel / 100, barH, 4); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = '9px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText('⛽', barX - 14, barY + 9);
+    }
+
+    // Visible debug overlay
     function showGameError(msg) {
       if (gameLoopId) clearInterval(gameLoopId);
-      ctx.fillStyle = '#0A0820';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#555';
+      ctx.fillRect(0, 0, W, H);
       ctx.fillStyle = '#E24B4A';
       ctx.font = 'bold 13px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('Game error:', canvas.width / 2, canvas.height / 2 - 16);
+      ctx.fillText('Game error:', W / 2, H / 2 - 16);
       ctx.fillStyle = '#FAC775';
       ctx.font = '11px sans-serif';
-      // Word-wrap the message across lines
       const words = String(msg).split(' ');
-      let line = '', y = canvas.height / 2 + 4;
+      let line = '', y = H / 2 + 4;
       for (const w of words) {
         const test = line ? line + ' ' + w : w;
-        if (ctx.measureText(test).width > canvas.width - 20) {
-          ctx.fillText(line, canvas.width / 2, y);
-          line = w; y += 16;
+        if (ctx.measureText(test).width > W - 20) {
+          ctx.fillText(line, W / 2, y); line = w; y += 16;
         } else { line = test; }
       }
-      if (line) ctx.fillText(line, canvas.width / 2, y);
+      if (line) ctx.fillText(line, W / 2, y);
       gameStatus.textContent = 'Error — see canvas';
     }
 
@@ -686,186 +915,11 @@
       if (!loading.hidden) showGameError(e.message + ' (' + (e.filename || '').split('/').pop() + ':' + e.lineno + ')');
     });
 
-    function resetGame() {
-      player   = { x: 1, y: 1 };
-      asteroid = { x: COLS - 2, y: ROWS - 2, dir: { x: -1, y: 0 } };
-      stars = [];
-      for (let y = 0; y < ROWS; y++) {
-        for (let x = 0; x < COLS; x++) {
-          if (!(x === player.x && y === player.y) && !(x === asteroid.x && y === asteroid.y)) {
-            stars.push({ x, y });
-          }
-        }
-      }
-      score = 0;
-      dir = { x: 0, y: 0 };
-      thrustFrame = 0;
-      frame = 0;
-      updateStatus();
-    }
-
-    function updateStatus(extra) {
-      gameStatus.textContent = (extra ? extra + ' · ' : '') + 'Stars: ' + score;
-    }
-
-    function moveAsteroid() {
-      const dx = player.x - asteroid.x;
-      const dy = player.y - asteroid.y;
-      let nx = asteroid.dir.x, ny = asteroid.dir.y;
-      if (Math.random() < 0.6) {
-        if (Math.abs(dx) > Math.abs(dy)) { nx = Math.sign(dx); ny = 0; }
-        else { nx = 0; ny = Math.sign(dy) || (Math.random() < 0.5 ? 1 : -1); }
-      } else {
-        const choices = [[1,0],[-1,0],[0,1],[0,-1]];
-        const c = choices[Math.floor(Math.random() * choices.length)];
-        nx = c[0]; ny = c[1];
-      }
-      const tx = asteroid.x + nx;
-      const ty = asteroid.y + ny;
-      if (tx >= 0 && tx < COLS && ty >= 0 && ty < ROWS) {
-        asteroid.x = tx; asteroid.y = ty;
-        asteroid.dir = { x: nx, y: ny };
-      }
-    }
-
-    function tick() {
-      if (!stars) return;  // guard against tick firing before resetGame
-      frame++;
-      if (frame % 6 === 0) {
-        const tx = player.x + dir.x;
-        const ty = player.y + dir.y;
-        if (tx >= 0 && tx < COLS && ty >= 0 && ty < ROWS) {
-          player.x = tx; player.y = ty;
-        }
-        const idx = stars.findIndex(s => s.x === player.x && s.y === player.y);
-        if (idx >= 0) { stars.splice(idx, 1); score++; updateStatus(); }
-        thrustFrame = (dir.x !== 0 || dir.y !== 0) ? (thrustFrame + 1) % 4 : 0;
-      }
-      if (frame % 9 === 0) moveAsteroid();
-
-      if (player.x === asteroid.x && player.y === asteroid.y) {
-        updateStatus('Hit! Restarting…');
-        clearInterval(gameLoopId);
-        gameLoopId = null;
-        setTimeout(() => { resetGame(); loop(); }, 1200);
-        return;
-      }
-      if (stars.length === 0) {
-        updateStatus('All stars collected!');
-        clearInterval(gameLoopId);
-        gameLoopId = null;
-        setTimeout(() => { resetGame(); loop(); }, 1500);
-        return;
-      }
-      draw();
-    }
-
-    function drawStar(cx, cy, r, points) {
-      ctx.beginPath();
-      for (let i = 0; i < points * 2; i++) {
-        const a = (i * Math.PI) / points - Math.PI / 2;
-        const rad = i % 2 === 0 ? r : r * 0.45;
-        if (i === 0) ctx.moveTo(cx + Math.cos(a) * rad, cy + Math.sin(a) * rad);
-        else ctx.lineTo(cx + Math.cos(a) * rad, cy + Math.sin(a) * rad);
-      }
-      ctx.closePath();
-      ctx.fill();
-    }
-
-    function drawRocket(cx, cy, dx, dy) {
-      ctx.save();
-      ctx.translate(cx, cy);
-      // Rotate to face movement direction
-      const angle = (dx !== 0 || dy !== 0) ? Math.atan2(dy, dx) + Math.PI / 2 : -Math.PI / 2;
-      ctx.rotate(angle);
-      // Body
-      ctx.fillStyle = '#C8C0FF';
-      ctx.beginPath();
-      ctx.moveTo(0, -10);
-      ctx.lineTo(6, 4);
-      ctx.lineTo(-6, 4);
-      ctx.closePath();
-      ctx.fill();
-      // Nose cone
-      ctx.fillStyle = '#FFFFFF';
-      ctx.beginPath();
-      ctx.moveTo(0, -10);
-      ctx.lineTo(3, -3);
-      ctx.lineTo(-3, -3);
-      ctx.closePath();
-      ctx.fill();
-      // Fins
-      ctx.fillStyle = '#534AB7';
-      ctx.beginPath(); ctx.moveTo(6, 4); ctx.lineTo(10, 8); ctx.lineTo(4, 6); ctx.closePath(); ctx.fill();
-      ctx.beginPath(); ctx.moveTo(-6, 4); ctx.lineTo(-10, 8); ctx.lineTo(-4, 6); ctx.closePath(); ctx.fill();
-      // Thruster flame
-      if (thrustFrame > 0) {
-        ctx.fillStyle = thrustFrame % 2 === 0 ? '#EF9F27' : '#FF6B35';
-        ctx.beginPath();
-        ctx.moveTo(-3, 5);
-        ctx.lineTo(3, 5);
-        ctx.lineTo(0, 5 + 4 + thrustFrame * 2);
-        ctx.closePath();
-        ctx.fill();
-      }
-      ctx.restore();
-    }
-
-    function drawAsteroid(cx, cy) {
-      ctx.save();
-      ctx.translate(cx, cy);
-      ctx.rotate(frame * 0.04);
-      ctx.fillStyle = '#8B7355';
-      ctx.beginPath();
-      const pts = [
-        [0,-11],[5,-8],[10,-5],[11,1],[8,7],[3,10],
-        [-3,11],[-8,7],[-11,2],[-9,-4],[-5,-9]
-      ];
-      ctx.moveTo(pts[0][0], pts[0][1]);
-      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
-      ctx.closePath();
-      ctx.fill();
-      // Crater marks
-      ctx.fillStyle = '#6B5A42';
-      ctx.beginPath(); ctx.arc(-3, -2, 2.5, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(4, 4, 1.8, 0, Math.PI * 2); ctx.fill();
-      ctx.restore();
-    }
-
-    function draw() {
-      // Space background
-      ctx.fillStyle = '#0A0820';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // Faint background star specks
-      ctx.fillStyle = 'rgba(255,255,255,0.35)';
-      for (let i = 0; i < 30; i++) {
-        const bx = ((i * 73 + 17) % canvas.width);
-        const by = ((i * 41 + 29) % canvas.height);
-        ctx.fillRect(bx, by, 1, 1);
-      }
-
-      // Collectible stars
-      ctx.fillStyle = '#FAD750';
-      for (const s of stars) {
-        drawStar(s.x * CELL + CELL / 2, s.y * CELL + CELL / 2, 5, 5);
-      }
-
-      // Rocket (player)
-      drawRocket(player.x * CELL + CELL / 2, player.y * CELL + CELL / 2, dir.x, dir.y);
-
-      // Asteroid
-      drawAsteroid(asteroid.x * CELL + CELL / 2, asteroid.y * CELL + CELL / 2);
-    }
-
     let lastTickTime = 0;
 
     function safeTick() {
       lastTickTime = Date.now();
-      try {
-        tickCount++;
-        tick();
-      } catch(e) { showGameError(e.message); }
+      try { tickCount++; tick(); } catch(e) { showGameError(e.message); }
     }
 
     function loop() {
@@ -923,7 +977,7 @@
     const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
     if (isTouchDevice) {
       document.getElementById('dpad').style.display = 'flex';
-      document.getElementById('gameHint').firstChild.textContent = 'Tap arrows to move · ';
+      document.getElementById('gameHint').firstChild.textContent = 'Tap ◀ ▶ to change lanes · ';
     }
 
     // Ensure game starts on first d-pad tap if somehow not already running
