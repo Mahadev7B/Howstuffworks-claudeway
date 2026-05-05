@@ -684,7 +684,7 @@
     function resetGame() {
       playerLane = 1;
       playerY    = H - 55;
-      speed      = 3;       // road scroll px/tick
+      speed      = 6;       // road scroll px/tick
       score      = 0;
       fuel       = 100;
       frame      = 0;
@@ -711,7 +711,7 @@
         lane,
         y: -40,
         color: colors[Math.floor(Math.random() * colors.length)],
-        spd: speed * (0.4 + Math.random() * 0.3),
+        spd: speed * (0.6 + Math.random() * 0.5),
       });
     }
 
@@ -729,7 +729,7 @@
       fuel = Math.max(0, fuel - 0.18);
 
       // Speed ramp every 120 ticks
-      if (frame % 120 === 0 && speed < 9) { speed += 0.5; }
+      if (frame % 80 === 0 && speed < 14) { speed += 0.8; }
 
       // Spawn traffic
       const spawnInterval = Math.max(18, 35 - Math.floor(speed * 2));
