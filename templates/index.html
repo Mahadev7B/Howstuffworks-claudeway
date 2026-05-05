@@ -679,6 +679,7 @@
     // Game state
     let playerLane, playerY, speed, score, fuel, frame, gameLoopId, tickCount, lastTickTime;
     let traffic, fuelCans, roadOffset, stars; // `stars` alias kept so watchdog guard works
+    let dir = { x: 0, y: 0 };  // set by keydown / dpad handlers
 
     function resetGame() {
       playerLane = 1;
@@ -691,6 +692,7 @@
       traffic    = [];
       fuelCans   = [];
       stars      = true;    // truthy sentinel for watchdog / maybeRestartLoop
+      dir        = { x: 0, y: 0 };
       updateStatus();
     }
 
