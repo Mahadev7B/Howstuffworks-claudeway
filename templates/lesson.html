@@ -575,15 +575,10 @@
       const fbStatus = document.getElementById('fb-status');
       let fbRating = null;
 
-      fbButtons.forEach(btn => btn.addEventListener('click', () => {
-        fbRating = btn.dataset.rating;
-        fbButtons.forEach(b => b.classList.toggle('selected', b === btn));
-        fbSubmit.disabled = false;
-      }));
-
-      fbSubmit.addEventListener('click', async () => {
+      async function submitFeedback() {
         if (!fbRating) return;
         fbSubmit.disabled = true;
+        fbButtons.forEach(b => b.disabled = true);
         fbStatus.textContent = 'Sending…';
         try {
           const res = await fetch('/api/feedback', {
@@ -599,18 +594,28 @@
           if (res.ok && data.ok) {
             fbStatus.textContent = '✓ Thanks — feedback saved!';
             fbStatus.classList.add('success');
-            fbButtons.forEach(b => b.disabled = true);
             fbComment.disabled = true;
             fbSubmit.textContent = 'Sent';
           } else {
             fbStatus.textContent = 'Could not send feedback: ' + (data.error || res.statusText);
+            fbButtons.forEach(b => b.disabled = false);
             fbSubmit.disabled = false;
           }
         } catch (err) {
           fbStatus.textContent = 'Network error. Try again.';
+          fbButtons.forEach(b => b.disabled = false);
           fbSubmit.disabled = false;
         }
-      });
+      }
+
+      fbButtons.forEach(btn => btn.addEventListener('click', () => {
+        fbRating = btn.dataset.rating;
+        fbButtons.forEach(b => b.classList.toggle('selected', b === btn));
+        fbSubmit.disabled = false;
+        submitFeedback();
+      }));
+
+      fbSubmit.addEventListener('click', submitFeedback);
     })();
   </script>
 </body>
