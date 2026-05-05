@@ -38,6 +38,7 @@ from lesson_platform import (
     delete_cached_lesson,
     extract_and_lookup,
     generate_image,
+    generate_images_batch,
     generate_lesson,
     get_cached_lesson,
     get_lesson_from_calls,
@@ -282,20 +283,82 @@ def _attach_slide_images(lesson: dict, ctx: dict | None = None) -> None:
     rendered_flux = rendered_mpl = 0
 
     if use_flux and slides:
-        def _flux_one(slide):
-            return slide, _render_with_flux(slide, ctx)
+        prompts = []
+        neg_prompts = []
+        for s in slides:
+            p = (_sanitize_flux_prompt(
+                (s.get("image_prompt") or "").strip(),
+                s.get("title", ""),
+                s.get("subject", ""),
+            ) if (s.get("image_prompt") or "").strip() else "")
+            prompts.append(p)
+            neg_prompts.append((s.get("image_negative_prompt") or "").strip() or None)
 
-        with ThreadPoolExecutor(max_workers=4) as ex:
-            futures = {ex.submit(_flux_one, s): s for s in slides}
-            for fut in as_completed(futures):
-                slide, ok = fut.result()
-                if ok:
+        # Use a single batch call when all slides need images
+        flux_slides = [(i, s, p) for i, (s, p) in enumerate(zip(slides, prompts)) if p]
+        other_slides = [s for s, p in zip(slides, prompts) if not p]
+
+        started_batch = time.time()
+        batch_ok = False
+        if flux_slides:
+            batch_prompts = [p for _, _, p in flux_slides]
+            # Use first slide's negative prompt for the batch (usually identical)
+            neg = neg_prompts[0]
+            try:
+                batch_results = generate_images_batch(batch_prompts, settings, neg)
+                duration_ms = int((time.time() - started_batch) * 1000)
+                total_cost = sum(c for _, _, c in batch_results)
+                for (_, slide, _), (img_bytes, mime, cost) in zip(flux_slides, batch_results):
+                    b64 = base64.b64encode(img_bytes).decode("ascii")
+                    slide["image_data_url"] = f"data:{mime};base64,{b64}"
+                    slide["image_bytes"] = len(img_bytes)
+                    slide["image_source"] = "flux"
                     rendered_flux += 1
-                else:
-                    if _render_with_matplotlib(slide):
-                        rendered_mpl += 1
+                record_api_call(
+                    endpoint="/internal/flux",
+                    question=batch_prompts[0][:500],
+                    model=settings.flux_model,
+                    cost_usd=total_cost,
+                    duration_ms=duration_ms,
+                    success=True,
+                    **ctx,
+                )
+                batch_ok = True
+            except Exception as exc:
+                duration_ms = int((time.time() - started_batch) * 1000)
+                logger.warning("Flux batch failed, falling back to per-slide: %s", exc)
+                record_api_call(
+                    endpoint="/internal/flux",
+                    question=batch_prompts[0][:500],
+                    model=settings.flux_model,
+                    duration_ms=duration_ms,
+                    success=False,
+                    error=str(exc),
+                    **ctx,
+                )
+
+        if not batch_ok and flux_slides:
+            # Fallback: parallel per-slide calls
+            def _flux_one(args):
+                _, slide, _ = args
+                return slide, _render_with_flux(slide, ctx)
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                futures = {ex.submit(_flux_one, a): a for a in flux_slides}
+                for fut in as_completed(futures):
+                    slide, ok = fut.result()
+                    if ok:
+                        rendered_flux += 1
                     else:
-                        slide["image_data_url"] = None
+                        if _render_with_matplotlib(slide):
+                            rendered_mpl += 1
+                        else:
+                            slide["image_data_url"] = None
+
+        for slide in other_slides:
+            if _render_with_matplotlib(slide):
+                rendered_mpl += 1
+            else:
+                slide["image_data_url"] = None
     else:
         for slide in slides:
             if _render_with_matplotlib(slide):

@@ -29,7 +29,7 @@ from .db import (
     today_spend_usd,
 )
 from .geo import extract_and_lookup
-from .image_gen import generate_image
+from .image_gen import generate_image, generate_images_batch
 from .renderer import render as render_spec
 from .tts import synthesize
 
@@ -54,6 +54,7 @@ __all__ = [
     "ip_calls_last_hour",
     "render_spec",
     "generate_image",
+    "generate_images_batch",
     "admin_overview",
     "admin_lessons_by_day",
     "admin_lessons_by_hour",

@@ -104,3 +104,87 @@ def generate_image(
 
     cost = _estimate_cost(settings.flux_model, settings.flux_image_size)
     return data, content_type or "image/png", cost
+
+
+def generate_images_batch(
+    prompts: list[str],
+    settings: Settings,
+    negative_prompt: str | None = None,
+) -> list[tuple[bytes, str, float]]:
+    """Generate multiple images in a single Flux API call.
+
+    Returns a list of (bytes, mime, cost_usd) in the same order as prompts.
+    Flux supports multiple prompts via repeated submit but not truly batched
+    multi-prompt — so we send num_images=len(prompts) with the first prompt
+    and one call per unique prompt when they differ.
+
+    For lessons all slides have distinct prompts, so we make one call per
+    prompt but submit them all concurrently using fal_client.submit() and
+    collect results together, keeping a single billing event in the caller.
+
+    Actually: Flux only accepts one prompt per call but does support
+    num_images>1 for the *same* prompt. Since each slide has a unique prompt
+    we still need N submits — but we fire them all before polling any,
+    minimising wall-clock time. This function encapsulates that pattern.
+    """
+    if not settings.fal_api_key:
+        raise RuntimeError("FAL_KEY is not set")
+    os.environ["FAL_KEY"] = settings.fal_api_key
+
+    is_schnell = "schnell" in settings.flux_model
+    cost_each = _estimate_cost(settings.flux_model, settings.flux_image_size)
+
+    def _base_args(prompt: str) -> dict:
+        args: dict = {
+            "prompt": prompt,
+            "image_size": settings.flux_image_size,
+            "num_inference_steps": 4 if is_schnell else 28,
+            "num_images": 1,
+            "enable_safety_checker": True,
+        }
+        if not is_schnell:
+            args["guidance_scale"] = 3.5
+        if negative_prompt:
+            args["negative_prompt"] = negative_prompt
+        return args
+
+    started = time.time()
+    try:
+        # Submit all at once, then collect
+        handles = [
+            fal_client.submit(settings.flux_model, arguments=_base_args(p))
+            for p in prompts
+        ]
+        results = []
+        for handle in handles:
+            for _ in handle.iter_events(with_logs=False, interval=_POLL_INTERVAL):
+                pass
+            resp = handle.client.get(handle.response_url)
+            resp.raise_for_status()
+            results.append(resp.json())
+    except Exception as exc:
+        logger.exception("Flux batch generation failed")
+        raise RuntimeError(f"Flux batch generation failed: {exc}") from exc
+
+    logger.info("Flux batch (%d images) done in %.1fs", len(prompts), time.time() - started)
+
+    output = []
+    for result in results:
+        images = result.get("images") or []
+        if not images or not images[0].get("url"):
+            raise RuntimeError("Flux batch: missing image in result")
+        url = images[0]["url"]
+        try:
+            req = urllib.request.Request(
+                url, headers={"User-Agent": "howstuffworks-claudeway/1.0"}
+            )
+            with urllib.request.urlopen(req, timeout=20) as r:
+                mime = r.headers.get("Content-Type", "image/png").split(";")[0].strip()
+                data = r.read()
+        except Exception as exc:
+            raise RuntimeError(f"Flux batch image download failed: {exc}") from exc
+        if not data:
+            raise RuntimeError("Flux batch: empty image")
+        output.append((data, mime or "image/png", cost_each))
+
+    return output
