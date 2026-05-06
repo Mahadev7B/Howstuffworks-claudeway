@@ -564,9 +564,9 @@
         }
       } catch (e) {}
 
-      // Warm slide cache — skip slide 0 if already injected from sessionStorage
-      preloadAudio(0);
-      preloadAudio(1);
+      // No eager preload — audio is fetched on demand when user presses Play.
+      // Slide 0 is already in cache from sessionStorage prefetch on the home page.
+      // Slides 1+ are preloaded inside speakCurrent() as the user advances.
 
       const fbSection = document.getElementById('feedback');
       const fbButtons = Array.from(document.querySelectorAll('.fb-btn'));
