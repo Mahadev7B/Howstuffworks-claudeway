@@ -660,7 +660,15 @@
                 a.click();
                 URL.revokeObjectURL(url);
                 downloadBtn.textContent = '✓ Saved!';
-                shareStatus.innerHTML = '🎉 Video saved to your <strong>Downloads</strong> folder! Open it and share on Instagram Reels or YouTube Shorts.';
+                const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+                const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+                if (isIOS) {
+                  shareStatus.innerHTML = '🎉 Video opened! Tap the <strong>share icon</strong> → "Save to Files" or "Save to Photos" to keep it.';
+                } else if (isSafari) {
+                  shareStatus.innerHTML = '🎉 Video downloaded! Check your <strong>Downloads</strong> folder. Then share on Instagram Reels or YouTube Shorts.';
+                } else {
+                  shareStatus.innerHTML = '🎉 Video saved to your <strong>Downloads</strong> folder! Open it and share on Instagram Reels or YouTube Shorts.';
+                }
                 setTimeout(() => {
                   downloadBtn.textContent = '⬇ Download reel';
                   downloadBtn.disabled = false;
