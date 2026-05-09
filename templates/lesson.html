@@ -705,25 +705,16 @@
                   const vidRes = await fetch('/api/export-video/' + jobId);
                   const blob = await vidRes.blob();
                   if (isIOS) {
-                    // iOS Safari can't trigger downloads from blob URLs.
-                    // Convert to data URL and open in new tab so user can
-                    // use the share sheet to Save to Photos.
-                    const reader = new FileReader();
-                    reader.onload = () => {
-                      const win = window.open('', '_blank');
-                      if (win) {
-                        win.document.write(`<html><body style="margin:0;background:#000">
-                          <video src="${reader.result}" controls autoplay playsinline
-                            style="width:100%;height:100vh;object-fit:contain"></video>
-                          <p style="color:#fff;font-family:sans-serif;text-align:center;padding:1rem">
-                            Tap the <strong>share icon ↑</strong> → Save to Photos → share to YouTube Shorts or Instagram
-                          </p></body></html>`);
-                      } else {
-                        shareStatus.textContent = 'Allow pop-ups for this site, then tap Download again.';
-                      }
-                    };
-                    reader.readAsDataURL(blob);
-                    shareStatus.innerHTML = '🎉 Video opened in new tab! Tap <strong>share ↑</strong> → "Save to Photos".';
+                    // iOS Safari: navigate new tab directly to blob URL —
+                    // this triggers the native video player with share sheet.
+                    const blobUrl = URL.createObjectURL(blob);
+                    const win = window.open(blobUrl, '_blank');
+                    if (!win) {
+                      shareStatus.textContent = 'Allow pop-ups for this site, then tap Download again.';
+                    } else {
+                      shareStatus.innerHTML = '🎉 Video opened! Tap the <strong>share icon ↑</strong> → "Save to Photos" → share to YouTube Shorts or Instagram.';
+                    }
+                    setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
                   } else {
                     // Desktop: blob URL download works everywhere
                     const url = URL.createObjectURL(blob);
