@@ -140,7 +140,7 @@
     <section class="next-question" style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
       <a href="{{ url_for('home') }}" class="new-question-link">← Ask a new question</a>
       <button id="shareBtn" style="background:linear-gradient(135deg,#FF6B35,#F7B801);color:#fff;border:none;border-radius:50px;padding:0.5rem 1.25rem;font-family:'Fredoka',sans-serif;font-size:1rem;font-weight:600;cursor:pointer;">🔗 Share lesson</button>
-      <button id="downloadBtn" style="background:#6A4C93;color:#fff;border:none;border-radius:50px;padding:0.5rem 1.25rem;font-family:'Fredoka',sans-serif;font-size:1rem;font-weight:600;cursor:pointer;">⬇ Download reel</button>
+      <button id="downloadBtn" hidden style="background:#6A4C93;color:#fff;border:none;border-radius:50px;padding:0.5rem 1.25rem;font-family:'Fredoka',sans-serif;font-size:1rem;font-weight:600;cursor:pointer;">⬇ Download reel</button>
       <span id="shareStatus" style="color:#6A4C93;font-size:0.9rem;"></span>
     </section>
 
@@ -277,11 +277,16 @@
         return promise;
       }
 
+      function checkDownloadReady() {
+        const allCached = slides.every((_, i) => audioCache.has(i));
+        if (allCached) downloadBtn.hidden = false;
+      }
+
       function preloadAudio(idx) {
         if (idx < 0 || idx >= total) return;
         if (audioCache.has(idx) || audioInflight.has(idx)) return;
         if (serverTtsDisabled) return;
-        getAudioUrl(idx).catch(() => {});  // fire and forget
+        getAudioUrl(idx).then(() => checkDownloadReady()).catch(() => {});
       }
 
       function stopAllAudio() {
@@ -304,6 +309,7 @@
           };
           audioEl.onended = () => {
             readBtn.textContent = '🔊 Read this slide';
+            checkDownloadReady();
             if (onDone) onDone();
           };
           audioEl.onerror = () => {
@@ -547,6 +553,7 @@
             };
             audioEl.onended = () => {
               readBtn.textContent = '🔊 Read this slide';
+              checkDownloadReady();
               autoAdvance();
             };
             audioEl.onerror = () => {
