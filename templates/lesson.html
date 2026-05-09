@@ -284,7 +284,6 @@
         stopAllAudio();
         statusEl.textContent = 'Loading voice for slide ' + (current + 1) + '…';
         readBtn.textContent = '⏹ Stop';
-        preloadAudio(current + 1);
         try {
           const url = await getAudioUrl(current);
           audioEl.pause();
