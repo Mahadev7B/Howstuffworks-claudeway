@@ -342,6 +342,7 @@
           setTimeout(() => {
             if (!autoMode) return;
             show(current + 1);
+            preloadAudio(current + 2);  // always stay 2 slides ahead
             speakCurrent(autoAdvance);
           }, 700);
         } else {
@@ -564,6 +565,7 @@
             setAuto(true);
             preloadAudio(1);
             preloadAudio(2);
+            preloadAudio(3);
             audioEl.play().catch(() => {
               // Autoplay blocked — don't fall back to browser voice.
               // The ▶ Play button is already visible; prompt the user to tap it.

@@ -292,7 +292,7 @@ def export_lesson_video(
                 "ffmpeg", "-y",
                 "-loop", "1", "-i", frame_paths[i],
                 "-i", audio_paths[i],
-                "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast",
+                "-c:v", "libx264", "-preset", "ultrafast",
                 "-c:a", "aac", "-b:a", "128k",
                 "-pix_fmt", "yuv420p",
                 "-t", str(durations[i]),
