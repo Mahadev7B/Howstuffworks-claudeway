@@ -285,7 +285,6 @@
         statusEl.textContent = 'Loading voice for slide ' + (current + 1) + '…';
         readBtn.textContent = '⏹ Stop';
         preloadAudio(current + 1);
-        preloadAudio(current + 2);
         try {
           const url = await getAudioUrl(current);
           audioEl.pause();
@@ -564,9 +563,9 @@
         }
       } catch (e) {}
 
-      // No eager preload — audio is fetched on demand when user presses Play.
-      // Slide 0 is already in cache from sessionStorage prefetch on the home page.
-      // Slides 1+ are preloaded inside speakCurrent() as the user advances.
+      // Preload slide 0 only if it wasn't already injected from sessionStorage.
+      // This covers direct URL visits where the home page prefetch didn't run.
+      if (!audioCache.has(0)) preloadAudio(0);
 
       const fbSection = document.getElementById('feedback');
       const fbButtons = Array.from(document.querySelectorAll('.fb-btn'));
