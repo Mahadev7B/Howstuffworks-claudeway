@@ -507,7 +507,33 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
     # re-save the lesson data.
     if db_enabled:
         save_cached_lesson(question, data)
+    # Pre-warm TTS cache for video export in background — so when the user
+    # clicks "Download reel", audio is already ready and export skips TTS.
+    _prefetch_video_audio(data)
     return data, None
+
+
+def _prefetch_video_audio(lesson: dict) -> None:
+    """Fire-and-forget: synthesize TTS for all slides into the cache."""
+    import threading
+
+    def _run():
+        for slide in lesson.get("slides", []):
+            text = " ".join(filter(None, [
+                slide.get("title", ""),
+                slide.get("subtitle", ""),
+                slide.get("explanation", ""),
+                slide.get("fun_fact", ""),
+            ]))
+            if not text or _tts_cache_get(text):
+                continue
+            try:
+                audio_bytes, _ = synthesize(text, settings)
+                _tts_cache_put(text, audio_bytes)
+            except Exception:
+                pass  # silent — this is best-effort prefetch
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 @app.route("/", methods=["GET"])
