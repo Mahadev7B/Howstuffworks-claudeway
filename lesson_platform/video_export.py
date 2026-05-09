@@ -71,51 +71,96 @@ def _wrap_text(text: str, font, max_width: int, draw) -> list[str]:
 
 
 def _render_slide_frame(slide: dict, width: int, height: int) -> bytes:
-    """Render a single slide as a PNG image (bytes)."""
+    """Render a single slide as a vertical reel frame (full-bleed image + text card)."""
     from PIL import Image, ImageDraw
 
     img = Image.new("RGB", (width, height), BG_COLOR)
     draw = ImageDraw.Draw(img)
 
-    pad = int(width * 0.07)
+    pad = int(width * 0.06)
     usable_w = width - 2 * pad
-    y = int(height * 0.04)
 
-    # Slide illustration (top ~45% of frame)
-    img_area_h = int(height * 0.42)
+    # ── Top half: full-bleed illustration ────────────────────────────────────
+    img_h = int(height * 0.48)
     if slide.get("image_data_url"):
         try:
             data_url = slide["image_data_url"]
             b64 = data_url.split(",", 1)[1] if "," in data_url else data_url
             raw = base64.b64decode(b64)
             slide_img = Image.open(io.BytesIO(raw)).convert("RGB")
-            # Fit the image into the image area, centered
-            ratio = min(usable_w / slide_img.width, img_area_h / slide_img.height)
-            new_w = int(slide_img.width * ratio)
+            # Fill full width, crop height to fit
+            ratio = width / slide_img.width
+            new_w = width
             new_h = int(slide_img.height * ratio)
             slide_img = slide_img.resize((new_w, new_h), Image.LANCZOS)
-            x_off = pad + (usable_w - new_w) // 2
-            img.paste(slide_img, (x_off, y))
+            # Centre-crop to img_h
+            top = max(0, (new_h - img_h) // 2)
+            slide_img = slide_img.crop((0, top, new_w, top + img_h))
+            img.paste(slide_img, (0, 0))
         except Exception as e:
             logger.warning("Could not render slide image: %s", e)
-    y += img_area_h + int(height * 0.02)
+            # Gradient placeholder
+            for row in range(img_h):
+                t = row / img_h
+                r = int(255 * (1 - t) + 106 * t)
+                g = int(248 * (1 - t) + 76 * t)
+                b = int(240 * (1 - t) + 147 * t)
+                draw.line([(0, row), (width, row)], fill=(r, g, b))
+    else:
+        for row in range(img_h):
+            t = row / img_h
+            r = int(255 * (1 - t) + 106 * t)
+            g = int(248 * (1 - t) + 76 * t)
+            b_val = int(240 * (1 - t) + 147 * t)
+            draw.line([(0, row), (width, row)], fill=(r, g, b_val))
 
-    # Slide title
-    title_font = _load_font(int(width * 0.055))
+    # Gradient fade from image into card
+    fade_h = int(height * 0.06)
+    for row in range(fade_h):
+        alpha = row / fade_h
+        r = int(BG_COLOR[0] * alpha + (BG_COLOR[0] * 0.3) * (1 - alpha))
+        g = int(BG_COLOR[1] * alpha + (BG_COLOR[1] * 0.3) * (1 - alpha))
+        b_val = int(BG_COLOR[2] * alpha + (BG_COLOR[2] * 0.3) * (1 - alpha))
+        draw.line([(0, img_h - fade_h + row), (width, img_h - fade_h + row)], fill=(r, g, b_val))
+
+    # ── Branding pill at top-left ─────────────────────────────────────────────
+    brand_font = _load_font(int(width * 0.038))
+    brand_text = "Ask Lil Owl"
+    pill_pad_x, pill_pad_y = int(width * 0.03), int(height * 0.012)
+    pill_x, pill_y = int(width * 0.04), int(height * 0.03)
+    bb = draw.textbbox((0, 0), brand_text, font=brand_font)
+    pill_w = (bb[2] - bb[0]) + pill_pad_x * 2
+    pill_h = (bb[3] - bb[1]) + pill_pad_y * 2
+    draw.rounded_rectangle(
+        [pill_x, pill_y, pill_x + pill_w, pill_y + pill_h],
+        radius=pill_h // 2,
+        fill=(255, 107, 53, 220),
+    )
+    draw.text((pill_x + pill_pad_x, pill_y + pill_pad_y), brand_text, font=brand_font, fill=(255, 255, 255))
+
+    # ── Bottom card: title + explanation + fun fact ───────────────────────────
+    card_y = img_h
+    card_h = height - card_y
+    # Card background already BG_COLOR from Image.new
+
+    y = card_y + int(height * 0.025)
+
+    # Title
+    title_font = _load_font(int(width * 0.065))
     title = slide.get("title", "")
     title_lines = _wrap_text(title, title_font, usable_w, draw)
-    for line in title_lines:
+    for line in title_lines[:2]:
         draw.text((pad, y), line, font=title_font, fill=ACCENT)
         bbox = draw.textbbox((pad, y), line, font=title_font)
-        y += (bbox[3] - bbox[1]) + int(height * 0.008)
+        y += (bbox[3] - bbox[1]) + int(height * 0.006)
 
-    y += int(height * 0.01)
+    y += int(height * 0.012)
 
     # Explanation
-    exp_font = _load_font(int(width * 0.038))
+    exp_font = _load_font(int(width * 0.042))
     explanation = slide.get("explanation", "")
     exp_lines = _wrap_text(explanation, exp_font, usable_w, draw)
-    for line in exp_lines[:6]:  # cap at 6 lines to avoid overflow
+    for line in exp_lines[:5]:
         draw.text((pad, y), line, font=exp_font, fill=TEXT_DARK)
         bbox = draw.textbbox((pad, y), line, font=exp_font)
         y += (bbox[3] - bbox[1]) + int(height * 0.005)
@@ -124,35 +169,24 @@ def _render_slide_frame(slide: dict, width: int, height: int) -> bytes:
 
     # Fun fact box
     fun_fact = slide.get("fun_fact", "")
-    if fun_fact and y < height * 0.88:
-        ff_font = _load_font(int(width * 0.033))
-        ff_label_font = _load_font(int(width * 0.036))
-        ff_lines = _wrap_text(fun_fact, ff_font, usable_w - int(pad * 0.4), draw)
-        box_h = int(height * 0.03) + len(ff_lines) * int(height * 0.04) + int(height * 0.015)
-        box_y = min(y, int(height * 0.87) - box_h)
+    remaining = height - int(height * 0.04) - y
+    if fun_fact and remaining > int(height * 0.08):
+        ff_font = _load_font(int(width * 0.036))
+        ff_lines = _wrap_text(fun_fact, ff_font, usable_w - pad, draw)[:3]
+        line_h = int(height * 0.042)
+        box_h = int(height * 0.018) + len(ff_lines) * line_h + int(height * 0.015)
+        box_y = min(y, height - int(height * 0.04) - box_h)
         draw.rounded_rectangle(
             [pad, box_y, width - pad, box_y + box_h],
-            radius=int(width * 0.025),
+            radius=int(width * 0.03),
             fill=FUNFACT_BG,
             outline=ACCENT,
             width=3,
         )
-        inner_x = pad + int(pad * 0.3)
         ty = box_y + int(height * 0.012)
-        draw.text((inner_x, ty), "Fun fact:", font=ff_label_font, fill=ACCENT)
-        bbox = draw.textbbox((inner_x, ty), "Fun fact:", font=ff_label_font)
-        ty += (bbox[3] - bbox[1]) + int(height * 0.005)
         for line in ff_lines:
-            draw.text((inner_x, ty), line, font=ff_font, fill=TEXT_PURPLE)
-            bbox = draw.textbbox((inner_x, ty), line, font=ff_font)
-            ty += (bbox[3] - bbox[1]) + int(height * 0.004)
-
-    # Branding footer
-    brand_font = _load_font(int(width * 0.032))
-    brand_text = "Ask Lil Owl 🦉"
-    brand_bbox = draw.textbbox((0, 0), brand_text, font=brand_font)
-    brand_x = (width - (brand_bbox[2] - brand_bbox[0])) // 2
-    draw.text((brand_x, height - int(height * 0.04)), brand_text, font=brand_font, fill=ACCENT)
+            draw.text((pad + int(pad * 0.3), ty), line, font=ff_font, fill=TEXT_PURPLE)
+            ty += line_h
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
