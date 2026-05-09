@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 
 # Video dimensions — vertical (Reels/Shorts) or landscape
 PRESETS = {
-    "vertical":  (1080, 1920),
-    "landscape": (1920, 1080),
+    "vertical":  (720, 1280),
+    "landscape": (1280, 720),
 }
 
 # Colors matching the Lil Owl brand
