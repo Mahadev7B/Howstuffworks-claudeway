@@ -38,6 +38,10 @@ def _load_font(size: int):
     """Load a TrueType font or fall back to PIL default."""
     from PIL import ImageFont
     font_paths = [
+        # Noto Sans — modern rounded sans, available on Render/Ubuntu
+        "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        "/usr/share/fonts/noto/NotoSans-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
         "/System/Library/Fonts/Helvetica.ttc",
@@ -128,73 +132,100 @@ def _render_slide_frame(slide: dict, width: int, height: int) -> bytes:
         draw.line([(0, img_h - fade_h + row), (width, img_h - fade_h + row)], fill=(r, g, b_val))
 
     # ── Watermark pill at top-left ────────────────────────────────────────────
-    brand_font = _load_font(int(width * 0.034))
+    # Use a slightly larger font on an RGBA overlay so we can composite with
+    # true alpha transparency; then paste back onto the RGB frame.
+    from PIL import Image as _Image
+    overlay = _Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    od = ImageDraw.Draw(overlay)
+
+    brand_font = _load_font(int(width * 0.032))
     brand_text = "asklilowl.com"
-    owl_text = "OWL"   # fallback label in the accent tab
 
-    pad_x = int(width * 0.022)
-    pad_y = int(height * 0.008)
-    pill_x = int(width * 0.045)
-    pill_y = int(height * 0.028)
+    # Measure text on the overlay draw context
+    bb = od.textbbox((0, 0), brand_text, font=brand_font)
+    text_w = bb[2] - bb[0]
+    text_h = bb[3] - bb[1]
 
-    bb_brand = draw.textbbox((0, 0), brand_text, font=brand_font)
-    text_w = bb_brand[2] - bb_brand[0]
-    text_h = bb_brand[3] - bb_brand[1]
-
+    pad_x = int(width * 0.026)   # horizontal padding inside text section
+    pad_y = int(height * 0.009)  # vertical padding (controls pill height)
     pill_h = text_h + pad_y * 2
-    pill_r = pill_h // 2
+    pill_r = pill_h // 2         # full capsule ends
 
-    # Accent tab (left side — orange circle with owl silhouette)
-    tab_w = pill_h  # square-ish circle tab
+    # Owl circle tab — same height as pill, square
+    tab_w = pill_h
+    gap = int(width * 0.005)     # tiny gap between owl circle and text pill
     text_section_w = text_w + pad_x * 2
-    total_w = tab_w + text_section_w
 
-    # Full pill background — dark semi-transparent
-    draw.rounded_rectangle(
-        [pill_x, pill_y, pill_x + total_w, pill_y + pill_h],
+    # Safe-area anchor
+    safe_x = int(width * 0.042)
+    safe_y = int(height * 0.026)
+
+    total_w = tab_w + gap + text_section_w
+
+    # ── Drop shadow (offset semi-transparent dark pill underneath)
+    shadow_off = int(pill_h * 0.12)
+    od.rounded_rectangle(
+        [safe_x + shadow_off, safe_y + shadow_off,
+         safe_x + total_w + shadow_off, safe_y + pill_h + shadow_off],
         radius=pill_r,
-        fill=(15, 15, 15, 200),
+        fill=(0, 0, 0, 70),
     )
 
-    # Accent circle on left — brand orange
-    draw.ellipse(
-        [pill_x, pill_y, pill_x + tab_w, pill_y + pill_h],
-        fill=(255, 107, 53),
+    # ── Dark text pill (right part)
+    tx0 = safe_x + tab_w + gap
+    od.rounded_rectangle(
+        [tx0, safe_y, tx0 + text_section_w, safe_y + pill_h],
+        radius=pill_r,
+        fill=(18, 18, 20, 210),   # near-black, 82% opaque
     )
 
-    # Owl silhouette drawn with simple shapes in the accent circle
-    cx = pill_x + tab_w // 2
-    cy = pill_y + pill_h // 2
-    ow = int(tab_w * 0.52)   # owl body width
-    oh = int(pill_h * 0.62)  # owl body height
+    # ── Orange owl circle (left part)
+    od.ellipse(
+        [safe_x, safe_y, safe_x + tab_w, safe_y + pill_h],
+        fill=(255, 107, 53, 255),
+    )
+
+    # ── Geometric owl silhouette inside the orange circle
+    cx = safe_x + tab_w // 2
+    cy = safe_y + pill_h // 2
+    ow = int(tab_w * 0.48)
+    oh = int(pill_h * 0.58)
     # Body
-    draw.ellipse([cx - ow//2, cy - oh//2, cx + ow//2, cy + oh//2], fill=(255, 255, 255))
-    # Left ear tuft
-    draw.polygon([cx - ow//2, cy - oh//2,
-                  cx - ow//4, cy - oh//2 - int(oh*0.22),
-                  cx,         cy - oh//2], fill=(255, 255, 255))
-    # Right ear tuft
-    draw.polygon([cx,         cy - oh//2,
-                  cx + ow//4, cy - oh//2 - int(oh*0.22),
-                  cx + ow//2, cy - oh//2], fill=(255, 255, 255))
-    # Left eye
-    ey = cy - int(oh * 0.05)
-    er = int(ow * 0.14)
-    draw.ellipse([cx - int(ow*0.28) - er, ey - er, cx - int(ow*0.28) + er, ey + er], fill=(255, 107, 53))
-    draw.ellipse([cx - int(ow*0.28) - er//2, ey - er//2, cx - int(ow*0.28) + er//2, ey + er//2], fill=(15, 15, 15))
-    # Right eye
-    draw.ellipse([cx + int(ow*0.28) - er, ey - er, cx + int(ow*0.28) + er, ey + er], fill=(255, 107, 53))
-    draw.ellipse([cx + int(ow*0.28) - er//2, ey - er//2, cx + int(ow*0.28) + er//2, ey + er//2], fill=(15, 15, 15))
+    od.ellipse([cx - ow//2, cy - oh//2, cx + ow//2, cy + oh//2], fill=(255, 255, 255, 240))
+    # Ear tufts
+    od.polygon([cx - ow//2, cy - oh//2,
+                cx - ow//4, cy - oh//2 - int(oh * 0.24),
+                cx,          cy - oh//2], fill=(255, 255, 255, 240))
+    od.polygon([cx,          cy - oh//2,
+                cx + ow//4, cy - oh//2 - int(oh * 0.24),
+                cx + ow//2, cy - oh//2], fill=(255, 255, 255, 240))
+    # Eyes
+    ey = cy - int(oh * 0.06)
+    er = int(ow * 0.13)
+    for ex in (cx - int(ow * 0.27), cx + int(ow * 0.27)):
+        od.ellipse([ex - er, ey - er, ex + er, ey + er], fill=(255, 107, 53, 255))
+        od.ellipse([ex - er//2, ey - er//2, ex + er//2, ey + er//2], fill=(15, 15, 15, 255))
     # Beak
-    beak_y = ey + er + int(oh * 0.04)
-    draw.polygon([cx - int(ow*0.08), beak_y,
-                  cx + int(ow*0.08), beak_y,
-                  cx,                beak_y + int(oh * 0.12)], fill=(255, 200, 80))
+    bk_y = ey + er + int(oh * 0.05)
+    od.polygon([cx - int(ow*0.09), bk_y,
+                cx + int(ow*0.09), bk_y,
+                cx,                bk_y + int(oh * 0.13)], fill=(255, 200, 80, 255))
 
-    # Brand text — white, vertically centred in text section
-    text_x = pill_x + tab_w + pad_x
-    text_y = pill_y + pad_y - int(text_h * 0.05)
-    draw.text((text_x, text_y), brand_text, font=brand_font, fill=(255, 255, 255))
+    # ── Brand text — white, letter-spaced by drawing char by char
+    char_spacing = int(width * 0.003)
+    tx = tx0 + pad_x
+    ty = safe_y + pad_y - int(text_h * 0.04)
+    for ch in brand_text:
+        od.text((tx, ty), ch, font=brand_font, fill=(255, 255, 255, 245))
+        cb = od.textbbox((tx, ty), ch, font=brand_font)
+        tx += (cb[2] - cb[0]) + char_spacing
+
+    # Composite RGBA overlay onto the RGB frame
+    img = img.convert("RGBA")
+    img = _Image.alpha_composite(img, overlay)
+    img = img.convert("RGB")
+    draw = ImageDraw.Draw(img)   # refresh draw handle after convert
+    del overlay, od
 
     # ── Bottom card: title + explanation + fun fact ───────────────────────────
     card_y = img_h
@@ -339,7 +370,8 @@ def export_lesson_video(
                 "-pix_fmt", "yuv420p",
                 "-t", str(durations[i]),
                 "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-                       f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={pad_color}",
+                       f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={pad_color},"
+                       f"fade=t=in:st=0:d=0.6",
                 seg_path,
             ]
             result = subprocess.run(cmd, capture_output=True)
