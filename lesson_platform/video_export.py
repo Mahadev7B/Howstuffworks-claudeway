@@ -88,14 +88,17 @@ def _render_slide_frame(slide: dict, width: int, height: int) -> bytes:
             b64 = data_url.split(",", 1)[1] if "," in data_url else data_url
             raw = base64.b64decode(b64)
             slide_img = Image.open(io.BytesIO(raw)).convert("RGB")
-            # Fill full width, crop height to fit
-            ratio = width / slide_img.width
-            new_w = width
+            # Scale to fill the image area — cover both width and height, then crop
+            ratio_w = width / slide_img.width
+            ratio_h = img_h / slide_img.height
+            ratio = max(ratio_w, ratio_h)  # cover: whichever is larger fills the box
+            new_w = int(slide_img.width * ratio)
             new_h = int(slide_img.height * ratio)
             slide_img = slide_img.resize((new_w, new_h), Image.LANCZOS)
-            # Centre-crop to img_h
+            # Centre-crop to exact frame size
+            left = max(0, (new_w - width) // 2)
             top = max(0, (new_h - img_h) // 2)
-            slide_img = slide_img.crop((0, top, new_w, top + img_h))
+            slide_img = slide_img.crop((left, top, left + width, top + img_h))
             img.paste(slide_img, (0, 0))
         except Exception as e:
             logger.warning("Could not render slide image: %s", e)

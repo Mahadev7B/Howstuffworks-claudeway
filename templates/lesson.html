@@ -665,15 +665,12 @@
                 if (isIOS) {
                   shareStatus.innerHTML = '🎉 Video opened! Tap the <strong>share icon</strong> → "Save to Files" or "Save to Photos" to keep it.';
                 } else if (isSafari) {
-                  shareStatus.innerHTML = '🎉 Video downloaded! Check your <strong>Downloads</strong> folder. Then share on Instagram Reels or YouTube Shorts.';
+                  shareStatus.innerHTML = '🎉 Video downloaded! Check your <strong>Downloads</strong> folder. Share on Instagram Reels or YouTube Shorts!';
                 } else {
-                  shareStatus.innerHTML = '🎉 Video saved to your <strong>Downloads</strong> folder! Open it and share on Instagram Reels or YouTube Shorts.';
+                  shareStatus.innerHTML = '🎉 Video saved to your <strong>Downloads</strong> folder! Share on Instagram Reels or YouTube Shorts!';
                 }
-                setTimeout(() => {
-                  downloadBtn.textContent = '⬇ Download reel';
-                  downloadBtn.disabled = false;
-                  shareStatus.textContent = '';
-                }, 8000);
+                downloadBtn.textContent = '⬇ Download again';
+                downloadBtn.disabled = false;
               } else {
                 const pollData = await pollRes.json().catch(() => ({}));
                 if (pollData.status === 'error' || !pollRes.ok) {
