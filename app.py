@@ -945,8 +945,39 @@ def api_export_video_status(job_id: str):
 
 @app.route("/api/export-video/<job_id>/stream", methods=["GET"])
 def api_export_video_stream(job_id: str):
-    """Stream the finished MP4 inline — no Content-Disposition so iOS Safari
-    plays it natively and shows the share sheet with Save to Photos."""
+    """Serve a video page with download instructions for iOS."""
+    job = _VIDEO_JOBS.get(job_id)
+    if job is None:
+        return "Video expired — go back and export again.", 404
+    path = job.get("path")
+    if not path or not os.path.exists(path):
+        return "Video file missing — go back and export again.", 500
+    video_url = f"/api/export-video/{job_id}/file"
+    return Response(f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Your Lil Owl Reel</title>
+  <style>
+    * {{ margin:0; padding:0; box-sizing:border-box; }}
+    body {{ background:#000; min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; font-family:sans-serif; padding:1rem; }}
+    video {{ max-width:100%; max-height:70vh; border-radius:12px; display:block; }}
+    .save-btn {{ margin-top:1.5rem; background:#FF6B35; color:#fff; border:none; border-radius:50px; padding:1rem 2rem; font-size:1.2rem; font-weight:700; cursor:pointer; text-decoration:none; display:inline-block; }}
+    .hint {{ margin-top:1rem; color:#aaa; font-size:0.9rem; text-align:center; line-height:1.5; }}
+  </style>
+</head>
+<body>
+  <video src="{video_url}" controls autoplay playsinline loop></video>
+  <a href="{video_url}" download="lil-owl-lesson.mp4" class="save-btn">⬇ Save Video</a>
+  <p class="hint">On iPhone: tap ⬇ Save Video above<br>or tap the share icon ↑ → Save to Photos</p>
+</body>
+</html>""", mimetype="text/html")
+
+
+@app.route("/api/export-video/<job_id>/file", methods=["GET"])
+def api_export_video_file(job_id: str):
+    """Serve the raw MP4 file."""
     job = _VIDEO_JOBS.get(job_id)
     if job is None:
         return jsonify({"ok": False, "error": "Job not found or expired"}), 404
@@ -962,9 +993,9 @@ def api_export_video_stream(job_id: str):
         status=200,
         mimetype="video/mp4",
         headers={
+            "Content-Disposition": 'attachment; filename="lil-owl-lesson.mp4"',
             "Content-Length": str(len(data)),
             "Cache-Control": "no-store",
-            "Accept-Ranges": "bytes",
         },
     )
 
