@@ -659,13 +659,13 @@
                 a.download = 'lil-owl-lesson.mp4';
                 a.click();
                 URL.revokeObjectURL(url);
-                downloadBtn.textContent = '✓ Downloaded!';
-                shareStatus.textContent = 'Share on Instagram Reels or YouTube Shorts!';
+                downloadBtn.textContent = '✓ Saved!';
+                shareStatus.innerHTML = '🎉 Video saved to your <strong>Downloads</strong> folder! Open it and share on Instagram Reels or YouTube Shorts.';
                 setTimeout(() => {
                   downloadBtn.textContent = '⬇ Download reel';
                   downloadBtn.disabled = false;
                   shareStatus.textContent = '';
-                }, 4000);
+                }, 8000);
               } else {
                 const pollData = await pollRes.json().catch(() => ({}));
                 if (pollData.status === 'error' || !pollRes.ok) {
