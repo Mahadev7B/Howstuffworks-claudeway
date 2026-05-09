@@ -903,7 +903,10 @@ def api_export_video_status(job_id: str):
 
     # ?probe=1 — return JSON status without consuming/serving the file
     if request.args.get("probe") == "1":
-        return jsonify({"ok": True, "status": status, "error": job.get("error")})
+        resp = {"ok": True, "status": status, "error": job.get("error")}
+        if status == "done":
+            resp["stream_url"] = f"/api/export-video/{job_id}/stream"
+        return jsonify(resp)
 
     if status == "done":
         path = job.get("path")
@@ -938,6 +941,32 @@ def api_export_video_status(job_id: str):
         return jsonify({"ok": False, "status": "error", "error": err}), 500
     else:
         return jsonify({"ok": True, "status": "pending"})
+
+
+@app.route("/api/export-video/<job_id>/stream", methods=["GET"])
+def api_export_video_stream(job_id: str):
+    """Stream the finished MP4 inline — no Content-Disposition so iOS Safari
+    plays it natively and shows the share sheet with Save to Photos."""
+    job = _VIDEO_JOBS.get(job_id)
+    if job is None:
+        return jsonify({"ok": False, "error": "Job not found or expired"}), 404
+    path = job.get("path")
+    if not path or not os.path.exists(path):
+        return jsonify({"ok": False, "error": "Video file missing"}), 500
+    try:
+        data = open(path, "rb").read()
+    except Exception:
+        return jsonify({"ok": False, "error": "Video file unreadable"}), 500
+    return Response(
+        data,
+        status=200,
+        mimetype="video/mp4",
+        headers={
+            "Content-Length": str(len(data)),
+            "Cache-Control": "no-store",
+            "Accept-Ranges": "bytes",
+        },
+    )
 
 
 @app.route("/admin/clear-cache", methods=["POST"])

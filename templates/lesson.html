@@ -700,23 +700,20 @@
               const probeData = await probeRes.json().catch(() => ({}));
               if (probeData.status === 'done') {
                 clearInterval(pollInterval);
-                // Always fetch the blob — works on iOS and desktop Safari
                 try {
-                  const vidRes = await fetch('/api/export-video/' + jobId);
-                  const blob = await vidRes.blob();
                   if (isIOS) {
-                    // iOS Safari: navigate new tab directly to blob URL —
-                    // this triggers the native video player with share sheet.
-                    const blobUrl = URL.createObjectURL(blob);
-                    const win = window.open(blobUrl, '_blank');
+                    // iOS Safari: open stream URL directly in new tab —
+                    // triggers native player with share sheet (Save to Photos).
+                    const win = window.open(probeData.stream_url, '_blank');
                     if (!win) {
                       shareStatus.textContent = 'Allow pop-ups for this site, then tap Download again.';
                     } else {
-                      shareStatus.innerHTML = '🎉 Video opened! Tap the <strong>share icon ↑</strong> → "Save to Photos" → share to YouTube Shorts or Instagram.';
+                      shareStatus.innerHTML = '🎉 Video opened! Tap <strong>share ↑</strong> → "Save to Photos" → YouTube Shorts or Instagram.';
                     }
-                    setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
                   } else {
-                    // Desktop: blob URL download works everywhere
+                    // Desktop: fetch blob and trigger download
+                    const vidRes = await fetch('/api/export-video/' + jobId);
+                    const blob = await vidRes.blob();
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
