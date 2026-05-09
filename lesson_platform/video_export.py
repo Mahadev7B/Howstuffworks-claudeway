@@ -201,6 +201,30 @@ def _render_slide_frame(slide: dict, width: int, height: int) -> bytes:
     return result
 
 
+def _mp3_duration(data: bytes) -> float:
+    """Estimate MP3 duration from file size and bitrate header — no ffprobe needed.
+
+    Reads the first valid MPEG frame header to get bitrate, then divides total
+    size by bytes-per-second. Accurate to within ~0.1s for CBR MP3s (OpenAI TTS output).
+    Falls back to 6.0s on any parse error.
+    """
+    try:
+        # Scan for sync word 0xFF 0xEx or 0xFF 0xFx (MPEG frame sync)
+        for offset in range(min(len(data) - 4, 4096)):
+            b0, b1 = data[offset], data[offset + 1]
+            if b0 != 0xFF or (b1 & 0xE0) != 0xE0:
+                continue
+            # Extract bitrate index from bits 4-7 of byte 2
+            bitrate_idx = (data[offset + 2] >> 4) & 0xF
+            bitrate_kbps = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0][bitrate_idx]
+            if bitrate_kbps == 0:
+                continue
+            return len(data) / (bitrate_kbps * 125)  # bytes / (kbps * 125) = seconds
+    except Exception:
+        pass
+    return 6.0
+
+
 def export_lesson_video(
     lesson: dict[str, Any],
     audio_clips: list[bytes],  # one MP3 per slide, in order
@@ -224,63 +248,73 @@ def export_lesson_video(
         raise ValueError("Lesson has no slides")
 
     width, height = PRESETS.get(preset, PRESETS["vertical"])
+    pad_color = f"{BG_COLOR[0]:02x}{BG_COLOR[1]:02x}{BG_COLOR[2]:02x}"
     tmpdir = tempfile.mkdtemp(prefix="lilowl_video_")
     try:
-        segment_paths = []
-        for i, (slide, audio_bytes) in enumerate(zip(slides, audio_clips)):
+        n = len(slides)
+
+        # ── Phase 1: render all Pillow frames sequentially (can't parallelise —
+        # each frame is ~3MB and we free it immediately to stay under RAM limit)
+        frame_paths = []
+        for i, slide in enumerate(slides):
             frame_png = _render_slide_frame(slide, width, height)
             frame_path = os.path.join(tmpdir, f"frame_{i}.png")
             with open(frame_path, "wb") as f:
                 f.write(frame_png)
             del frame_png
+            frame_paths.append(frame_path)
 
-            # Write audio
+        # ── Phase 2: write audio files + get durations (pure I/O, fast)
+        audio_paths = []
+        durations = []
+        for i, audio_bytes in enumerate(audio_clips):
             audio_path = os.path.join(tmpdir, f"audio_{i}.mp3")
             if audio_bytes:
                 with open(audio_path, "wb") as f:
                     f.write(audio_bytes)
-                # Get audio duration
-                probe = subprocess.run(
-                    ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                     "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
-                    capture_output=True, text=True,
-                )
-                try:
-                    duration = float(probe.stdout.strip()) + 0.5  # 0.5s pause after
-                except (ValueError, AttributeError):
-                    duration = 6.0
+                duration = _mp3_duration(audio_bytes) + 0.5
             else:
                 duration = 4.0
-                # Create silent audio
                 subprocess.run(
                     ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
                      "-t", str(duration), audio_path],
                     capture_output=True, check=True,
                 )
+            audio_paths.append(audio_path)
+            durations.append(duration)
 
-            # Compose image + audio into a segment
+        # ── Phase 3: encode all segments in parallel (4 ffmpeg processes at once)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _encode_segment(i):
             seg_path = os.path.join(tmpdir, f"seg_{i}.mp4")
             cmd = [
                 "ffmpeg", "-y",
-                "-loop", "1", "-i", frame_path,
-                "-i", audio_path,
-                "-c:v", "libx264", "-tune", "stillimage",
+                "-loop", "1", "-i", frame_paths[i],
+                "-i", audio_paths[i],
+                "-c:v", "libx264", "-tune", "stillimage", "-preset", "ultrafast",
                 "-c:a", "aac", "-b:a", "128k",
                 "-pix_fmt", "yuv420p",
-                "-t", str(duration),
+                "-t", str(durations[i]),
                 "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-                       f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={BG_COLOR[0]:02x}{BG_COLOR[1]:02x}{BG_COLOR[2]:02x}",
+                       f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={pad_color}",
                 seg_path,
             ]
             result = subprocess.run(cmd, capture_output=True)
             if result.returncode != 0:
                 raise RuntimeError(f"ffmpeg segment {i} failed: {result.stderr.decode()[:500]}")
-            # Free frame PNG from disk — ffmpeg has encoded it, no longer needed
-            try: os.unlink(frame_path)
+            try: os.unlink(frame_paths[i])
             except Exception: pass
-            segment_paths.append(seg_path)
+            return seg_path
 
-        # Concatenate all segments
+        segment_paths = [None] * n
+        with ThreadPoolExecutor(max_workers=n) as ex:
+            future_to_idx = {ex.submit(_encode_segment, i): i for i in range(n)}
+            for fut in as_completed(future_to_idx):
+                idx = future_to_idx[fut]
+                segment_paths[idx] = fut.result()  # raises on error
+
+        # ── Phase 4: concat segments (stream copy — near instant)
         concat_list = os.path.join(tmpdir, "concat.txt")
         with open(concat_list, "w") as f:
             for seg in segment_paths:
@@ -289,13 +323,11 @@ def export_lesson_video(
         out_fd, out_path = tempfile.mkstemp(suffix=".mp4", prefix="lilowl_export_")
         os.close(out_fd)
 
-        concat_cmd = [
-            "ffmpeg", "-y",
-            "-f", "concat", "-safe", "0", "-i", concat_list,
-            "-c", "copy",
-            out_path,
-        ]
-        result = subprocess.run(concat_cmd, capture_output=True)
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list,
+             "-c", "copy", out_path],
+            capture_output=True,
+        )
         if result.returncode != 0:
             raise RuntimeError(f"ffmpeg concat failed: {result.stderr.decode()[:500]}")
 
