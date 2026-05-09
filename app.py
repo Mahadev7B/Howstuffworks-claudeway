@@ -34,6 +34,7 @@ from lesson_platform import (
     admin_load_all,
     admin_lessons_filtered,
     check_question,
+    create_share_link,
     generate_quiz,
     delete_cached_lesson,
     extract_and_lookup,
@@ -41,6 +42,7 @@ from lesson_platform import (
     generate_images_batch,
     generate_lesson,
     get_cached_lesson,
+    get_lesson_by_slug,
     get_lesson_from_calls,
     init_db,
     ip_calls_last_hour,
@@ -661,6 +663,51 @@ def api_feedback():
         **ctx,
     )
     return jsonify({"ok": True})
+
+
+@app.route("/api/share", methods=["POST"])
+def api_share():
+    """Generate a permanent share link for a lesson. Pins the lesson in DB."""
+    if not db_enabled:
+        return jsonify({"ok": False, "error": "DB not configured"}), 503
+    payload = request.get_json(silent=True) or {}
+    question = (payload.get("question") or "").strip()
+    if not question:
+        return jsonify({"ok": False, "error": "question is required"}), 400
+
+    # Ensure the lesson is saved to DB first (may be only in-memory)
+    lesson_data = _recent_get(question)
+    if lesson_data is None:
+        ctx = _client_context()
+        lesson_data = _lookup_only(question, ctx)
+    if lesson_data is None:
+        return jsonify({"ok": False, "error": "Lesson not found — ask the question first"}), 404
+
+    _recent_put(question, lesson_data)
+
+    slug = secrets.token_urlsafe(8)  # ~11 chars, URL-safe
+    # Pass lesson_data so create_share_link can UPSERT atomically
+    ok = create_share_link(question, slug, lesson_data)
+    if not ok:
+        return jsonify({"ok": False, "error": "Could not create share link — try again"}), 500
+
+    share_url = url_for("share_lesson", slug=slug, _external=True)
+    return jsonify({"ok": True, "url": share_url, "slug": slug})
+
+
+@app.route("/s/<slug>")
+def share_lesson(slug: str):
+    """Render a shared lesson in auto-play read mode."""
+    if not db_enabled:
+        return redirect(url_for("home"))
+    lesson_data = get_lesson_by_slug(slug)
+    if lesson_data is None:
+        return render_template("error.html", question="", error="This share link has expired or doesn't exist."), 404
+    question = lesson_data.pop("_share_question", "")
+    ctx = _client_context()
+    _attach_slide_images(lesson_data, ctx)
+    _recent_put(question, lesson_data)
+    return render_template("share.html", question=question, lesson=lesson_data, slug=slug)
 
 
 @app.route("/api/tts", methods=["POST"])

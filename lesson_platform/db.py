@@ -176,6 +176,8 @@ ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS user_agent TEXT;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS lesson       JSONB;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS input_chars  INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS output_chars INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE cached_lessons ADD COLUMN IF NOT EXISTS share_slug TEXT UNIQUE;
+CREATE INDEX IF NOT EXISTS cached_lessons_slug_idx ON cached_lessons (share_slug);
 """
 
 
@@ -543,6 +545,86 @@ def save_cached_lesson(question: str, lesson: dict[str, Any]) -> None:
     if _pool is None:
         return
     _bg(_do_save_cached_lesson, question_hash(question), question[:500], lesson)
+
+
+def create_share_link(question: str, slug: str, lesson: dict[str, Any] | None = None) -> bool:
+    """Assign a share slug to a cached lesson and pin it.
+
+    If `lesson` is provided and the row doesn't exist yet, inserts it first.
+    Returns True on success.
+    """
+    qhash = question_hash(question)
+    conn = _direct_connect()
+    if conn is None:
+        return False
+    try:
+        with conn, conn.cursor() as cur:
+            if lesson is not None:
+                lesson_slim = {
+                    **lesson,
+                    "slides": [
+                        {k: v for k, v in s.items() if k != "image_data_url"}
+                        for s in lesson.get("slides", [])
+                    ],
+                }
+                cur.execute(
+                    """
+                    INSERT INTO cached_lessons (question_hash, question, lesson, share_slug, pinned)
+                    VALUES (%s, %s, %s, %s, true)
+                    ON CONFLICT (question_hash) DO UPDATE
+                      SET share_slug = EXCLUDED.share_slug, pinned = true
+                    """,
+                    (qhash, question[:500], Jsonb(lesson_slim), slug),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE cached_lessons
+                    SET share_slug = %s, pinned = true
+                    WHERE question_hash = %s
+                    """,
+                    (slug, qhash),
+                )
+            return lesson is not None or cur.rowcount > 0
+    except Exception:
+        logger.exception("create_share_link failed")
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def get_lesson_by_slug(slug: str) -> dict[str, Any] | None:
+    """Return the cached lesson for a share slug, or None if not found."""
+    conn = _direct_connect()
+    if conn is None:
+        return None
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT lesson, question FROM cached_lessons WHERE share_slug = %s",
+                (slug,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            lesson, question = row
+            lesson["_share_question"] = question
+            cur.execute(
+                "UPDATE cached_lessons SET hit_count = hit_count + 1, last_hit_at = NOW() WHERE share_slug = %s",
+                (slug,),
+            )
+            return lesson
+    except Exception:
+        logger.exception("get_lesson_by_slug failed")
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 # Cache the budget total in-process. Recomputing on every TTS call exhausts

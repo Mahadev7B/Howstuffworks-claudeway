@@ -137,8 +137,10 @@
       <div id="quizBody" hidden></div>
     </section>
 
-    <section class="next-question">
+    <section class="next-question" style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
       <a href="{{ url_for('home') }}" class="new-question-link">← Ask a new question</a>
+      <button id="shareBtn" style="background:linear-gradient(135deg,#FF6B35,#F7B801);color:#fff;border:none;border-radius:50px;padding:0.5rem 1.25rem;font-family:'Fredoka',sans-serif;font-size:1rem;font-weight:600;cursor:pointer;">🔗 Share lesson</button>
+      <span id="shareStatus" style="color:#6A4C93;font-size:0.9rem;"></span>
     </section>
 
     <footer class="lesson-footer">
@@ -614,6 +616,35 @@
       }));
 
       fbSubmit.addEventListener('click', submitFeedback);
+
+      // ── Share ─────────────────────────────────────────────────────────────
+      const shareBtn = document.getElementById('shareBtn');
+      const shareStatus = document.getElementById('shareStatus');
+      shareBtn.addEventListener('click', async () => {
+        shareBtn.disabled = true;
+        shareBtn.textContent = '⏳ Creating link…';
+        shareStatus.textContent = '';
+        try {
+          const res = await fetch('/api/share', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: '{{ question | e }}' }),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.ok) throw new Error(data.error || 'Share failed');
+          await navigator.clipboard.writeText(data.url).catch(() => {});
+          shareBtn.textContent = '✓ Link copied!';
+          shareStatus.textContent = data.url;
+          setTimeout(() => {
+            shareBtn.textContent = '🔗 Share lesson';
+            shareBtn.disabled = false;
+          }, 3000);
+        } catch (err) {
+          shareBtn.textContent = '🔗 Share lesson';
+          shareBtn.disabled = false;
+          shareStatus.textContent = 'Could not create link. Try again.';
+        }
+      });
     })();
   </script>
 </body>
