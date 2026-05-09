@@ -67,12 +67,16 @@ def generate_image(
     if negative_prompt:
         arguments["negative_prompt"] = negative_prompt
 
+    _SINGLE_POLL_TIMEOUT_S = 60
+
     started = time.time()
     try:
         handle = fal_client.submit(settings.flux_model, arguments=arguments)
         # Poll at 1s intervals (fal default is 0.1s — too noisy in logs)
+        deadline = time.time() + _SINGLE_POLL_TIMEOUT_S
         for _ in handle.iter_events(with_logs=False, interval=_POLL_INTERVAL):
-            pass
+            if time.time() > deadline:
+                raise RuntimeError("Flux poll timeout after 60s")
         resp = handle.client.get(handle.response_url)
         resp.raise_for_status()
         result: dict[str, Any] = resp.json()
@@ -156,9 +160,13 @@ def generate_images_batch(
             for p in prompts
         ]
 
+        _BATCH_POLL_TIMEOUT_S = 60  # give up per-handle after 60s
+
         def _collect(handle):
+            deadline = time.time() + _BATCH_POLL_TIMEOUT_S
             for _ in handle.iter_events(with_logs=False, interval=_POLL_INTERVAL):
-                pass
+                if time.time() > deadline:
+                    raise RuntimeError("Flux poll timeout")
             resp = handle.client.get(handle.response_url)
             resp.raise_for_status()
             return resp.json()
@@ -167,7 +175,7 @@ def generate_images_batch(
         with ThreadPoolExecutor(max_workers=len(handles)) as ex:
             future_to_idx = {ex.submit(_collect, h): i for i, h in enumerate(handles)}
             results = [None] * len(handles)
-            for fut in _as_completed(future_to_idx):
+            for fut in _as_completed(future_to_idx, timeout=_BATCH_POLL_TIMEOUT_S + 5):
                 results[future_to_idx[fut]] = fut.result()
     except Exception as exc:
         logger.exception("Flux batch generation failed")
