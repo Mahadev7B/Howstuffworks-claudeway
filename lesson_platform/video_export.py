@@ -16,10 +16,14 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Video dimensions — vertical (Reels/Shorts) or landscape
+# Output resolution — 720p vertical meets YouTube Shorts minimum.
+# Pillow renders at RENDER_SCALE (0.5×) to stay under 512MB RAM;
+# ffmpeg upscales to full OUTPUT size during encoding.
 PRESETS = {
-    "vertical":  (480, 854),
-    "landscape": (854, 480),
+    "vertical":  (720, 1280),
+    "landscape": (1280, 720),
 }
+RENDER_SCALE = 0.5  # render Pillow frames at half size, ffmpeg upscales
 
 # Colors matching the Lil Owl brand
 BG_COLOR = (255, 248, 240)      # #FFF8F0
@@ -223,16 +227,21 @@ def export_lesson_video(
         raise ValueError("Lesson has no slides")
 
     width, height = PRESETS.get(preset, PRESETS["vertical"])
+    # Render Pillow frames at half resolution to stay under 512MB RAM.
+    # ffmpeg upscales to full output size during encoding — no quality loss
+    # that matters for YouTube Shorts / Instagram Reels at 720p.
+    render_w = int(width * RENDER_SCALE)
+    render_h = int(height * RENDER_SCALE)
     tmpdir = tempfile.mkdtemp(prefix="lilowl_video_")
     try:
         segment_paths = []
         for i, (slide, audio_bytes) in enumerate(zip(slides, audio_clips)):
-            # Render frame and immediately write to disk — free memory after
-            frame_png = _render_slide_frame(slide, width, height)
+            # Render frame at half size and immediately write to disk
+            frame_png = _render_slide_frame(slide, render_w, render_h)
             frame_path = os.path.join(tmpdir, f"frame_{i}.png")
             with open(frame_path, "wb") as f:
                 f.write(frame_png)
-            del frame_png  # free ~8MB immediately before next slide
+            del frame_png  # free ~3MB immediately before next slide
 
             # Write audio
             audio_path = os.path.join(tmpdir, f"audio_{i}.mp3")
@@ -268,8 +277,7 @@ def export_lesson_video(
                 "-c:a", "aac", "-b:a", "128k",
                 "-pix_fmt", "yuv420p",
                 "-t", str(duration),
-                "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
-                       f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={BG_COLOR[0]:02x}{BG_COLOR[1]:02x}{BG_COLOR[2]:02x}",
+                "-vf", f"scale={width}:{height}:flags=lanczos",
                 seg_path,
             ]
             result = subprocess.run(cmd, capture_output=True)
