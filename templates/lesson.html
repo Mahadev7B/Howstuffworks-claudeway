@@ -150,6 +150,12 @@
   </main>
 
   <script>
+    // Make the browser Back button always return to the home page.
+    // We push a home entry before the lesson entry so Back lands on /.
+    history.replaceState(null, '', '/');
+    history.pushState(null, '', window.location.href);
+    window.addEventListener('popstate', () => { window.location.href = '/'; });
+
     (function () {
       const slides = Array.from(document.querySelectorAll('.slide'));
       const dots = Array.from(document.querySelectorAll('.dot'));
