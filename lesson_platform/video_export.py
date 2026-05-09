@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 
 # Video dimensions — vertical (Reels/Shorts) or landscape
 PRESETS = {
-    "vertical":  (540, 960),
-    "landscape": (960, 540),
+    "vertical":  (1080, 1920),
+    "landscape": (1920, 1080),
 }
 
 # Colors matching the Lil Owl brand
@@ -193,7 +193,10 @@ def _render_slide_frame(slide: dict, width: int, height: int) -> bytes:
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
-    return buf.getvalue()
+    result = buf.getvalue()
+    # Explicitly free large objects to keep memory footprint low
+    del img, draw, buf
+    return result
 
 
 def export_lesson_video(
@@ -223,11 +226,12 @@ def export_lesson_video(
     try:
         segment_paths = []
         for i, (slide, audio_bytes) in enumerate(zip(slides, audio_clips)):
-            # Render frame
+            # Render frame and immediately write to disk — free memory after
             frame_png = _render_slide_frame(slide, width, height)
             frame_path = os.path.join(tmpdir, f"frame_{i}.png")
             with open(frame_path, "wb") as f:
                 f.write(frame_png)
+            del frame_png  # free ~8MB immediately before next slide
 
             # Write audio
             audio_path = os.path.join(tmpdir, f"audio_{i}.mp3")
@@ -270,6 +274,9 @@ def export_lesson_video(
             result = subprocess.run(cmd, capture_output=True)
             if result.returncode != 0:
                 raise RuntimeError(f"ffmpeg segment {i} failed: {result.stderr.decode()[:500]}")
+            # Free frame PNG from disk — ffmpeg has encoded it, no longer needed
+            try: os.unlink(frame_path)
+            except Exception: pass
             segment_paths.append(seg_path)
 
         # Concatenate all segments
