@@ -704,9 +704,14 @@ def share_lesson(slug: str):
     if lesson_data is None:
         return render_template("error.html", question="", error="This share link has expired or doesn't exist."), 404
     question = lesson_data.pop("_share_question", "")
-    ctx = _client_context()
-    _attach_slide_images(lesson_data, ctx)
-    _recent_put(question, lesson_data)
+    # Check in-memory cache first — images already attached, no Flux call needed
+    cached = _recent_get(question)
+    if cached is not None:
+        lesson_data = cached
+    else:
+        ctx = _client_context()
+        _attach_slide_images(lesson_data, ctx)
+        _recent_put(question, lesson_data)
     return render_template("share.html", question=question, lesson=lesson_data, slug=slug)
 
 

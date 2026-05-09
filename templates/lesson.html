@@ -634,7 +634,7 @@
           const res = await fetch('/api/export-video', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ question: '{{ question | e }}', preset: 'vertical' }),
+            body: JSON.stringify({ question: {{ question | tojson }}, preset: 'vertical' }),
           });
           const data = await res.json();
           if (!res.ok || !data.ok) {
@@ -704,7 +704,7 @@
           const res = await fetch('/api/share', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ question: '{{ question | e }}' }),
+            body: JSON.stringify({ question: {{ question | tojson }} }),
           });
           const data = await res.json();
           if (!res.ok || !data.ok) throw new Error(data.error || 'Share failed');
