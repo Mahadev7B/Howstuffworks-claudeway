@@ -652,22 +652,42 @@
               const pollRes = await fetch('/api/export-video/' + jobId);
               if (pollRes.ok && pollRes.headers.get('content-type')?.includes('video')) {
                 clearInterval(pollInterval);
-                const blob = await pollRes.blob();
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'lil-owl-lesson.mp4';
-                a.click();
-                URL.revokeObjectURL(url);
-                downloadBtn.textContent = '✓ Saved!';
-                const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
                 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+                const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
                 if (isIOS) {
-                  shareStatus.innerHTML = '🎉 Video opened! Tap the <strong>share icon</strong> → "Save to Files" or "Save to Photos" to keep it.';
-                } else if (isSafari) {
-                  shareStatus.innerHTML = '🎉 Video downloaded! Check your <strong>Downloads</strong> folder. Share on Instagram Reels or YouTube Shorts!';
+                  // On iOS, blob URLs can't be shared to other apps.
+                  // Open the direct server URL in a new tab so the native
+                  // share sheet works (Save to Photos → share to YouTube Shorts).
+                  const videoUrl = '/api/export-video-file/' + jobId + '_ios';
+                  // Store the blob as a data URL for direct tab open
+                  const blob = await pollRes.blob();
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    const win = window.open('', '_blank');
+                    win.document.write(`
+                      <html><body style="margin:0;background:#000">
+                      <video src="${reader.result}" controls autoplay playsinline
+                        style="width:100%;height:100vh;object-fit:contain"></video>
+                      <p style="color:#fff;font-family:sans-serif;text-align:center;padding:1rem">
+                        Tap the <strong>share icon ↑</strong> → Save to Photos → share to YouTube Shorts or Instagram
+                      </p>
+                      </body></html>`);
+                  };
+                  reader.readAsDataURL(blob);
+                  shareStatus.innerHTML = '🎉 Video opened in new tab! Tap the <strong>share icon ↑</strong> → "Save to Photos" → share to YouTube Shorts or Instagram Reels.';
                 } else {
-                  shareStatus.innerHTML = '🎉 Video saved to your <strong>Downloads</strong> folder! Share on Instagram Reels or YouTube Shorts!';
+                  const blob = await pollRes.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = 'lil-owl-lesson.mp4';
+                  a.click();
+                  URL.revokeObjectURL(url);
+                  if (isSafari) {
+                    shareStatus.innerHTML = '🎉 Video downloaded! Check your <strong>Downloads</strong> folder. Share on Instagram Reels or YouTube Shorts!';
+                  } else {
+                    shareStatus.innerHTML = '🎉 Video saved to your <strong>Downloads</strong> folder! Share on Instagram Reels or YouTube Shorts!';
+                  }
                 }
                 downloadBtn.textContent = '⬇ Download again';
                 downloadBtn.disabled = false;
