@@ -871,12 +871,17 @@ def api_export_video():
 
 @app.route("/api/export-video/<job_id>", methods=["GET"])
 def api_export_video_status(job_id: str):
-    """Poll video export status. Returns {status: pending|done|error}."""
+    """Poll video export status. Returns {status: pending|done|error}, or serves MP4 when done."""
     job = _VIDEO_JOBS.get(job_id)
     if job is None:
         return jsonify({"ok": False, "error": "Job not found or expired"}), 404
 
     status = job.get("status", "pending")
+
+    # ?probe=1 — return JSON status without consuming/serving the file
+    if request.args.get("probe") == "1":
+        return jsonify({"ok": True, "status": status, "error": job.get("error")})
+
     if status == "done":
         path = job.get("path")
         if not path or not os.path.exists(path):

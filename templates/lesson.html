@@ -647,58 +647,48 @@
           downloadBtn.textContent = '⏳ Rendering video…';
           shareStatus.textContent = 'This takes ~30–60 seconds…';
           // Poll until done
+          const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+          const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
           const pollInterval = setInterval(async () => {
             try {
-              const pollRes = await fetch('/api/export-video/' + jobId);
-              if (pollRes.ok && pollRes.headers.get('content-type')?.includes('video')) {
+              // Probe with HEAD so we don't download the file during polling
+              const probeRes = await fetch('/api/export-video/' + jobId + '?probe=1');
+              const probeData = await probeRes.json().catch(() => ({}));
+              if (probeData.status === 'done') {
                 clearInterval(pollInterval);
-                const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-                const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
                 if (isIOS) {
-                  // On iOS, blob URLs can't be shared to other apps.
-                  // Open the direct server URL in a new tab so the native
-                  // share sheet works (Save to Photos → share to YouTube Shorts).
-                  const videoUrl = '/api/export-video-file/' + jobId + '_ios';
-                  // Store the blob as a data URL for direct tab open
-                  const blob = await pollRes.blob();
+                  // iOS: fetch blob, convert to data URL, open in new tab
+                  const vidRes = await fetch('/api/export-video/' + jobId);
+                  const blob = await vidRes.blob();
                   const reader = new FileReader();
                   reader.onload = () => {
                     const win = window.open('', '_blank');
-                    win.document.write(`
-                      <html><body style="margin:0;background:#000">
+                    win.document.write(`<html><body style="margin:0;background:#000">
                       <video src="${reader.result}" controls autoplay playsinline
                         style="width:100%;height:100vh;object-fit:contain"></video>
                       <p style="color:#fff;font-family:sans-serif;text-align:center;padding:1rem">
                         Tap the <strong>share icon ↑</strong> → Save to Photos → share to YouTube Shorts or Instagram
-                      </p>
-                      </body></html>`);
+                      </p></body></html>`);
                   };
                   reader.readAsDataURL(blob);
-                  shareStatus.innerHTML = '🎉 Video opened in new tab! Tap the <strong>share icon ↑</strong> → "Save to Photos" → share to YouTube Shorts or Instagram Reels.';
+                  shareStatus.innerHTML = '🎉 Video opened in new tab! Tap <strong>share ↑</strong> → "Save to Photos".';
                 } else {
-                  const blob = await pollRes.blob();
-                  const url = URL.createObjectURL(blob);
+                  // Desktop (including Safari): direct browser navigation triggers download
                   const a = document.createElement('a');
-                  a.href = url;
+                  a.href = '/api/export-video/' + jobId;
                   a.download = 'lil-owl-lesson.mp4';
+                  document.body.appendChild(a);
                   a.click();
-                  URL.revokeObjectURL(url);
-                  if (isSafari) {
-                    shareStatus.innerHTML = '🎉 Video downloaded! Check your <strong>Downloads</strong> folder. Share on Instagram Reels or YouTube Shorts!';
-                  } else {
-                    shareStatus.innerHTML = '🎉 Video saved to your <strong>Downloads</strong> folder! Share on Instagram Reels or YouTube Shorts!';
-                  }
+                  document.body.removeChild(a);
+                  shareStatus.innerHTML = '🎉 Video saved! Share on Instagram Reels or YouTube Shorts!';
                 }
                 downloadBtn.textContent = '⬇ Download again';
                 downloadBtn.disabled = false;
-              } else {
-                const pollData = await pollRes.json().catch(() => ({}));
-                if (pollData.status === 'error' || !pollRes.ok) {
-                  clearInterval(pollInterval);
-                  shareStatus.textContent = 'Export failed: ' + (pollData.error || 'Try again');
-                  downloadBtn.textContent = '⬇ Download reel';
-                  downloadBtn.disabled = false;
-                }
+              } else if (probeData.status === 'error' || !probeRes.ok) {
+                clearInterval(pollInterval);
+                shareStatus.textContent = 'Export failed: ' + (probeData.error || 'Try again');
+                downloadBtn.textContent = '⬇ Download reel';
+                downloadBtn.disabled = false;
               }
             } catch (e) { /* network hiccup, keep polling */ }
           }, 3000);
