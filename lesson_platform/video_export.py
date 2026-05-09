@@ -201,28 +201,17 @@ def _render_slide_frame(slide: dict, width: int, height: int) -> bytes:
     return result
 
 
-def _mp3_duration(data: bytes) -> float:
-    """Estimate MP3 duration from file size and bitrate header — no ffprobe needed.
-
-    Reads the first valid MPEG frame header to get bitrate, then divides total
-    size by bytes-per-second. Accurate to within ~0.1s for CBR MP3s (OpenAI TTS output).
-    Falls back to 6.0s on any parse error.
-    """
+def _mp3_duration(audio_path: str) -> float:
+    """Get accurate MP3 duration via ffprobe. Falls back to 6.0s on error."""
     try:
-        # Scan for sync word 0xFF 0xEx or 0xFF 0xFx (MPEG frame sync)
-        for offset in range(min(len(data) - 4, 4096)):
-            b0, b1 = data[offset], data[offset + 1]
-            if b0 != 0xFF or (b1 & 0xE0) != 0xE0:
-                continue
-            # Extract bitrate index from bits 4-7 of byte 2
-            bitrate_idx = (data[offset + 2] >> 4) & 0xF
-            bitrate_kbps = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0][bitrate_idx]
-            if bitrate_kbps == 0:
-                continue
-            return len(data) / (bitrate_kbps * 125)  # bytes / (kbps * 125) = seconds
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+            capture_output=True, text=True,
+        )
+        return float(probe.stdout.strip())
     except Exception:
-        pass
-    return 6.0
+        return 6.0
 
 
 def export_lesson_video(
@@ -272,7 +261,7 @@ def export_lesson_video(
             if audio_bytes:
                 with open(audio_path, "wb") as f:
                     f.write(audio_bytes)
-                duration = _mp3_duration(audio_bytes) + 0.5
+                duration = _mp3_duration(audio_path) + 0.5
             else:
                 duration = 4.0
                 subprocess.run(
