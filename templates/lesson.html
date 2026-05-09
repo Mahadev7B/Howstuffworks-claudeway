@@ -702,10 +702,25 @@
                 clearInterval(pollInterval);
                 try {
                   if (isIOS) {
-                    // iOS Safari: window.open() hides the share arrow.
-                    // Show a real tappable link instead — user taps it,
-                    // Safari opens it with full chrome including share arrow.
-                    shareStatus.innerHTML = `🎉 Ready! <a href="${probeData.stream_url}" target="_blank" style="color:#FF6B35;font-weight:700;text-decoration:underline;">Tap here to open video</a> → then tap <strong>share ↑</strong> → "Save to Photos".`;
+                    // iOS: fetch blob, convert to data URL, open in new tab
+                    // via document.write — this showed the share arrow before.
+                    const vidRes = await fetch('/api/export-video/' + jobId);
+                    const blob = await vidRes.blob();
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                      const win = window.open('', '_blank');
+                      if (win) {
+                        win.document.write(`<html><body style="margin:0;background:#000">
+                          <video src="${reader.result}" controls autoplay playsinline
+                            style="width:100%;height:100vh;object-fit:contain"></video>
+                        </body></html>`);
+                        win.document.close();
+                        shareStatus.innerHTML = '🎉 Video opened! Tap the <strong>share ↑</strong> → "Save to Photos" → YouTube Shorts or Instagram.';
+                      } else {
+                        shareStatus.textContent = 'Allow pop-ups for this site, then tap Download again.';
+                      }
+                    };
+                    reader.readAsDataURL(blob);
                   } else {
                     // Desktop: fetch blob and trigger download
                     const vidRes = await fetch('/api/export-video/' + jobId);
