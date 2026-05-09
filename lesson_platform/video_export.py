@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 
 # Video dimensions — vertical (Reels/Shorts) or landscape
 PRESETS = {
-    "vertical":  (480, 854),
-    "landscape": (854, 480),
+    "vertical":  (720, 1280),
+    "landscape": (1280, 720),
 }
 RENDER_SCALE = 1.0
 
@@ -283,10 +283,10 @@ def export_lesson_video(
             audio_paths.append(audio_path)
             durations.append(duration)
 
-        # ── Phase 3: encode all segments in parallel (4 ffmpeg processes at once)
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-
-        def _encode_segment(i):
+        # ── Phase 3: encode segments sequentially to cap peak RAM at one
+        # ffmpeg process at a time (720p ffmpeg uses ~100MB working set)
+        segment_paths = []
+        for i in range(n):
             seg_path = os.path.join(tmpdir, f"seg_{i}.mp4")
             cmd = [
                 "ffmpeg", "-y",
@@ -305,14 +305,7 @@ def export_lesson_video(
                 raise RuntimeError(f"ffmpeg segment {i} failed: {result.stderr.decode()[:500]}")
             try: os.unlink(frame_paths[i])
             except Exception: pass
-            return seg_path
-
-        segment_paths = [None] * n
-        with ThreadPoolExecutor(max_workers=n) as ex:
-            future_to_idx = {ex.submit(_encode_segment, i): i for i in range(n)}
-            for fut in as_completed(future_to_idx):
-                idx = future_to_idx[fut]
-                segment_paths[idx] = fut.result()  # raises on error
+            segment_paths.append(seg_path)
 
         # ── Phase 4: concat segments (stream copy — near instant)
         concat_list = os.path.join(tmpdir, "concat.txt")
