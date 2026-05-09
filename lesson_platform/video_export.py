@@ -128,20 +128,73 @@ def _render_slide_frame(slide: dict, width: int, height: int) -> bytes:
         draw.line([(0, img_h - fade_h + row), (width, img_h - fade_h + row)], fill=(r, g, b_val))
 
     # ── Watermark pill at top-left ────────────────────────────────────────────
-    brand_font = _load_font(int(width * 0.032))
-    brand_text = "🦉 asklilowl.com"
-    pill_pad_x, pill_pad_y = int(width * 0.025), int(height * 0.009)
-    pill_x, pill_y = int(width * 0.04), int(height * 0.025)
-    bb = draw.textbbox((0, 0), brand_text, font=brand_font)
-    pill_w = (bb[2] - bb[0]) + pill_pad_x * 2
-    pill_h = (bb[3] - bb[1]) + pill_pad_y * 2
-    # Semi-transparent dark background so it reads on any image
+    brand_font = _load_font(int(width * 0.034))
+    brand_text = "asklilowl.com"
+    owl_text = "OWL"   # fallback label in the accent tab
+
+    pad_x = int(width * 0.022)
+    pad_y = int(height * 0.008)
+    pill_x = int(width * 0.045)
+    pill_y = int(height * 0.028)
+
+    bb_brand = draw.textbbox((0, 0), brand_text, font=brand_font)
+    text_w = bb_brand[2] - bb_brand[0]
+    text_h = bb_brand[3] - bb_brand[1]
+
+    pill_h = text_h + pad_y * 2
+    pill_r = pill_h // 2
+
+    # Accent tab (left side — orange circle with owl silhouette)
+    tab_w = pill_h  # square-ish circle tab
+    text_section_w = text_w + pad_x * 2
+    total_w = tab_w + text_section_w
+
+    # Full pill background — dark semi-transparent
     draw.rounded_rectangle(
-        [pill_x, pill_y, pill_x + pill_w, pill_y + pill_h],
-        radius=pill_h // 2,
-        fill=(0, 0, 0, 160),
+        [pill_x, pill_y, pill_x + total_w, pill_y + pill_h],
+        radius=pill_r,
+        fill=(15, 15, 15, 200),
     )
-    draw.text((pill_x + pill_pad_x, pill_y + pill_pad_y), brand_text, font=brand_font, fill=(255, 255, 255))
+
+    # Accent circle on left — brand orange
+    draw.ellipse(
+        [pill_x, pill_y, pill_x + tab_w, pill_y + pill_h],
+        fill=(255, 107, 53),
+    )
+
+    # Owl silhouette drawn with simple shapes in the accent circle
+    cx = pill_x + tab_w // 2
+    cy = pill_y + pill_h // 2
+    ow = int(tab_w * 0.52)   # owl body width
+    oh = int(pill_h * 0.62)  # owl body height
+    # Body
+    draw.ellipse([cx - ow//2, cy - oh//2, cx + ow//2, cy + oh//2], fill=(255, 255, 255))
+    # Left ear tuft
+    draw.polygon([cx - ow//2, cy - oh//2,
+                  cx - ow//4, cy - oh//2 - int(oh*0.22),
+                  cx,         cy - oh//2], fill=(255, 255, 255))
+    # Right ear tuft
+    draw.polygon([cx,         cy - oh//2,
+                  cx + ow//4, cy - oh//2 - int(oh*0.22),
+                  cx + ow//2, cy - oh//2], fill=(255, 255, 255))
+    # Left eye
+    ey = cy - int(oh * 0.05)
+    er = int(ow * 0.14)
+    draw.ellipse([cx - int(ow*0.28) - er, ey - er, cx - int(ow*0.28) + er, ey + er], fill=(255, 107, 53))
+    draw.ellipse([cx - int(ow*0.28) - er//2, ey - er//2, cx - int(ow*0.28) + er//2, ey + er//2], fill=(15, 15, 15))
+    # Right eye
+    draw.ellipse([cx + int(ow*0.28) - er, ey - er, cx + int(ow*0.28) + er, ey + er], fill=(255, 107, 53))
+    draw.ellipse([cx + int(ow*0.28) - er//2, ey - er//2, cx + int(ow*0.28) + er//2, ey + er//2], fill=(15, 15, 15))
+    # Beak
+    beak_y = ey + er + int(oh * 0.04)
+    draw.polygon([cx - int(ow*0.08), beak_y,
+                  cx + int(ow*0.08), beak_y,
+                  cx,                beak_y + int(oh * 0.12)], fill=(255, 200, 80))
+
+    # Brand text — white, vertically centred in text section
+    text_x = pill_x + tab_w + pad_x
+    text_y = pill_y + pad_y - int(text_h * 0.05)
+    draw.text((text_x, text_y), brand_text, font=brand_font, fill=(255, 255, 255))
 
     # ── Bottom card: title + explanation + fun fact ───────────────────────────
     card_y = img_h
