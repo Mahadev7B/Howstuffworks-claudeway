@@ -882,9 +882,6 @@ def api_export_video_status(job_id: str):
         if not path or not os.path.exists(path):
             return jsonify({"ok": False, "error": "Video file missing"}), 500
         filename = job.get("filename", "lesson.mp4")
-        # Serve the file — keep it for 60s so iOS can re-fetch via direct URL
-        data = open(path, "rb").read()
-        # Schedule deletion after 60s in background
         def _delayed_delete(p):
             import time as _t; _t.sleep(60)
             try: os.unlink(p)
@@ -892,13 +889,12 @@ def api_export_video_status(job_id: str):
         import threading
         threading.Thread(target=_delayed_delete, args=(path,), daemon=True).start()
         _VIDEO_JOBS.pop(job_id, None)
-        return Response(
-            data,
+        from flask import send_file
+        return send_file(
+            path,
             mimetype="video/mp4",
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-                "Cache-Control": "no-store",
-            },
+            as_attachment=True,
+            download_name=filename,
         )
     elif status == "error":
         err = job.get("error", "Unknown error")
