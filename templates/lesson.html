@@ -140,6 +140,7 @@
     <section class="next-question" style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
       <a href="{{ url_for('home') }}" class="new-question-link">← Ask a new question</a>
       <button id="shareBtn" style="background:linear-gradient(135deg,#FF6B35,#F7B801);color:#fff;border:none;border-radius:50px;padding:0.5rem 1.25rem;font-family:'Fredoka',sans-serif;font-size:1rem;font-weight:600;cursor:pointer;">🔗 Share lesson</button>
+      <button id="downloadBtn" style="background:#6A4C93;color:#fff;border:none;border-radius:50px;padding:0.5rem 1.25rem;font-family:'Fredoka',sans-serif;font-size:1rem;font-weight:600;cursor:pointer;">⬇ Download reel</button>
       <span id="shareStatus" style="color:#6A4C93;font-size:0.9rem;"></span>
     </section>
 
@@ -616,6 +617,75 @@
       }));
 
       fbSubmit.addEventListener('click', submitFeedback);
+
+      // ── Download reel ─────────────────────────────────────────────────────
+      const downloadBtn = document.getElementById('downloadBtn');
+      downloadBtn.addEventListener('click', async () => {
+        downloadBtn.disabled = true;
+        downloadBtn.textContent = '⏳ Starting…';
+        shareStatus.textContent = '';
+        try {
+          const res = await fetch('/api/export-video', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: '{{ question | e }}', preset: 'vertical' }),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.ok) {
+            shareStatus.textContent = data.error || 'Export failed';
+            downloadBtn.disabled = false;
+            downloadBtn.textContent = '⬇ Download reel';
+            return;
+          }
+          const jobId = data.job_id;
+          downloadBtn.textContent = '⏳ Rendering video…';
+          shareStatus.textContent = 'This takes ~30–60 seconds…';
+          // Poll until done
+          const pollInterval = setInterval(async () => {
+            try {
+              const pollRes = await fetch('/api/export-video/' + jobId);
+              if (pollRes.ok && pollRes.headers.get('content-type')?.includes('video')) {
+                clearInterval(pollInterval);
+                const blob = await pollRes.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'lil-owl-lesson.mp4';
+                a.click();
+                URL.revokeObjectURL(url);
+                downloadBtn.textContent = '✓ Downloaded!';
+                shareStatus.textContent = 'Share on Instagram Reels or YouTube Shorts!';
+                setTimeout(() => {
+                  downloadBtn.textContent = '⬇ Download reel';
+                  downloadBtn.disabled = false;
+                  shareStatus.textContent = '';
+                }, 4000);
+              } else {
+                const pollData = await pollRes.json().catch(() => ({}));
+                if (pollData.status === 'error' || !pollRes.ok) {
+                  clearInterval(pollInterval);
+                  shareStatus.textContent = 'Export failed: ' + (pollData.error || 'Try again');
+                  downloadBtn.textContent = '⬇ Download reel';
+                  downloadBtn.disabled = false;
+                }
+              }
+            } catch (e) { /* network hiccup, keep polling */ }
+          }, 3000);
+          // Safety timeout after 3 minutes
+          setTimeout(() => {
+            clearInterval(pollInterval);
+            if (downloadBtn.disabled) {
+              downloadBtn.textContent = '⬇ Download reel';
+              downloadBtn.disabled = false;
+              shareStatus.textContent = 'Export timed out. Try again.';
+            }
+          }, 180000);
+        } catch (err) {
+          shareStatus.textContent = 'Could not start export. Try again.';
+          downloadBtn.disabled = false;
+          downloadBtn.textContent = '⬇ Download reel';
+        }
+      });
 
       // ── Share ─────────────────────────────────────────────────────────────
       const shareBtn = document.getElementById('shareBtn');

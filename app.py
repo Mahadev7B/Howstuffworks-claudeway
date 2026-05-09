@@ -764,6 +764,139 @@ def api_tts():
     return Response(audio_bytes, mimetype="audio/mpeg")
 
 
+# ── Video export ──────────────────────────────────────────────────────────────
+# In-memory job store: job_id -> {status, path, error, created_at}
+# Jobs expire after 1 hour; temp files are deleted after serving.
+_VIDEO_JOBS: dict[str, dict] = {}
+_VIDEO_JOB_TTL_S = 3600
+
+
+def _video_job_gc() -> None:
+    cutoff = time.time() - _VIDEO_JOB_TTL_S
+    stale = [k for k, v in _VIDEO_JOBS.items() if v.get("created_at", 0) < cutoff]
+    for k in stale:
+        job = _VIDEO_JOBS.pop(k, {})
+        p = job.get("path")
+        if p and os.path.exists(p):
+            try:
+                os.unlink(p)
+            except Exception:
+                pass
+
+
+def _run_video_export(job_id: str, lesson: dict, question: str, preset: str) -> None:
+    """Background thread: synthesize audio + render video, update job status."""
+    from lesson_platform.video_export import export_lesson_video
+    job = _VIDEO_JOBS.get(job_id)
+    if job is None:
+        return
+    try:
+        slides = lesson.get("slides", [])
+        audio_clips = []
+        for slide in slides:
+            text = " ".join(filter(None, [
+                slide.get("title", ""),
+                slide.get("subtitle", ""),
+                slide.get("explanation", ""),
+                slide.get("fun_fact", ""),
+            ]))
+            try:
+                cached = _tts_cache_get(text)
+                if cached:
+                    audio_clips.append(cached)
+                else:
+                    audio_bytes, _ = synthesize(text, settings)
+                    _tts_cache_put(text, audio_bytes)
+                    audio_clips.append(audio_bytes)
+            except Exception as exc:
+                logger.warning("TTS failed for video slide: %s", exc)
+                audio_clips.append(b"")
+
+        out_path = export_lesson_video(lesson, audio_clips, preset=preset)
+        job["path"] = out_path
+        job["status"] = "done"
+        job["filename"] = f"lil-owl-{secrets.token_hex(4)}.mp4"
+        logger.info("Video export done: %s -> %s", job_id, out_path)
+    except Exception as exc:
+        logger.exception("Video export failed for job %s", job_id)
+        job["status"] = "error"
+        job["error"] = str(exc)
+
+
+@app.route("/api/export-video", methods=["POST"])
+def api_export_video():
+    """Start async video export. Returns {ok, job_id}."""
+    if not settings.openai_api_key:
+        return jsonify({"ok": False, "error": "TTS not configured — video export requires TTS"}), 503
+
+    payload = request.get_json(silent=True) or {}
+    question = (payload.get("question") or "").strip()
+    preset = payload.get("preset", "vertical")
+    if preset not in ("vertical", "landscape"):
+        preset = "vertical"
+
+    lesson_data = _recent_get(question) if question else None
+    if lesson_data is None and question:
+        ctx = _client_context()
+        lesson_data = _lookup_only(question, ctx)
+    if lesson_data is None:
+        return jsonify({"ok": False, "error": "Lesson not found — ask the question first"}), 404
+
+    from lesson_platform.video_export import _ffmpeg_available
+    if not _ffmpeg_available():
+        return jsonify({
+            "ok": False,
+            "error": "Video export is not available on this server (ffmpeg not installed)",
+        }), 503
+
+    _video_job_gc()
+    job_id = secrets.token_urlsafe(12)
+    _VIDEO_JOBS[job_id] = {"status": "pending", "created_at": time.time()}
+
+    import threading
+    t = threading.Thread(
+        target=_run_video_export,
+        args=(job_id, lesson_data, question, preset),
+        daemon=True,
+    )
+    t.start()
+
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@app.route("/api/export-video/<job_id>", methods=["GET"])
+def api_export_video_status(job_id: str):
+    """Poll video export status. Returns {status: pending|done|error}."""
+    job = _VIDEO_JOBS.get(job_id)
+    if job is None:
+        return jsonify({"ok": False, "error": "Job not found or expired"}), 404
+
+    status = job.get("status", "pending")
+    if status == "done":
+        path = job.get("path")
+        if not path or not os.path.exists(path):
+            return jsonify({"ok": False, "error": "Video file missing"}), 500
+        filename = job.get("filename", "lesson.mp4")
+        # Serve the file, then clean up
+        _VIDEO_JOBS.pop(job_id, None)
+        data = open(path, "rb").read()
+        try:
+            os.unlink(path)
+        except Exception:
+            pass
+        return Response(
+            data,
+            mimetype="video/mp4",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    elif status == "error":
+        err = job.get("error", "Unknown error")
+        _VIDEO_JOBS.pop(job_id, None)
+        return jsonify({"ok": False, "status": "error", "error": err}), 500
+    else:
+        return jsonify({"ok": True, "status": "pending"})
+
+
 @app.route("/admin/clear-cache", methods=["POST"])
 def admin_clear_cache():
     secret = os.environ.get("ADMIN_SECRET", "")
