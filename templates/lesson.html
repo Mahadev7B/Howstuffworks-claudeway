@@ -702,25 +702,10 @@
                 clearInterval(pollInterval);
                 try {
                   if (isIOS) {
-                    // iOS: fetch blob, convert to data URL, open in new tab
-                    // via document.write — this showed the share arrow before.
-                    const vidRes = await fetch('/api/export-video/' + jobId);
-                    const blob = await vidRes.blob();
-                    const reader = new FileReader();
-                    reader.onload = () => {
-                      const win = window.open('', '_blank');
-                      if (win) {
-                        win.document.write(`<html><body style="margin:0;background:#000">
-                          <video src="${reader.result}" controls autoplay playsinline
-                            style="width:100%;height:100vh;object-fit:contain"></video>
-                        </body></html>`);
-                        win.document.close();
-                        shareStatus.innerHTML = '🎉 Video opened! Tap the <strong>share ↑</strong> → "Save to Photos" → YouTube Shorts or Instagram.';
-                      } else {
-                        shareStatus.textContent = 'Allow pop-ups for this site, then tap Download again.';
-                      }
-                    };
-                    reader.readAsDataURL(blob);
+                    // iOS Safari: navigate current tab to the stream URL.
+                    // This gives full browser chrome with share arrow.
+                    // User taps share ↑ → Save to Photos, then taps Back to return.
+                    window.location.href = probeData.stream_url;
                   } else {
                     // Desktop: fetch blob and trigger download
                     const vidRes = await fetch('/api/export-video/' + jobId);
