@@ -789,34 +789,13 @@ def _video_job_gc() -> None:
                 pass
 
 
-def _run_video_export(job_id: str, lesson: dict, question: str, preset: str) -> None:
-    """Background thread: synthesize audio + render video, update job status."""
+def _run_video_export(job_id: str, lesson: dict, audio_clips: list[bytes], preset: str) -> None:
+    """Background thread: render video from pre-supplied audio, update job status."""
     from lesson_platform.video_export import export_lesson_video
     job = _VIDEO_JOBS.get(job_id)
     if job is None:
         return
     try:
-        slides = lesson.get("slides", [])
-        audio_clips = []
-        for slide in slides:
-            text = " ".join(filter(None, [
-                slide.get("title", ""),
-                slide.get("subtitle", ""),
-                slide.get("explanation", ""),
-                slide.get("fun_fact", ""),
-            ]))
-            try:
-                cached = _tts_cache_get(text)
-                if cached:
-                    audio_clips.append(cached)
-                else:
-                    audio_bytes, _ = synthesize(text, settings)
-                    _tts_cache_put(text, audio_bytes)
-                    audio_clips.append(audio_bytes)
-            except Exception as exc:
-                logger.warning("TTS failed for video slide: %s", exc)
-                audio_clips.append(b"")
-
         out_path = export_lesson_video(lesson, audio_clips, preset=preset)
         job["path"] = out_path
         job["status"] = "done"
@@ -830,15 +809,19 @@ def _run_video_export(job_id: str, lesson: dict, question: str, preset: str) -> 
 
 @app.route("/api/export-video", methods=["POST"])
 def api_export_video():
-    """Start async video export. Returns {ok, job_id}."""
-    if not settings.openai_api_key:
-        return jsonify({"ok": False, "error": "TTS not configured — video export requires TTS"}), 503
+    """Start async video export. Returns {ok, job_id}.
 
+    Expects JSON: { question, preset, slides: [{audio_b64, image_b64}] }
+    Browser supplies audio blobs + images it already has — no extra API calls.
+    Missing audio falls back to server TTS cache then OpenAI as last resort.
+    """
     payload = request.get_json(silent=True) or {}
     question = (payload.get("question") or "").strip()
     preset = payload.get("preset", "vertical")
     if preset not in ("vertical", "landscape"):
         preset = "vertical"
+
+    client_slides = payload.get("slides") or []
 
     lesson_data = _recent_get(question) if question else None
     if lesson_data is None and question:
@@ -854,17 +837,62 @@ def api_export_video():
             "error": "Video export is not available on this server (ffmpeg not installed)",
         }), 503
 
+    # Build audio_clips from browser-supplied blobs, falling back to server cache
+    slides = lesson_data.get("slides", [])
+    audio_clips = []
+    for i, slide in enumerate(slides):
+        # 1. Browser sent audio for this slide
+        client = client_slides[i] if i < len(client_slides) else {}
+        audio_b64 = client.get("audio_b64") if client else None
+        if audio_b64:
+            try:
+                audio_clips.append(base64.b64decode(audio_b64))
+                continue
+            except Exception:
+                pass
+        # 2. Server TTS cache (slide was played)
+        text = " ".join(filter(None, [
+            slide.get("title", ""), slide.get("subtitle", ""),
+            slide.get("explanation", ""), slide.get("fun_fact", ""),
+        ]))
+        cached = _tts_cache_get(text)
+        if cached:
+            audio_clips.append(cached)
+            continue
+        # 3. Last resort: call OpenAI (only if browser sent nothing and cache cold)
+        if settings.openai_api_key:
+            try:
+                audio_bytes, _ = synthesize(text, settings)
+                _tts_cache_put(text, audio_bytes)
+                audio_clips.append(audio_bytes)
+                continue
+            except Exception as exc:
+                logger.warning("TTS failed for video slide %d: %s", i, exc)
+        audio_clips.append(b"")
+
+    # Inject browser-supplied images into lesson slides
+    lesson_for_export = dict(lesson_data)
+    if any(c.get("image_b64") for c in client_slides if c):
+        export_slides = []
+        for i, slide in enumerate(slides):
+            s = dict(slide)
+            client = client_slides[i] if i < len(client_slides) else {}
+            img_b64 = client.get("image_b64") if client else None
+            if img_b64 and not s.get("image_data_url"):
+                s["image_data_url"] = "data:image/jpeg;base64," + img_b64
+            export_slides.append(s)
+        lesson_for_export = {**lesson_data, "slides": export_slides}
+
     _video_job_gc()
     job_id = secrets.token_urlsafe(12)
     _VIDEO_JOBS[job_id] = {"status": "pending", "created_at": time.time()}
 
     import threading
-    t = threading.Thread(
+    threading.Thread(
         target=_run_video_export,
-        args=(job_id, lesson_data, question, preset),
+        args=(job_id, lesson_for_export, audio_clips, preset),
         daemon=True,
-    )
-    t.start()
+    ).start()
 
     return jsonify({"ok": True, "job_id": job_id})
 

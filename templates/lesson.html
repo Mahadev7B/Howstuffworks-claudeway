@@ -628,13 +628,41 @@
       const downloadBtn = document.getElementById('downloadBtn');
       downloadBtn.addEventListener('click', async () => {
         downloadBtn.disabled = true;
-        downloadBtn.textContent = '⏳ Starting…';
+        downloadBtn.textContent = '⏳ Preparing…';
         shareStatus.textContent = '';
         try {
+          // Collect browser-cached audio blobs and slide images — server
+          // uses these directly so no extra API calls are needed.
+          const slideData = await Promise.all(slides.map(async (slideEl, i) => {
+            const out = {};
+            // Audio blob → base64
+            const audioUrl = audioCache.get(i);
+            if (audioUrl) {
+              try {
+                const r = await fetch(audioUrl);
+                const buf = await r.arrayBuffer();
+                const bytes = new Uint8Array(buf);
+                let bin = '';
+                for (let b of bytes) bin += String.fromCharCode(b);
+                out.audio_b64 = btoa(bin);
+              } catch (e) {}
+            }
+            // Slide image → base64 (strip data URL prefix)
+            const img = slideEl.querySelector('.slide-image');
+            if (img && img.src && img.src.startsWith('data:')) {
+              out.image_b64 = img.src.split(',')[1];
+            }
+            return out;
+          }));
+
           const res = await fetch('/api/export-video', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ question: {{ question | tojson }}, preset: 'vertical' }),
+            body: JSON.stringify({
+              question: {{ question | tojson }},
+              preset: 'vertical',
+              slides: slideData,
+            }),
           });
           const data = await res.json();
           if (!res.ok || !data.ok) {
