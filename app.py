@@ -850,7 +850,7 @@ def api_export_video():
                 continue
             except Exception:
                 pass
-        # 2. Server TTS cache (slide was played)
+        # 2. Server TTS cache (slide was played on this server process)
         text = " ".join(filter(None, [
             slide.get("title", ""), slide.get("subtitle", ""),
             slide.get("explanation", ""), slide.get("fun_fact", ""),
@@ -859,15 +859,10 @@ def api_export_video():
         if cached:
             audio_clips.append(cached)
             continue
-        # 3. Last resort: call OpenAI (only if browser sent nothing and cache cold)
-        if settings.openai_api_key:
-            try:
-                audio_bytes, _ = synthesize(text, settings)
-                _tts_cache_put(text, audio_bytes)
-                audio_clips.append(audio_bytes)
-                continue
-            except Exception as exc:
-                logger.warning("TTS failed for video slide %d: %s", i, exc)
+        # Browser should have sent audio for all slides — if missing, fail fast
+        # rather than making an unexpected API call.
+        logger.warning("Video export: no audio for slide %d — browser did not send it", i)
+        job_id_ref = None  # will be set after job creation; just append empty
         audio_clips.append(b"")
 
     # Inject browser-supplied images into lesson slides

@@ -631,6 +631,15 @@
         downloadBtn.textContent = '⏳ Preparing…';
         shareStatus.textContent = '';
         try {
+          // Check all slides have audio cached — user must have played the lesson
+          const missingAudio = slides.map((_, i) => !audioCache.has(i)).filter(Boolean).length;
+          if (missingAudio > 0) {
+            shareStatus.textContent = '▶ Play the lesson first to include audio in your video.';
+            downloadBtn.disabled = false;
+            downloadBtn.textContent = '⬇ Download reel';
+            return;
+          }
+
           // Collect browser-cached audio blobs and slide images — server
           // uses these directly so no extra API calls are needed.
           const slideData = await Promise.all(slides.map(async (slideEl, i) => {
