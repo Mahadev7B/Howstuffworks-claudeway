@@ -126,18 +126,19 @@ def _render_slide_frame(slide: dict, width: int, height: int) -> bytes:
         b_val = int(BG_COLOR[2] * alpha + (BG_COLOR[2] * 0.3) * (1 - alpha))
         draw.line([(0, img_h - fade_h + row), (width, img_h - fade_h + row)], fill=(r, g, b_val))
 
-    # ── Branding pill at top-left ─────────────────────────────────────────────
-    brand_font = _load_font(int(width * 0.038))
-    brand_text = "Ask Lil Owl"
-    pill_pad_x, pill_pad_y = int(width * 0.03), int(height * 0.012)
-    pill_x, pill_y = int(width * 0.04), int(height * 0.03)
+    # ── Watermark pill at top-left ────────────────────────────────────────────
+    brand_font = _load_font(int(width * 0.032))
+    brand_text = "🦉 asklilowl.com"
+    pill_pad_x, pill_pad_y = int(width * 0.025), int(height * 0.009)
+    pill_x, pill_y = int(width * 0.04), int(height * 0.025)
     bb = draw.textbbox((0, 0), brand_text, font=brand_font)
     pill_w = (bb[2] - bb[0]) + pill_pad_x * 2
     pill_h = (bb[3] - bb[1]) + pill_pad_y * 2
+    # Semi-transparent dark background so it reads on any image
     draw.rounded_rectangle(
         [pill_x, pill_y, pill_x + pill_w, pill_y + pill_h],
         radius=pill_h // 2,
-        fill=(255, 107, 53, 220),
+        fill=(0, 0, 0, 160),
     )
     draw.text((pill_x + pill_pad_x, pill_y + pill_pad_y), brand_text, font=brand_font, fill=(255, 255, 255))
 
