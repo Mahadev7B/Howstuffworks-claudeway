@@ -702,14 +702,10 @@
                 clearInterval(pollInterval);
                 try {
                   if (isIOS) {
-                    // iOS Safari: open stream URL directly in new tab —
-                    // triggers native player with share sheet (Save to Photos).
-                    const win = window.open(probeData.stream_url, '_blank');
-                    if (!win) {
-                      shareStatus.textContent = 'Allow pop-ups for this site, then tap Download again.';
-                    } else {
-                      shareStatus.innerHTML = '🎉 Video opened! Tap <strong>share ↑</strong> → "Save to Photos" → YouTube Shorts or Instagram.';
-                    }
+                    // iOS Safari: window.open() hides the share arrow.
+                    // Show a real tappable link instead — user taps it,
+                    // Safari opens it with full chrome including share arrow.
+                    shareStatus.innerHTML = `🎉 Ready! <a href="${probeData.stream_url}" target="_blank" style="color:#FF6B35;font-weight:700;text-decoration:underline;">Tap here to open video</a> → then tap <strong>share ↑</strong> → "Save to Photos".`;
                   } else {
                     // Desktop: fetch blob and trigger download
                     const vidRes = await fetch('/api/export-video/' + jobId);
