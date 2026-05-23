@@ -11,16 +11,21 @@ import re
 # Hard-block list — explicit/inappropriate content for kids
 # Keep words lowercase; matching is case-insensitive.
 # ---------------------------------------------------------------------------
-_HARD_BLOCK = {
+# Word-boundary matched (whole words only) — avoids blocking "galaxy", "assassin", "Texas", etc.
+_HARD_BLOCK_WORDS = {
     "penis", "vagina", "vulva", "anus", "rectum", "testicle", "testicles",
     "scrotum", "clitoris", "uterus", "ovary", "ovaries",
-    "sex", "sexual", "sexually", "intercourse", "masturbat",
+    "sex", "sexual", "sexually", "intercourse",
     "porn", "pornography", "pornographic", "nude", "naked", "nudity",
-    "breast", "nipple", "genitals", "genital",
-    "erection", "ejaculat", "orgasm", "condom", "contraception",
-    "rape", "molest", "abuse", "pedophil",
-    "fuck", "shit", "bitch", "cunt", "cock", "dick", "ass", "asshole",
+    "nipple", "genitals", "genital",
+    "erection", "orgasm", "condom", "contraception",
+    "rape", "fuck", "shit", "bitch", "cunt", "cock", "dick", "ass", "asshole",
 }
+
+# Prefix-matched terms (no clean word boundary possible — "masturbat*", "ejaculat*", "pedophil*")
+_HARD_BLOCK_PREFIXES = (
+    "masturbat", "ejaculat", "pedophil", "molest",
+)
 
 # ---------------------------------------------------------------------------
 # Science / tech / nature / math — presence of ANY of these passes the filter
@@ -162,9 +167,12 @@ def check_question(question: str) -> str | None:
     are handled by Claude's system prompt.
     """
     q_lower = question.lower()
+    words = set(re.findall(r"[a-z]+", q_lower))
 
-    for term in _HARD_BLOCK:
-        if term in q_lower:
-            return _HARD_BLOCK_MSG
+    if words & _HARD_BLOCK_WORDS:
+        return _HARD_BLOCK_MSG
+
+    if any(prefix in q_lower for prefix in _HARD_BLOCK_PREFIXES):
+        return _HARD_BLOCK_MSG
 
     return None
