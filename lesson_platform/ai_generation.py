@@ -95,6 +95,8 @@ Content rules — be concise, every field must be SHORT:
 image_prompt rules:
 Create a visually engaging educational illustration for children. Return ONLY a visual scene description (35–55 words) that describes objects, motion, and environment — never instructional content.
 
+CHILD SAFETY: Every image_prompt must be safe for children under 13. Never include violence, blood, weapons, scary or disturbing imagery, suggestive or romantic content, or anything inappropriate for a primary school classroom.
+
 STRICT RULES (very important — Flux cannot render text and produces garbled gibberish):
 1. DO NOT include ANY text in the image:
    - no words, no letters, no numbers, no captions, no labels
