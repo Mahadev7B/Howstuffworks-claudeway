@@ -364,9 +364,9 @@
         <button type="button" id="openLessonBtn" class="primary big-btn" hidden>Open Lesson →</button>
         <button type="button" id="cancelBtn" class="secondary">Stop</button>
       </div>
-      <p class="muted">While you wait — dodge traffic, collect fuel! <span id="elapsed">0s</span></p>
+      <p class="muted">While you wait — race the AI to the finish! <span id="elapsed">0s</span></p>
       <canvas id="game" width="360" height="240" tabindex="0" aria-label="Car race mini game"></canvas>
-      <p class="muted game-hint" id="gameHint">← → to change lanes · <span id="gameStatus">Score: 0  ⛽ 100%</span></p>
+      <p class="muted game-hint" id="gameHint">← → to change lanes · <span id="gameStatus">You: 0%  AI: 0%  ⛽ 100%</span></p>
       <div class="dpad" id="dpad">
         <button class="dpad-btn" data-dx="0"  data-dy="-1" aria-label="Up">▲</button>
         <div class="dpad-middle">
@@ -650,8 +650,10 @@
     });
 
     // ---------- Car race mini-game ------------------------------------
-    // Top-down road: player car dodges oncoming traffic, collects fuel cans.
-    // Left/Right moves between 3 lanes. Up/Down changes speed tier.
+    // Two-lane race: player (left lane, orange) vs AI (right lane, purple).
+    // Fixed 2000-unit track. Progress bar at top shows both racers.
+    // Obstacles in both lanes — player must dodge, AI is a ghost.
+    // Fuel cans only in player lane. Crash = 1.5s stop, AI keeps going.
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
     const gameStatus = document.getElementById('gameStatus');
@@ -668,140 +670,162 @@
       ctx.closePath();
     }
 
-    // Lane layout — 3 lanes centred on the road
-    const ROAD_LEFT  = W * 0.2;
-    const ROAD_RIGHT = W * 0.8;
+    // Road layout: two lanes side by side
+    const ROAD_LEFT  = W * 0.15;
+    const ROAD_RIGHT = W * 0.85;
     const ROAD_W     = ROAD_RIGHT - ROAD_LEFT;
-    const LANE_W     = ROAD_W / 3;
-    const LANES      = [0, 1, 2];  // indices
-    function laneX(i) { return ROAD_LEFT + LANE_W * i + LANE_W / 2; }
+    const LANE_W     = ROAD_W / 2;
+    const PLAYER_LANE_X = ROAD_LEFT + LANE_W * 0.5;   // centre of left lane
+    const AI_LANE_X     = ROAD_LEFT + LANE_W * 1.5;   // centre of right lane
+    const CAR_Y = H - 55;
+
+    const RACE_DIST = 2000;  // total race units
 
     // Game state
-    let playerLane, playerY, speed, score, fuel, frame, gameLoopId, tickCount, lastTickTime;
-    let traffic, fuelCans, roadOffset, stars; // `stars` alias kept so watchdog guard works
-    let dir = { x: 0, y: 0 };  // set by keydown / dpad handlers
+    let playerProgress, aiProgress, fuel, frame, gameLoopId, tickCount, lastTickTime;
+    let playerSpeed, aiSpeed, playerCrashTicks;
+    let traffic, fuelCans, roadOffset, stars;
+    let raceOver, winner;
+    let dir = { x: 0, y: 0 };
+
+    // Speed tiers (road scroll px/tick)
+    const SPEED_SLOW   = 30;
+    const SPEED_NORMAL = 55;
+    const SPEED_FAST   = 80;
 
     function resetGame() {
-      playerLane = 1;
-      playerY    = H - 55;
-      speed      = 60;      // road scroll px/tick — fixed speed
-      score      = 0;
-      fuel       = 100;
-      frame      = 0;
-      roadOffset = 0;
-      traffic    = [];
-      fuelCans   = [];
-      stars      = true;    // truthy sentinel for watchdog / maybeRestartLoop
-      dir        = { x: 0, y: 0 };
+      playerProgress  = 0;
+      aiProgress      = 0;
+      fuel            = 100;
+      frame           = 0;
+      roadOffset      = 0;
+      playerSpeed     = SPEED_NORMAL;
+      aiSpeed         = SPEED_NORMAL;
+      playerCrashTicks = 0;
+      traffic         = [];
+      fuelCans        = [];
+      stars           = true;
+      raceOver        = false;
+      winner          = null;
+      dir             = { x: 0, y: 0 };
       updateStatus();
     }
 
-    function updateStatus(extra) {
-      gameStatus.textContent = (extra ? extra + ' · ' : '') + 'Score: ' + score + '  ⛽ ' + Math.ceil(fuel) + '%';
+    function updateStatus() {
+      const pp = Math.min(100, Math.round(playerProgress / RACE_DIST * 100));
+      const ap = Math.min(100, Math.round(aiProgress    / RACE_DIST * 100));
+      gameStatus.textContent = 'You: ' + pp + '%  AI: ' + ap + '%  ⛽ ' + Math.ceil(fuel) + '%';
     }
 
-    // direction input — only left/right used for lane changes; up/down adjusts speed
-    // `dir` is set by the existing keydown / dpad handlers
-    let inputLane = 0;  // -1 left, 0 none, +1 right
-
     function spawnTraffic() {
-      const lane = LANES[Math.floor(Math.random() * 3)];
+      // Spawn in one or both lanes
       const colors = ['#E74C3C','#3498DB','#2ECC71','#9B59B6','#E67E22'];
-      traffic.push({
-        lane,
-        y: -40,
-        color: colors[Math.floor(Math.random() * colors.length)],
-        spd: speed * (0.6 + Math.random() * 0.5),
+      const lanes = Math.random() < 0.4 ? [0, 1] : [Math.round(Math.random())];
+      lanes.forEach(lane => {
+        traffic.push({
+          lane,
+          y: -40,
+          color: colors[Math.floor(Math.random() * colors.length)],
+          spd: SPEED_NORMAL * (0.55 + Math.random() * 0.5),
+        });
       });
     }
 
     function spawnFuel() {
-      const lane = LANES[Math.floor(Math.random() * 3)];
-      fuelCans.push({ lane, y: -20 });
+      fuelCans.push({ y: -20 });  // always player lane
+    }
+
+    function aiThink() {
+      // AI speed: starts normal, ramps at 40% mark, slight random wobble
+      const base = aiProgress > RACE_DIST * 0.4 ? SPEED_FAST : SPEED_NORMAL;
+      const wobble = (Math.random() - 0.5) * 12;
+      aiSpeed = Math.max(SPEED_SLOW, base + wobble);
     }
 
     function tick() {
-      if (!stars) return;
+      if (!stars || raceOver) return;
       frame++;
-      roadOffset = (roadOffset + speed) % 40;
 
-      // Drain fuel
-      fuel = Math.max(0, fuel - 0.18);
+      // Speed input: Up = fast, Down = slow, default normal
+      if      (dir.y === -1) playerSpeed = SPEED_FAST;
+      else if (dir.y ===  1) playerSpeed = SPEED_SLOW;
+      else                   playerSpeed = SPEED_NORMAL;
+      dir = { x: 0, y: 0 };
 
-      // Speed ramp every 120 ticks
-      // speed is constant — no ramp
+      // Crashed player idles
+      if (playerCrashTicks > 0) {
+        playerCrashTicks--;
+        playerSpeed = 0;
+      }
+
+      // Advance progress
+      if (playerSpeed > 0) {
+        fuel = Math.max(0, fuel - 0.15 * (playerSpeed / SPEED_NORMAL));
+        if (fuel <= 0) playerSpeed = SPEED_SLOW;
+        playerProgress += playerSpeed * 0.1;
+      }
+      aiThink();
+      aiProgress += aiSpeed * 0.1;
+
+      roadOffset = (roadOffset + Math.max(playerSpeed, 20)) % 40;
 
       // Spawn traffic
-      const spawnInterval = 8;
-      if (frame % spawnInterval === 0) spawnTraffic();
-
-      // Spawn fuel cans
-      if (frame % 70 === 0) spawnFuel();
-
-      // Apply horizontal input from dpad/keys (dir is set by existing handlers)
-      if (dir.x === -1) { playerLane = Math.max(0, playerLane - 1); dir = { x: 0, y: 0 }; }
-      if (dir.x ===  1) { playerLane = Math.min(2, playerLane + 1); dir = { x: 0, y: 0 }; }
+      if (frame % 9 === 0) spawnTraffic();
+      if (frame % 65 === 0) spawnFuel();
 
       // Move traffic
-      traffic.forEach(t => { t.y += t.spd + speed * 0.5; });
+      const scrollSpd = Math.max(playerSpeed, 20);
+      traffic.forEach(t => { t.y += t.spd + scrollSpd * 0.4; });
       traffic = traffic.filter(t => t.y < H + 50);
 
       // Move fuel cans
-      fuelCans.forEach(f => { f.y += speed * 0.6; });
+      fuelCans.forEach(f => { f.y += scrollSpd * 0.6; });
       fuelCans = fuelCans.filter(f => f.y < H + 30);
 
-      // Collision with traffic
-      const px = laneX(playerLane);
-      for (const t of traffic) {
-        if (t.lane === playerLane && Math.abs(t.y - playerY) < 32) {
-          updateStatus('Crash! 💥');
-          clearInterval(gameLoopId); gameLoopId = null;
-          setTimeout(() => { resetGame(); loop(); }, 1200);
-          draw(); return;
+      // Player collision with traffic in left lane (lane 0)
+      if (playerCrashTicks === 0) {
+        for (const t of traffic) {
+          if (t.lane === 0 && Math.abs(t.y - CAR_Y) < 32) {
+            playerCrashTicks = 15;  // ~1.5s at 100ms/tick
+            gameStatus.textContent = 'Crash! 💥 — AI pulling ahead!';
+            draw(); return;
+          }
         }
       }
 
-      // Collect fuel cans
+      // Collect fuel cans (player lane only)
       fuelCans = fuelCans.filter(f => {
-        if (f.lane === playerLane && Math.abs(f.y - playerY) < 28) {
-          fuel = Math.min(100, fuel + 25);
-          score++;
-          updateStatus();
+        if (Math.abs(f.y - CAR_Y) < 28) {
+          fuel = Math.min(100, fuel + 22);
           return false;
         }
         return true;
       });
 
-      // Score for surviving
-      if (frame % 10 === 0) { score++; updateStatus(); }
-
-      // Out of fuel
-      if (fuel <= 0) {
-        updateStatus('Out of fuel! ⛽');
-        clearInterval(gameLoopId); gameLoopId = null;
-        setTimeout(() => { resetGame(); loop(); }, 1200);
-        draw(); return;
+      // Check finish
+      if (playerProgress >= RACE_DIST || aiProgress >= RACE_DIST) {
+        raceOver = true;
+        winner = playerProgress >= aiProgress ? 'player' : 'ai';
+        draw();
+        setTimeout(() => { resetGame(); }, 3000);
+        return;
       }
 
+      updateStatus();
       draw();
     }
 
     function drawCar(cx, cy, color, isPlayer) {
       ctx.save();
       ctx.translate(cx, cy);
-      // Shadow
       ctx.fillStyle = 'rgba(0,0,0,0.25)';
       ctx.beginPath(); ctx.ellipse(2, 4, 13, 6, 0, 0, Math.PI * 2); ctx.fill();
-      // Body
       ctx.fillStyle = color;
       ctx.beginPath(); rrect(-12, -18, 24, 36, 5); ctx.fill();
-      // Roof
       ctx.fillStyle = isPlayer ? '#FFF8F0' : 'rgba(255,255,255,0.7)';
       ctx.beginPath(); rrect(-8, -12, 16, 18, 3); ctx.fill();
-      // Windshield tint
       ctx.fillStyle = isPlayer ? 'rgba(106,76,147,0.5)' : 'rgba(0,0,0,0.3)';
       ctx.beginPath(); rrect(-7, -11, 14, 8, 2); ctx.fill();
-      // Wheels
       ctx.fillStyle = '#222';
       [[-13,-12],[-13,10],[13,-12],[13,10]].forEach(([wx,wy]) => {
         ctx.beginPath(); ctx.ellipse(wx, wy, 4, 5, 0, 0, Math.PI*2); ctx.fill();
@@ -809,16 +833,9 @@
         ctx.beginPath(); ctx.ellipse(wx, wy, 2, 3, 0, 0, Math.PI*2); ctx.fill();
         ctx.fillStyle = '#222';
       });
-      // Headlights / taillights
-      if (isPlayer) {
-        ctx.fillStyle = '#FF6B35';
-        ctx.beginPath(); ctx.ellipse(-8, -20, 3, 2, 0, 0, Math.PI*2); ctx.fill();
-        ctx.beginPath(); ctx.ellipse(8,  -20, 3, 2, 0, 0, Math.PI*2); ctx.fill();
-      } else {
-        ctx.fillStyle = '#F7B801';
-        ctx.beginPath(); ctx.ellipse(-8, 20, 3, 2, 0, 0, Math.PI*2); ctx.fill();
-        ctx.beginPath(); ctx.ellipse(8,  20, 3, 2, 0, 0, Math.PI*2); ctx.fill();
-      }
+      ctx.fillStyle = isPlayer ? '#FF6B35' : '#F7B801';
+      ctx.beginPath(); ctx.ellipse(-8, isPlayer ? -20 : 20, 3, 2, 0, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse( 8, isPlayer ? -20 : 20, 3, 2, 0, 0, Math.PI*2); ctx.fill();
       ctx.restore();
     }
 
@@ -836,8 +853,47 @@
       ctx.restore();
     }
 
+    function drawProgressBar() {
+      const BAR_H = 14, BAR_Y = 4, PAD = 28;
+      const barW = W - PAD * 2;
+      // Track
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      ctx.beginPath(); rrect(PAD, BAR_Y, barW, BAR_H, BAR_H / 2); ctx.fill();
+      // Player fill
+      const pp = Math.min(1, playerProgress / RACE_DIST);
+      if (pp > 0) {
+        ctx.fillStyle = '#FF6B35';
+        ctx.beginPath(); rrect(PAD, BAR_Y, Math.max(8, barW * pp), BAR_H, BAR_H / 2); ctx.fill();
+      }
+      // AI dot
+      const ap = Math.min(1, aiProgress / RACE_DIST);
+      const aiDotX = PAD + barW * ap;
+      ctx.fillStyle = '#6A4C93';
+      ctx.beginPath(); ctx.arc(aiDotX, BAR_Y + BAR_H / 2, 6, 0, Math.PI * 2); ctx.fill();
+      // Finish flag
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText('🏁', W - PAD + 2, BAR_Y + 11);
+      // Labels
+      ctx.font = 'bold 8px sans-serif';
+      ctx.fillStyle = '#fff';
+      ctx.textAlign = 'center';
+      ctx.fillText('YOU', PAD + Math.max(10, barW * pp * 0.5), BAR_Y + 10);
+    }
+
+    function drawFinishLine(yPos) {
+      const sq = 12;
+      const cols = Math.ceil(ROAD_W / sq);
+      for (let c = 0; c < cols; c++) {
+        for (let r = 0; r < 2; r++) {
+          ctx.fillStyle = (c + r) % 2 === 0 ? '#fff' : '#000';
+          ctx.fillRect(ROAD_LEFT + c * sq, yPos + r * sq, sq, sq);
+        }
+      }
+    }
+
     function draw() {
-      // Sky/grass
+      // Grass
       ctx.fillStyle = '#7EC850';
       ctx.fillRect(0, 0, W, H);
 
@@ -845,74 +901,106 @@
       ctx.fillStyle = '#555';
       ctx.fillRect(ROAD_LEFT, 0, ROAD_W, H);
 
-      // Road edge lines
+      // Centre divider (solid white)
       ctx.strokeStyle = '#fff';
       ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.moveTo(ROAD_LEFT, 0); ctx.lineTo(ROAD_LEFT, H); ctx.stroke();
+      const midX = ROAD_LEFT + LANE_W;
+      ctx.beginPath(); ctx.moveTo(midX, 0); ctx.lineTo(midX, H); ctx.stroke();
+
+      // Road edges
+      ctx.beginPath(); ctx.moveTo(ROAD_LEFT, 0);  ctx.lineTo(ROAD_LEFT, H);  ctx.stroke();
       ctx.beginPath(); ctx.moveTo(ROAD_RIGHT, 0); ctx.lineTo(ROAD_RIGHT, H); ctx.stroke();
 
-      // Dashed lane dividers (scrolling)
+      // Lane labels (subtle)
+      ctx.font = 'bold 9px sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      ctx.textAlign = 'center';
+      ctx.fillText('YOU', PLAYER_LANE_X, H - 8);
+      ctx.fillText('AI', AI_LANE_X, H - 8);
+
+      // Scrolling dashes on road edges
       ctx.strokeStyle = '#FFD700';
       ctx.lineWidth = 2;
-      ctx.setLineDash([20, 20]);
+      ctx.setLineDash([18, 18]);
       ctx.lineDashOffset = -roadOffset;
-      for (let i = 1; i < 3; i++) {
-        const x = ROAD_LEFT + LANE_W * i;
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-      }
+      [ROAD_LEFT + LANE_W * 0.5, ROAD_LEFT + LANE_W * 1.5].forEach(x => {
+        // no inner dashes — only outer edge dashes for realism
+      });
       ctx.setLineDash([]);
 
-      // Roadside scenery — trees
-      const treeXs = [W * 0.05, W * 0.12, W * 0.88, W * 0.95];
+      // Trees
+      const treeXs = [W * 0.04, W * 0.11, W * 0.89, W * 0.96];
       treeXs.forEach((tx, i) => {
         const ty = ((frame * (i % 2 === 0 ? 1.2 : 0.9) + i * 80) % (H + 60)) - 30;
         ctx.fillStyle = '#2E7D32';
-        ctx.beginPath(); ctx.arc(tx, ty, 14, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(tx, ty, 13, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#4CAF50';
-        ctx.beginPath(); ctx.arc(tx - 2, ty - 3, 10, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(tx - 2, ty - 3, 9, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#5D4037';
-        ctx.fillRect(tx - 3, ty + 12, 6, 12);
+        ctx.fillRect(tx - 3, ty + 11, 6, 11);
       });
 
-      // Fuel cans
-      fuelCans.forEach(f => drawFuelCan(laneX(f.lane), f.y));
+      // Finish line approaches when either is >80%
+      const maxProg = Math.max(playerProgress, aiProgress);
+      if (maxProg > RACE_DIST * 0.8) {
+        const frac = (maxProg - RACE_DIST * 0.8) / (RACE_DIST * 0.2);
+        const finY = H * (1 - frac) - 24;
+        if (finY < H) drawFinishLine(finY);
+      }
 
-      // Traffic cars (oncoming = drawn before player)
-      traffic.forEach(t => drawCar(laneX(t.lane), t.y, t.color, false));
+      // Fuel cans (player lane)
+      fuelCans.forEach(f => drawFuelCan(PLAYER_LANE_X, f.y));
 
-      // Player car
-      drawCar(laneX(playerLane), playerY, '#FF6B35', true);
+      // Traffic
+      traffic.forEach(t => {
+        const cx = t.lane === 0 ? PLAYER_LANE_X : AI_LANE_X;
+        drawCar(cx, t.y, t.color, false);
+      });
 
-      // Fuel bar
-      const barW = 80, barH = 10, barX = W - barW - 8, barY = 8;
+      // AI car (purple)
+      drawCar(AI_LANE_X, CAR_Y, '#6A4C93', false);
+
+      // Player car (orange) — flash during crash
+      if (playerCrashTicks === 0 || frame % 2 === 0) {
+        drawCar(PLAYER_LANE_X, CAR_Y, '#FF6B35', true);
+      }
+
+      // Progress bar overlay
+      drawProgressBar();
+
+      // Fuel bar (bottom right)
+      const fbW = 60, fbH = 8, fbX = W - fbW - 6, fbY = H - 14;
       ctx.fillStyle = 'rgba(0,0,0,0.4)';
-      ctx.beginPath(); rrect(barX, barY, barW, barH, 4); ctx.fill();
+      ctx.beginPath(); rrect(fbX, fbY, fbW, fbH, 3); ctx.fill();
       ctx.fillStyle = fuel > 30 ? '#F7B801' : '#E74C3C';
-      ctx.beginPath(); rrect(barX, barY, barW * fuel / 100, barH, 4); ctx.fill();
-      ctx.fillStyle = '#fff';
-      ctx.font = '9px sans-serif';
-      ctx.textAlign = 'left';
-      ctx.fillText('⛽', barX - 14, barY + 9);
+      ctx.beginPath(); rrect(fbX, fbY, fbW * fuel / 100, fbH, 3); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = '8px sans-serif'; ctx.textAlign = 'left';
+      ctx.fillText('⛽', fbX - 12, fbY + 7);
+
+      // Winner banner
+      if (raceOver) {
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(0, H / 2 - 32, W, 64);
+        ctx.font = 'bold 22px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = winner === 'player' ? '#FF6B35' : '#6A4C93';
+        ctx.fillText(winner === 'player' ? '🏁 You Win!' : '🤖 AI Wins!', W / 2, H / 2 + 8);
+      }
     }
 
     // Visible debug overlay
     function showGameError(msg) {
       if (gameLoopId) clearInterval(gameLoopId);
-      ctx.fillStyle = '#555';
-      ctx.fillRect(0, 0, W, H);
-      ctx.fillStyle = '#E24B4A';
-      ctx.font = 'bold 13px sans-serif';
-      ctx.textAlign = 'center';
+      ctx.fillStyle = '#555'; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#E24B4A'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
       ctx.fillText('Game error:', W / 2, H / 2 - 16);
-      ctx.fillStyle = '#FAC775';
-      ctx.font = '11px sans-serif';
+      ctx.fillStyle = '#FAC775'; ctx.font = '11px sans-serif';
       const words = String(msg).split(' ');
       let line = '', y = H / 2 + 4;
       for (const w of words) {
         const test = line ? line + ' ' + w : w;
-        if (ctx.measureText(test).width > W - 20) {
-          ctx.fillText(line, W / 2, y); line = w; y += 16;
-        } else { line = test; }
+        if (ctx.measureText(test).width > W - 20) { ctx.fillText(line, W / 2, y); line = w; y += 16; }
+        else { line = test; }
       }
       if (line) ctx.fillText(line, W / 2, y);
       gameStatus.textContent = 'Error — see canvas';
@@ -929,22 +1017,14 @@
 
     function loop() {
       if (gameLoopId) clearInterval(gameLoopId);
-      // 100ms (~10fps) — less aggressively throttled by Safari than 50ms
       gameLoopId = setInterval(safeTick, 100);
     }
 
     function startGame() {
-      tickCount = 0;
-      lastTickTime = 0;
+      tickCount = 0; lastTickTime = 0;
       if (gameLoopId) clearInterval(gameLoopId);
       gameLoopId = null;
-      try {
-        resetGame();
-        draw();
-      } catch(e) {
-        showGameError('startGame: ' + e.message);
-        return;
-      }
+      try { resetGame(); draw(); } catch(e) { showGameError('startGame: ' + e.message); return; }
       canvas.focus();
       loop();
     }
@@ -953,16 +1033,12 @@
       if (!loading.hidden && stars) loop();
     }
 
-    // Restart loop when Safari restores a throttled/suspended tab
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') maybeRestartLoop();
     });
-    // pageshow fires on BFCache restore (back/forward navigation or app-switcher return)
     window.addEventListener('pageshow', maybeRestartLoop);
-    // focus fires when app returns from a popup/notification on iOS
     window.addEventListener('focus', maybeRestartLoop);
 
-    // Heartbeat watchdog: restart if no tick for 1.5s (catches brief OS interruptions)
     setInterval(() => {
       if (loading.hidden || !stars || !lastTickTime) return;
       if (Date.now() - lastTickTime > 1500) loop();
@@ -971,28 +1047,25 @@
     document.addEventListener('keydown', (e) => {
       if (loading.hidden) return;
       switch (e.key) {
-        case 'ArrowUp': case 'w': case 'W': dir = { x: 0, y: -1 }; e.preventDefault(); break;
-        case 'ArrowDown': case 's': case 'S': dir = { x: 0, y: 1 }; e.preventDefault(); break;
-        case 'ArrowLeft': case 'a': case 'A': dir = { x: -1, y: 0 }; e.preventDefault(); break;
-        case 'ArrowRight': case 'd': case 'D': dir = { x: 1, y: 0 }; e.preventDefault(); break;
+        case 'ArrowUp':    case 'w': case 'W': dir = { x: 0, y: -1 }; e.preventDefault(); break;
+        case 'ArrowDown':  case 's': case 'S': dir = { x: 0, y:  1 }; e.preventDefault(); break;
+        case 'ArrowLeft':  case 'a': case 'A': dir = { x: -1, y: 0 }; e.preventDefault(); break;
+        case 'ArrowRight': case 'd': case 'D': dir = { x:  1, y: 0 }; e.preventDefault(); break;
       }
     });
 
-    // Detect touch device — show d-pad and update hint
     const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
     if (isTouchDevice) {
       document.getElementById('dpad').style.display = 'flex';
-      document.getElementById('gameHint').firstChild.textContent = 'Tap ◀ ▶ to change lanes · ';
+      document.getElementById('gameHint').firstChild.textContent = 'Tap ▲ ▼ for speed · ';
     }
 
-    // Ensure game starts on first d-pad tap if somehow not already running
     function ensureGameRunning() {
       if (!gameLoopId && stars) loop();
     }
 
-    // D-pad — use pointerdown (works for touch + mouse, no duplicate events)
     document.querySelectorAll('.dpad-btn').forEach(btn => {
-      btn.addEventListener('contextmenu', (e) => e.preventDefault()); // suppress Safari long-press menu
+      btn.addEventListener('contextmenu', (e) => e.preventDefault());
       btn.addEventListener('pointerdown', (e) => {
         e.preventDefault();
         btn.setPointerCapture(e.pointerId);
@@ -1004,13 +1077,11 @@
       btn.addEventListener('pointercancel', () => btn.classList.remove('pressed'));
     });
 
-    // Swipe on canvas
     let swipeStartX = 0, swipeStartY = 0;
     canvas.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       canvas.setPointerCapture(e.pointerId);
-      swipeStartX = e.clientX;
-      swipeStartY = e.clientY;
+      swipeStartX = e.clientX; swipeStartY = e.clientY;
     });
     canvas.addEventListener('pointerup', (e) => {
       if (loading.hidden) return;
