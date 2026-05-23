@@ -161,8 +161,7 @@ RATE_LIMIT_ERROR = "rate_limit"
 _FLUX_BANNED_PROMPT_WORDS = {
     "text", "label", "labels", "labeled", "labelled",
     "caption", "callout", "callouts", "annotation", "annotated",
-    "text overlay", "written", "writing", "word", "words",
-    "letter", "letters", "number", "numbers", "says", "reads",
+    "text overlay", "number", "numbers", "says", "reads",
 }
 
 _FLUX_STYLE_SUFFIX = (
