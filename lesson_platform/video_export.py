@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -361,6 +362,7 @@ def export_lesson_video(
 
         # ── Phase 3: encode segments sequentially to cap peak RAM at one
         # ffmpeg process at a time (720p ffmpeg uses ~100MB working set)
+        iso_seg_time = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
         segment_paths = []
         for i in range(n):
             seg_path = os.path.join(tmpdir, f"seg_{i}.mp4")
@@ -368,13 +370,14 @@ def export_lesson_video(
                 "ffmpeg", "-y",
                 "-loop", "1", "-i", frame_paths[i],
                 "-i", audio_paths[i],
+                "-r", "30",
                 "-c:v", "libx264", "-preset", "ultrafast",
                 "-profile:v", "baseline", "-level", "4.0",
                 "-b:v", "2000k", "-minrate", "1000k", "-maxrate", "3000k", "-bufsize", "6000k",
-                "-c:a", "aac", "-b:a", "128k",
+                "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
                 "-pix_fmt", "yuv420p",
                 "-movflags", "+faststart",
-                "-metadata", "creation_time=now",
+                "-metadata", f"creation_time={iso_seg_time}",
                 "-t", str(durations[i]),
                 "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
                        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={pad_color},"
@@ -397,9 +400,18 @@ def export_lesson_video(
         out_fd, out_path = tempfile.mkstemp(suffix=".mp4", prefix="lilowl_export_")
         os.close(out_fd)
 
+        # iPhone Photos/YouTube reject direct upload unless the final file looks
+        # iOS-native: moov atom at the start (+faststart), mp42 brand, and an
+        # ISO-format creation_time. Segment-level faststart is lost during
+        # stream-copy concat, so we re-apply it here on the merged output.
+        iso_now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
         result = subprocess.run(
             ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_list,
-             "-c", "copy", out_path],
+             "-c", "copy",
+             "-movflags", "+faststart",
+             "-brand", "mp42",
+             "-metadata", f"creation_time={iso_now}",
+             out_path],
             capture_output=True,
         )
         if result.returncode != 0:
