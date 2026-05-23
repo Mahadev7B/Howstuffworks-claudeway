@@ -34,14 +34,17 @@ def _ffmpeg_available() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
-def _load_font(size: int):
+def _load_font(size: int, bold: bool = True):
     """Load a TrueType font or fall back to PIL default."""
     from PIL import ImageFont
+    # Inter Bold/SemiBold — same font as the web app, bundled in repo
+    _here = Path(__file__).parent.parent / "static" / "fonts"
     font_paths = [
-        # Noto Sans — modern rounded sans, available on Render/Ubuntu
+        str(_here / ("Inter-Bold.ttf" if bold else "Inter-Regular.ttf")),
+        str(_here / "Inter-SemiBold.ttf"),
+        # Fallbacks on server / other OS
         "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
         "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-        "/usr/share/fonts/noto/NotoSans-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
         "/System/Library/Fonts/Helvetica.ttc",
@@ -365,9 +368,13 @@ def export_lesson_video(
                 "ffmpeg", "-y",
                 "-loop", "1", "-i", frame_paths[i],
                 "-i", audio_paths[i],
-                "-c:v", "libx264", "-preset", "ultrafast", "-b:v", "2000k", "-minrate", "1000k", "-maxrate", "3000k", "-bufsize", "6000k",
+                "-c:v", "libx264", "-preset", "ultrafast",
+                "-profile:v", "baseline", "-level", "4.0",
+                "-b:v", "2000k", "-minrate", "1000k", "-maxrate", "3000k", "-bufsize", "6000k",
                 "-c:a", "aac", "-b:a", "128k",
                 "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
+                "-metadata", "creation_time=now",
                 "-t", str(durations[i]),
                 "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
                        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:color={pad_color},"
