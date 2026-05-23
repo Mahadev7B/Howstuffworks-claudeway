@@ -657,36 +657,34 @@
     const gameStatus = document.getElementById('gameStatus');
     const W = canvas.width, H = canvas.height;
 
-    // ── Pseudo-3D road parameters ─────────────────────────────────────────────
-    const CAM_DEPTH   = 0.84;   // camera depth (controls perspective strength)
-    const ROAD_W      = 2000;   // half-width of road in world units
-    const HORIZON     = H * 0.42;
-    const RACE_DIST   = 300;    // segments to finish line
-    const NUM_SEGS    = 150;    // segments drawn per frame
-    const SEG_LEN     = 200;    // world units per segment
+    // ── Road racer constants ──────────────────────────────────────────────────
+    const HORIZON    = Math.floor(H * 0.42);  // horizon scanline
+    const CAM_DEPTH  = 0.8;                   // focal length
+    const TRACK_LEN  = 1600;                  // total distance units
+    const ROAD_HALF  = 0.5;                   // road half-width in normalised coords
+    const NUM_ROWS   = H - HORIZON;           // scanlines to draw
 
     // ── Game state ────────────────────────────────────────────────────────────
-    let pos, speed, playerX, steer, frame, gameLoopId, tickCount, lastTickTime;
+    let pos, speed, playerX, frame, gameLoopId, tickCount, lastTickTime;
     let stars, raceOver, winner, shakeFrames;
-    let trafficCars, aiPos, aiSpeed;
+    let trafficCars, aiDist, aiSpeed;
     let dir = { x: 0, y: 0 };
     let keysDown = {};
 
-    const PLAYER_MAX_SPEED = 8;
-    const AI_MAX_SPEED     = 6.5;
+    const MAX_SPEED = 12;
+    const AI_TOP    = 9;
 
     function resetGame() {
       pos         = 0;
       speed       = 0;
-      playerX     = 0;       // -1 (left edge) to +1 (right edge)
-      steer       = 0;
+      playerX     = 0;
       frame       = 0;
       shakeFrames = 0;
       raceOver    = false;
       winner      = null;
       stars       = true;
-      aiPos       = -20;     // AI starts behind player
-      aiSpeed     = 3;
+      aiDist      = -30;
+      aiSpeed     = 4;
       trafficCars = [];
       dir         = { x: 0, y: 0 };
       keysDown    = {};
@@ -694,167 +692,171 @@
     }
 
     function updateStatus() {
-      const pct = Math.max(0, Math.min(100, Math.round(pos / (RACE_DIST * SEG_LEN) * 100)));
-      gameStatus.textContent = 'Speed: ' + Math.round(speed * 18) + '  Dist: ' + pct + '%';
+      const pct = Math.max(0, Math.min(100, Math.round(pos / TRACK_LEN * 100)));
+      gameStatus.textContent = 'Speed: ' + Math.round(speed * 10) + '  Dist: ' + pct + '%';
     }
 
-    // ── Perspective projection ────────────────────────────────────────────────
-    function project(worldX, worldY, worldZ, camX, camZ) {
-      const scale = CAM_DEPTH / (worldZ - camZ);
-      const sx = (W / 2) + scale * (worldX - camX) * W / 2;
-      const sy = (HORIZON) + scale * worldY * H;
-      const sw = scale * ROAD_W * W / 2;
-      return { x: sx, y: sy, w: sw, scale };
+    // ── Project a world point onto the screen ─────────────────────────────────
+    // Uses scanline-based depth: each screen row y maps to a depth z.
+    // depth(y) = CAM_DEPTH / (y - HORIZON) * NUM_ROWS
+    function rowToScale(row) {
+      // row 0 = horizon, row NUM_ROWS-1 = bottom of screen
+      return CAM_DEPTH / (row + 1);
     }
 
-    // ── Road segment coloring ─────────────────────────────────────────────────
-    function segColors(idx) {
-      const alt = Math.floor(idx / 4) % 2 === 0;
-      return {
-        grass:  alt ? '#5aaa32' : '#4e9a28',
-        road:   alt ? '#6b6b6b' : '#606060',
-        rumble: alt ? '#ffffff' : '#cc0000',
-        lane:   '#ffffffcc',
-      };
+    // Given a depth scale, map world x offset to screen x
+    function worldToScreen(worldX, scale, camX) {
+      return W / 2 + (worldX - camX) * scale * W;
     }
 
-    // ── Draw one road strip between two projected points ──────────────────────
-    function drawSegment(p1, p2, colors) {
-      // Grass (full width background strip)
-      ctx.fillStyle = colors.grass;
-      ctx.fillRect(0, p2.y, W, p1.y - p2.y);
+    // ── Draw the road scanline by scanline ────────────────────────────────────
+    function drawRoad() {
+      const camX = playerX * ROAD_HALF;
+      const shiftX = shakeFrames > 0 ? (Math.random() - 0.5) * 5 : 0;
 
-      // Road body
-      ctx.fillStyle = colors.road;
-      ctx.beginPath();
-      ctx.moveTo(p1.x - p1.w, p1.y);
-      ctx.lineTo(p1.x + p1.w, p1.y);
-      ctx.lineTo(p2.x + p2.w, p2.y);
-      ctx.lineTo(p2.x - p2.w, p2.y);
-      ctx.fill();
+      for (let row = 0; row < NUM_ROWS; row++) {
+        const y = HORIZON + row;
+        const scale = rowToScale(row);
+        // How far ahead this scanline represents
+        const z = pos + CAM_DEPTH / (row + 1) * TRACK_LEN * 0.4;
+        const alt = Math.floor(z / 80) % 2;
 
-      // Rumble strips (outer edges)
-      const rw = p1.w * 0.12;
-      ctx.fillStyle = colors.rumble;
-      ctx.beginPath();
-      ctx.moveTo(p1.x - p1.w, p1.y); ctx.lineTo(p1.x - p1.w + rw, p1.y);
-      ctx.lineTo(p2.x - p2.w + rw, p2.y); ctx.lineTo(p2.x - p2.w, p2.y);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(p1.x + p1.w, p1.y); ctx.lineTo(p1.x + p1.w - rw, p1.y);
-      ctx.lineTo(p2.x + p2.w - rw, p2.y); ctx.lineTo(p2.x + p2.w, p2.y);
-      ctx.fill();
+        const roadL = worldToScreen(-ROAD_HALF, scale, camX) + shiftX;
+        const roadR = worldToScreen( ROAD_HALF, scale, camX) + shiftX;
+        const roadW = roadR - roadL;
+        const rumble = roadW * 0.08;
 
-      // Lane dividers (dashed — every other band)
-      if (Math.floor(frame / 3 + p1.segIdx) % 2 === 0) {
-        const lw = p1.w * 0.02;
-        ctx.fillStyle = colors.lane;
-        [-0.33, 0.33].forEach(lx => {
-          ctx.beginPath();
-          ctx.moveTo(p1.x + p1.w * lx - lw, p1.y); ctx.lineTo(p1.x + p1.w * lx + lw, p1.y);
-          ctx.lineTo(p2.x + p2.w * lx + lw, p2.y); ctx.lineTo(p2.x + p2.w * lx - lw, p2.y);
-          ctx.fill();
-        });
+        // Grass
+        ctx.fillStyle = alt ? '#5cb85c' : '#4cae4c';
+        ctx.fillRect(0, y, W, 1);
+
+        // Road
+        ctx.fillStyle = alt ? '#707070' : '#606060';
+        ctx.fillRect(roadL, y, roadW, 1);
+
+        // Rumble strips
+        ctx.fillStyle = alt ? '#fff' : '#c00';
+        ctx.fillRect(roadL, y, rumble, 1);
+        ctx.fillRect(roadR - rumble, y, rumble, 1);
+
+        // Lane dash (centre)
+        if (alt && row > 10) {
+          ctx.fillStyle = 'rgba(255,255,255,0.7)';
+          ctx.fillRect(W / 2 + shiftX - 1, y, 2, 1);
+        }
       }
     }
 
-    // ── Draw a car at a world position ────────────────────────────────────────
-    function drawWorldCar(proj, color, isPlayer) {
-      if (!proj || proj.scale <= 0) return;
-      const cw = proj.w * 0.55;
-      const ch = cw * 0.6;
-      const cx = proj.x, cy = proj.y;
-      if (cy < HORIZON || cy > H + ch) return;
-
+    // ── Draw a car sprite at screen coords ────────────────────────────────────
+    function drawCar(cx, cy, cw, color, isPlayer) {
+      if (cw < 3) return;
+      const ch = cw * 0.52;
       ctx.save();
       // Shadow
-      ctx.fillStyle = 'rgba(0,0,0,0.3)';
-      ctx.beginPath(); ctx.ellipse(cx, cy + ch * 0.1, cw * 0.4, ch * 0.12, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.beginPath(); ctx.ellipse(cx, cy + 3, cw * 0.38, 4, 0, 0, Math.PI * 2); ctx.fill();
       // Body
       ctx.fillStyle = color;
-      ctx.beginPath(); ctx.roundRect(cx - cw / 2, cy - ch, cw, ch, cw * 0.12); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(cx - cw / 2, cy - ch, cw, ch, cw * 0.1); ctx.fill();
       // Roof
-      ctx.fillStyle = isPlayer ? '#FFF8F0' : 'rgba(255,255,255,0.6)';
-      ctx.beginPath(); ctx.roundRect(cx - cw * 0.32, cy - ch * 0.95, cw * 0.64, ch * 0.5, cw * 0.08); ctx.fill();
+      ctx.fillStyle = isPlayer ? '#FFF8F0' : 'rgba(255,255,255,0.65)';
+      ctx.beginPath(); ctx.roundRect(cx - cw * 0.3, cy - ch * 0.92, cw * 0.6, ch * 0.46, cw * 0.07); ctx.fill();
       // Windshield
-      ctx.fillStyle = 'rgba(80,120,200,0.5)';
-      ctx.beginPath(); ctx.roundRect(cx - cw * 0.28, cy - ch * 0.93, cw * 0.56, ch * 0.28, cw * 0.05); ctx.fill();
+      ctx.fillStyle = 'rgba(100,150,220,0.55)';
+      ctx.beginPath(); ctx.roundRect(cx - cw * 0.26, cy - ch * 0.9, cw * 0.52, ch * 0.25, cw * 0.04); ctx.fill();
       // Wheels
-      ctx.fillStyle = '#1a1a1a';
-      [[-0.42, -0.55], [0.42, -0.55], [-0.42, -0.05], [0.42, -0.05]].forEach(([wx, wy]) => {
-        ctx.beginPath(); ctx.ellipse(cx + cw * wx, cy + ch * wy, cw * 0.11, ch * 0.14, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#111';
+      [[-0.4, -0.62], [0.4, -0.62], [-0.4, -0.08], [0.4, -0.08]].forEach(([wx, wy]) => {
+        ctx.beginPath(); ctx.ellipse(cx + cw * wx, cy + ch * wy, cw * 0.1, ch * 0.13, 0, 0, Math.PI * 2); ctx.fill();
       });
-      // Headlights
+      // Lights
       ctx.fillStyle = isPlayer ? '#FF6B35' : '#FFE066';
-      [[-0.3, -1.02], [0.3, -1.02]].forEach(([lx, ly]) => {
-        ctx.beginPath(); ctx.ellipse(cx + cw * lx, cy + ch * ly, cw * 0.08, ch * 0.055, 0, 0, Math.PI * 2); ctx.fill();
+      [[-0.28, isPlayer ? -1.04 : 0.04], [0.28, isPlayer ? -1.04 : 0.04]].forEach(([lx, ly]) => {
+        ctx.beginPath(); ctx.ellipse(cx + cw * lx, cy + ch * ly, cw * 0.07, ch * 0.05, 0, 0, Math.PI * 2); ctx.fill();
       });
       ctx.restore();
     }
 
-    // ── Spawn traffic ─────────────────────────────────────────────────────────
-    function spawnTraffic() {
-      const colors = ['#E74C3C', '#3498DB', '#2ECC71', '#E67E22', '#1ABC9C'];
-      trafficCars.push({
-        pos: pos + RACE_DIST * SEG_LEN * (0.1 + Math.random() * 0.8),
-        x: (Math.random() - 0.5) * 1.2,
-        color: colors[Math.floor(Math.random() * colors.length)],
-        speed: 1 + Math.random() * 2,
+    // ── Place traffic and AI cars using depth scale ───────────────────────────
+    function drawWorldCars() {
+      const camX = playerX * ROAD_HALF;
+      const allCars = [
+        ...trafficCars.map(t => ({ dist: t.dist, x: t.x, color: t.color, isAI: false })),
+        { dist: aiDist, x: 0.18, color: '#6A4C93', isAI: true },
+      ];
+      // Sort far to near so nearer cars draw on top
+      allCars.sort((a, b) => b.dist - a.dist);
+
+      allCars.forEach(car => {
+        const relDist = car.dist - pos;
+        if (relDist <= 0 || relDist > TRACK_LEN * 0.6) return;
+        // Map relative distance to a row
+        const row = Math.floor(CAM_DEPTH / (relDist / (TRACK_LEN * 0.4)) * NUM_ROWS - 1);
+        if (row < 0 || row >= NUM_ROWS) return;
+        const scale = rowToScale(row);
+        const cx = worldToScreen(car.x * ROAD_HALF, scale, camX);
+        const cy = HORIZON + row;
+        const cw = scale * W * 0.22;
+        drawCar(cx, cy, cw, car.color, false);
       });
     }
 
-    // ── Main tick ─────────────────────────────────────────────────────────────
+    // ── Player car (fixed bottom centre) ─────────────────────────────────────
+    function drawPlayerCar() {
+      drawCar(W / 2, H - 8, 52, '#FF6B35', true);
+    }
+
+    // ── Tick ─────────────────────────────────────────────────────────────────
     function tick() {
       if (!stars || raceOver) return;
       frame++;
 
-      // Acceleration / braking
-      const accel = keysDown['ArrowUp']    || keysDown['w'] || dir.y === -1;
-      const brake = keysDown['ArrowDown']  || keysDown['s'] || dir.y ===  1;
-      if (accel) speed = Math.min(PLAYER_MAX_SPEED, speed + 0.4);
-      else       speed = Math.max(0, speed - 0.25);
-      if (brake) speed = Math.max(0, speed - 0.6);
-
-      // Steering
+      const accel   = keysDown['ArrowUp']    || keysDown['w'] || dir.y === -1;
+      const brake   = keysDown['ArrowDown']  || keysDown['s'] || dir.y ===  1;
       const goLeft  = keysDown['ArrowLeft']  || keysDown['a'] || dir.x === -1;
       const goRight = keysDown['ArrowRight'] || keysDown['d'] || dir.x ===  1;
-      steer = goLeft ? -1 : goRight ? 1 : 0;
-      playerX = Math.max(-0.9, Math.min(0.9, playerX + steer * 0.06 * (speed / PLAYER_MAX_SPEED + 0.3)));
       dir = { x: 0, y: 0 };
 
-      // Advance position
-      pos += speed * SEG_LEN * 0.01;
+      if (accel) speed = Math.min(MAX_SPEED, speed + 0.5);
+      else       speed = Math.max(0, speed - 0.3);
+      if (brake) speed = Math.max(0, speed - 0.7);
 
-      // AI
-      aiSpeed = Math.min(AI_MAX_SPEED, aiSpeed + 0.02);
-      aiPos += aiSpeed * SEG_LEN * 0.01;
+      const steer = goLeft ? -1 : goRight ? 1 : 0;
+      playerX = Math.max(-0.85, Math.min(0.85, playerX + steer * 0.05 * (speed / MAX_SPEED + 0.2)));
 
-      // Traffic
-      if (frame % 40 === 0 && trafficCars.length < 6) spawnTraffic();
-      trafficCars = trafficCars.filter(t => t.pos > pos - SEG_LEN * 5);
+      pos    += speed;
+      aiDist += aiSpeed;
+      aiSpeed = Math.min(AI_TOP, aiSpeed + 0.015);
 
-      // Collision with traffic
+      // Spawn traffic ahead
+      if (frame % 35 === 0 && trafficCars.length < 5) {
+        const colors = ['#E74C3C', '#3498DB', '#2ECC71', '#E67E22', '#1ABC9C'];
+        trafficCars.push({
+          dist:  pos + 200 + Math.random() * 400,
+          x:     (Math.random() - 0.5) * 1.4,
+          color: colors[Math.floor(Math.random() * colors.length)],
+        });
+      }
+      trafficCars = trafficCars.filter(t => t.dist > pos - 20);
+
+      // Collision — traffic car very close ahead and same x
       if (shakeFrames === 0) {
         for (const t of trafficCars) {
-          const dz = (t.pos - pos) / SEG_LEN;
-          if (dz > 0 && dz < 1.5 && Math.abs(t.x - playerX) < 0.3) {
-            speed = Math.max(0, speed - 3);
-            shakeFrames = 8;
+          const dz = t.dist - pos;
+          if (dz > 0 && dz < 60 && Math.abs(t.x * ROAD_HALF - playerX * ROAD_HALF) < 0.18) {
+            speed = Math.max(0, speed - 5);
+            shakeFrames = 10;
             break;
           }
         }
-      } else {
-        shakeFrames--;
-      }
+      } else shakeFrames--;
 
-      // Off-road penalty
-      if (Math.abs(playerX) > 0.85) speed = Math.max(0, speed - 0.3);
+      // Off road slow
+      if (Math.abs(playerX) > 0.8) speed = Math.max(0, speed - 0.4);
 
-      // Finish
-      const finishZ = RACE_DIST * SEG_LEN;
-      if (pos >= finishZ || aiPos >= finishZ) {
+      if (pos >= TRACK_LEN || aiDist >= TRACK_LEN) {
         raceOver = true;
-        winner = pos >= aiPos ? 'player' : 'ai';
+        winner = pos >= aiDist ? 'player' : 'ai';
         draw();
         setTimeout(() => resetGame(), 3000);
         return;
@@ -864,103 +866,48 @@
       draw();
     }
 
-    // ── Draw frame ────────────────────────────────────────────────────────────
+    // ── Draw ─────────────────────────────────────────────────────────────────
     function draw() {
-      // Sky gradient
+      // Sky
       const sky = ctx.createLinearGradient(0, 0, 0, HORIZON);
-      sky.addColorStop(0, '#87CEEB');
-      sky.addColorStop(1, '#c9e8f7');
+      sky.addColorStop(0, '#5ba3d9');
+      sky.addColorStop(1, '#b8dff5');
       ctx.fillStyle = sky;
       ctx.fillRect(0, 0, W, HORIZON);
 
-      // Screen shake on crash
-      const shakeX = shakeFrames > 0 ? (Math.random() - 0.5) * 6 : 0;
-      ctx.save();
-      ctx.translate(shakeX, 0);
-
-      const camX = playerX * ROAD_W * 0.5;
-      const camZ  = pos;
-
-      // Draw road segments back-to-front
-      const projCache = [];
-      for (let n = 0; n <= NUM_SEGS; n++) {
-        const segZ = camZ + n * SEG_LEN;
-        const segIdx = Math.floor(segZ / SEG_LEN);
-        const p = project(0, 0, segZ, camX, camZ);
-        p.segIdx = segIdx;
-        projCache.push(p);
-      }
-
-      for (let n = NUM_SEGS - 1; n >= 0; n--) {
-        const p1 = projCache[n], p2 = projCache[n + 1];
-        if (p1.y < HORIZON) continue;
-        drawSegment(p1, p2, segColors(Math.floor((camZ + n * SEG_LEN) / SEG_LEN)));
-      }
-
-      // Finish line
-      const finishWorldZ = RACE_DIST * SEG_LEN;
-      if (finishWorldZ > camZ && finishWorldZ < camZ + NUM_SEGS * SEG_LEN) {
-        const fp = project(0, 0, finishWorldZ, camX, camZ);
-        const fp2 = project(0, 0, finishWorldZ + SEG_LEN, camX, camZ);
-        if (fp.y >= HORIZON) {
-          const sq = Math.max(4, fp.w * 0.12);
-          const cols = Math.ceil(fp.w * 2 / sq);
-          for (let c = 0; c < cols; c++) {
-            for (let r = 0; r < 2; r++) {
-              ctx.fillStyle = (c + r) % 2 === 0 ? '#fff' : '#000';
-              ctx.fillRect(fp.x - fp.w + c * sq, fp2.y + r * sq, sq, sq);
-            }
-          }
-        }
-      }
-
-      // Draw traffic cars in world
-      const toDrawCars = trafficCars
-        .filter(t => t.pos > pos && t.pos < pos + NUM_SEGS * SEG_LEN)
-        .sort((a, b) => b.pos - a.pos);
-
-      toDrawCars.forEach(t => {
-        const p = project(t.x * ROAD_W * 0.5, 0, t.pos, camX, camZ);
-        drawWorldCar(p, t.color, false);
+      // Clouds (static decorative)
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      [[60,18,28,10],[180,12,22,8],[300,22,30,11]].forEach(([cx,cy,rw,rh]) => {
+        ctx.beginPath(); ctx.ellipse(cx, cy, rw, rh, 0, 0, Math.PI*2); ctx.fill();
       });
 
-      // AI rival car
-      if (aiPos > pos && aiPos < pos + NUM_SEGS * SEG_LEN) {
-        const ap = project(0.2 * ROAD_W * 0.5, 0, aiPos, camX, camZ);
-        drawWorldCar(ap, '#6A4C93', false);
-      }
+      drawRoad();
+      drawWorldCars();
+      drawPlayerCar();
 
-      // Player car (fixed at bottom centre)
-      const playerProj = { x: W / 2, y: H - 10, w: 60, scale: 1 };
-      drawWorldCar(playerProj, '#FF6B35', true);
-
-      ctx.restore();
-
-      // HUD — progress bar
-      const prog = Math.min(1, pos / (RACE_DIST * SEG_LEN));
-      const aiProg = Math.min(1, aiPos / (RACE_DIST * SEG_LEN));
-      const BH = 10, BY = 4, BX = 30, BW = W - 60;
+      // HUD
+      const prog   = Math.min(1, pos / TRACK_LEN);
+      const aiProg = Math.min(1, aiDist / TRACK_LEN);
+      const BH = 10, BY = 4, BX = 28, BW = W - 56;
       ctx.fillStyle = 'rgba(0,0,0,0.4)';
       ctx.beginPath(); ctx.roundRect(BX, BY, BW, BH, 4); ctx.fill();
       ctx.fillStyle = '#FF6B35';
-      ctx.beginPath(); ctx.roundRect(BX, BY, Math.max(8, BW * prog), BH, 4); ctx.fill();
-      // AI dot
+      ctx.beginPath(); ctx.roundRect(BX, BY, Math.max(6, BW * prog), BH, 4); ctx.fill();
       ctx.fillStyle = '#6A4C93';
       ctx.beginPath(); ctx.arc(BX + BW * aiProg, BY + BH / 2, 5, 0, Math.PI * 2); ctx.fill();
       ctx.font = '11px sans-serif'; ctx.textAlign = 'left';
-      ctx.fillText('🏁', BX + BW + 4, BY + 9);
-      // Speed indicator
-      ctx.fillStyle = 'rgba(0,0,0,0.45)';
-      ctx.beginPath(); ctx.roundRect(4, BY, 24, BH, 3); ctx.fill();
-      ctx.fillStyle = '#FF6B35';
-      ctx.beginPath(); ctx.roundRect(4, BY, 24 * (speed / PLAYER_MAX_SPEED), BH, 3); ctx.fill();
+      ctx.fillText('🏁', BX + BW + 3, BY + 9);
+      // Speed bar
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.beginPath(); ctx.roundRect(4, BY, 22, BH, 3); ctx.fill();
+      ctx.fillStyle = speed > MAX_SPEED * 0.7 ? '#2ECC71' : '#FF6B35';
+      ctx.beginPath(); ctx.roundRect(4, BY, 22 * speed / MAX_SPEED, BH, 3); ctx.fill();
 
-      // Winner banner
+      // Winner
       if (raceOver) {
-        ctx.fillStyle = 'rgba(0,0,0,0.6)';
-        ctx.fillRect(0, H / 2 - 30, W, 60);
-        ctx.font = 'bold 24px sans-serif';
-        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(0, H / 2 - 28, W, 56);
+        ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center';
         ctx.fillStyle = winner === 'player' ? '#FF6B35' : '#6A4C93';
         ctx.fillText(winner === 'player' ? '🏁 You Win!' : '🤖 AI Wins!', W / 2, H / 2 + 8);
       }
