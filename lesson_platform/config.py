@@ -28,7 +28,7 @@ class Settings:
 def load_settings() -> Settings:
     return Settings(
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
-        anthropic_model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
+        anthropic_model=os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
         openai_tts_model=os.getenv("OPENAI_TTS_MODEL", "tts-1"),
         openai_tts_voice=os.getenv("OPENAI_TTS_VOICE", "nova"),
@@ -39,7 +39,7 @@ def load_settings() -> Settings:
         per_ip_hourly_limit=int(os.getenv("PER_IP_HOURLY_LIMIT", "20")),
         image_provider=os.getenv("IMAGE_PROVIDER", "matplotlib").lower(),
         fal_api_key=os.getenv("FAL_KEY", "") or os.getenv("FAL_API_KEY", ""),
-        flux_model=os.getenv("FLUX_MODEL", "fal-ai/flux/dev"),
+        flux_model=os.getenv("FLUX_MODEL", "fal-ai/flux/schnell"),
         flux_image_size=os.getenv("FLUX_IMAGE_SIZE", "landscape_16_9"),
         lesson_cache_ttl_days=int(os.getenv("LESSON_CACHE_TTL_DAYS", "30")),
     )

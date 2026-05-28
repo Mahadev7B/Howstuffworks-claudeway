@@ -389,8 +389,15 @@ def generate_lesson(question: str, settings: Settings) -> dict[str, Any]:
         lesson = _validate_lesson(tool_block.input)
 
     elapsed_ms = int((time.time() - started) * 1000)
-    # Sonnet 4.6 pricing: $3 per 1M input, $15 per 1M output
-    cost_usd = (input_tokens * 3 + output_tokens * 15) / 1_000_000
+    # Pricing per 1M tokens by model family
+    _PRICING = {
+        "claude-haiku":  (0.80, 4.00),
+        "claude-sonnet": (3.00, 15.00),
+        "claude-opus":   (15.00, 75.00),
+    }
+    model_key = next((k for k in _PRICING if k in settings.anthropic_model), "claude-sonnet")
+    in_price, out_price = _PRICING[model_key]
+    cost_usd = (input_tokens * in_price + output_tokens * out_price) / 1_000_000
 
     lesson["meta"] = {
         "generation_time_ms": elapsed_ms,
