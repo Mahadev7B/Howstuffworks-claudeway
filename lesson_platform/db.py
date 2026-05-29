@@ -507,14 +507,7 @@ def delete_cached_lesson(question: str) -> None:
 
 
 def _do_save_cached_lesson(qhash: str, question: str, lesson: dict[str, Any]) -> None:
-    # Strip images — auto-heal regenerates them from Flux on cache hit.
-    lesson_slim = {
-        **lesson,
-        "slides": [
-            {k: v for k, v in s.items() if k != "image_data_url"}
-            for s in lesson.get("slides", [])
-        ],
-    }
+    lesson_slim = lesson
     conn = _direct_connect()
     if conn is None:
         return
@@ -560,13 +553,6 @@ def create_share_link(question: str, slug: str, lesson: dict[str, Any] | None = 
     try:
         with conn, conn.cursor() as cur:
             if lesson is not None:
-                lesson_slim = {
-                    **lesson,
-                    "slides": [
-                        {k: v for k, v in s.items() if k != "image_data_url"}
-                        for s in lesson.get("slides", [])
-                    ],
-                }
                 cur.execute(
                     """
                     INSERT INTO cached_lessons (question_hash, question, lesson, share_slug, pinned)
@@ -574,7 +560,7 @@ def create_share_link(question: str, slug: str, lesson: dict[str, Any] | None = 
                     ON CONFLICT (question_hash) DO UPDATE
                       SET share_slug = EXCLUDED.share_slug, pinned = true
                     """,
-                    (qhash, question[:500], Jsonb(lesson_slim), slug),
+                    (qhash, question[:500], Jsonb(lesson), slug),
                 )
             else:
                 cur.execute(
