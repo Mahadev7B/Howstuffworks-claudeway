@@ -1,6 +1,11 @@
 /* HowStuffWorks — Claudeway
    Warm, approachable design for curious kids and their parents. */
 
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); box-shadow: 0 0 0 6px rgba(255,107,53,0.25); }
+}
+
 :root {
   --bg: #FDF8F3;
   --surface: #FFFFFF;

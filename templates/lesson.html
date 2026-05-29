@@ -570,7 +570,8 @@
               // Autoplay blocked — don't fall back to browser voice.
               // The ▶ Play button is already visible; prompt the user to tap it.
               setAuto(false);
-              statusEl.textContent = 'Tap ▶ Play to hear the lesson.';
+              statusEl.textContent = '👆 Tap ▶ Play to hear the lesson!';
+              autoBtn.style.animation = 'pulse 1s ease-in-out 3';
             });
           } else {
             // No prefetched audio (TTS failed) — try async Nova path anyway.
