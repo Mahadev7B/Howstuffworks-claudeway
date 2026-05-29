@@ -206,6 +206,25 @@ def _sanitize_flux_prompt(prompt: str, slide_title: str, subject: str) -> str:
     return prompt
 
 
+def _compress_image(img_bytes: bytes) -> tuple[bytes, str]:
+    """Resize to max 800px wide and re-encode as JPEG quality 75.
+
+    Reduces Flux output from ~200KB to ~40-60KB before base64 storage,
+    cutting per-lesson DB size from ~800KB to ~200KB.
+    """
+    from PIL import Image
+    import io
+    img = Image.open(io.BytesIO(img_bytes))
+    if img.width > 800:
+        ratio = 800 / img.width
+        img = img.resize((800, int(img.height * ratio)), Image.LANCZOS)
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=75, optimize=True)
+    return buf.getvalue(), "image/jpeg"
+
+
 def _render_with_flux(slide: dict, ctx: dict) -> bool:
     """Generate image via Flux Schnell. Returns True on success. Records api_call."""
     prompt = (slide.get("image_prompt") or "").strip()
@@ -234,6 +253,7 @@ def _render_with_flux(slide: dict, ctx: dict) -> bool:
         )
         return False
     duration_ms = int((time.time() - started) * 1000)
+    img_bytes, mime = _compress_image(img_bytes)
     b64 = base64.b64encode(img_bytes).decode("ascii")
     slide["image_data_url"] = f"data:{mime};base64,{b64}"
     slide["image_bytes"] = len(img_bytes)
@@ -310,6 +330,7 @@ def _attach_slide_images(lesson: dict, ctx: dict | None = None) -> None:
                 duration_ms = int((time.time() - started_batch) * 1000)
                 total_cost = sum(c for _, _, c in batch_results)
                 for (_, slide, _), (img_bytes, mime, cost) in zip(flux_slides, batch_results):
+                    img_bytes, mime = _compress_image(img_bytes)
                     b64 = base64.b64encode(img_bytes).decode("ascii")
                     slide["image_data_url"] = f"data:{mime};base64,{b64}"
                     slide["image_bytes"] = len(img_bytes)
