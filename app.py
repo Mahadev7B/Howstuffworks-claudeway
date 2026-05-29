@@ -221,8 +221,8 @@ def _compress_image(img_bytes: bytes) -> tuple[bytes, str]:
     if img.mode in ("RGBA", "P"):
         img = img.convert("RGB")
     buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=75, optimize=True)
-    return buf.getvalue(), "image/jpeg"
+    img.save(buf, format="WEBP", quality=75)
+    return buf.getvalue(), "image/webp"
 
 
 def _render_with_flux(slide: dict, ctx: dict) -> bool:
