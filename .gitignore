@@ -8,6 +8,7 @@ media_store/
 .DS_Store
 .vscode/
 .idea/
-.claude/
+.claude/*
+!.claude/agents/
 preview_*.png
 preview_*.gif
