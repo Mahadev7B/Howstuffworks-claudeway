@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+import copy
 import hashlib
 import re
 from dataclasses import dataclass
@@ -29,6 +30,14 @@ def publication_audio_text(slide: dict) -> str:
     narration = slide["narration"].strip()
     fun_fact = slide.get("fun_fact", "").strip()
     return f"{narration} Fun fact: {fun_fact}" if fun_fact else narration
+
+
+def with_publication_scripts(lesson: dict) -> dict:
+    """Return a display snapshot whose script is exactly the saved TTS input."""
+    result = copy.deepcopy(lesson)
+    for slide in result.get("slides", []):
+        slide["publication_script"] = publication_audio_text(slide)
+    return result
 
 
 def _decode_raster(data_url: str) -> Image.Image:
@@ -81,7 +90,8 @@ def prepare_publication(lesson: dict, cover_slide_index: int = 0,
     output = BytesIO()
     cover_image = _decode_raster(cover_data_url) if cover_data_url is not None else first_image
     ImageOps.fit(cover_image, (480, 300), method=Image.Resampling.LANCZOS).save(output, "WEBP", quality=84)
-    return PreparedPublication(lesson=lesson, thumbnail=output.getvalue(), thumbnail_mime="image/webp")
+    return PreparedPublication(lesson=with_publication_scripts(lesson),
+                               thumbnail=output.getvalue(), thumbnail_mime="image/webp")
 
 
 def _connect():

@@ -567,7 +567,7 @@ def explore_lesson(slug: str):
     publication = library.get_published_lesson(slug)
     if publication is None:
         abort(404)
-    return render_template("share.html", lesson=publication["lesson"],
+    return render_template("share.html", lesson=library.with_publication_scripts(publication["lesson"]),
                            question=publication["summary"], slug=slug,
                            published=True, publication=publication,
                            canonical_url="https://www.asklilowl.com/explore/" + slug)
@@ -1219,7 +1219,7 @@ def admin_publication_preview(slug: str):
                 v=metadata.get(index, {}).get("source_text_hash", "missing"))
         for index in range(len(publication["lesson"].get("slides", [])))
     ]
-    return render_template("share.html", lesson=publication["lesson"],
+    return render_template("share.html", lesson=library.with_publication_scripts(publication["lesson"]),
                            question=publication["summary"], slug=slug,
                            published=True, publication=publication,
                            editorial_preview=True, audio_urls=audio_urls)

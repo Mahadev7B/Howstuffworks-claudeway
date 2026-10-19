@@ -105,11 +105,14 @@
             {% endif %}
           </div>
 
+          {% if published %}
+          <p class="explanation publication-script">{{ slide.publication_script }}</p>
+          {% else %}
           <p class="explanation">{{ slide.explanation }}</p>
-
           <div class="fun-fact">
             <strong>Fun fact:</strong> {{ slide.fun_fact }}
           </div>
+          {% endif %}
         </article>
       {% endfor %}
     </div>

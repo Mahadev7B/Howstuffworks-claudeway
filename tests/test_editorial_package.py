@@ -7,7 +7,7 @@ import pytest
 from PIL import Image
 
 from lesson_platform.editorial_package import load_editorial_batch
-from lesson_platform.library import prepare_publication
+from lesson_platform.library import prepare_publication, publication_audio_text
 
 
 def _batch(tmp_path):
@@ -70,3 +70,13 @@ def test_first_six_batch_uses_reviewed_assets_and_copy():
     rocket_copy = lessons["how-do-rockets-fly"]["slides"]
     assert "coast" in rocket_copy[0]["narration"]
     assert "Rockets like these carry both fuel and an oxidizer" in rocket_copy[2]["narration"]
+
+    displayed_scripts = []
+    spoken_scripts = []
+    for entry in entries:
+        prepared = prepare_publication(entry["lesson"], cover_data_url=entry["cover_data_url"])
+        for slide in prepared.lesson["slides"]:
+            displayed_scripts.append(slide["publication_script"])
+            spoken_scripts.append(publication_audio_text(slide))
+    assert len(displayed_scripts) == 24
+    assert displayed_scripts == spoken_scripts

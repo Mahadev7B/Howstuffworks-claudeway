@@ -85,6 +85,8 @@ def test_existing_share_player_keeps_its_voice_path(site):
                                "fun_fact": "Sky colors change."}]})
     assert "/api/tts" in html
     assert "Someone shared this lesson" in html
+    assert "Air scatters it." in html
+    assert "Sky colors change." in html
 
 
 @pytest.mark.parametrize("url", ["/explore/hidden", "/explore/hidden/thumbnail.webp",

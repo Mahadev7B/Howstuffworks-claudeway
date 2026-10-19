@@ -42,6 +42,17 @@ def test_prepare_publication_produces_webp_card():
     assert prepared.lesson["slides"][0]["narration"] == "Sunlight contains many colors."
 
 
+def test_canonical_publication_script_is_identical_for_display_and_tts():
+    lesson = library.with_publication_scripts(_lesson())
+
+    assert [slide["publication_script"] for slide in lesson["slides"]] == [
+        "Sunlight contains many colors. Fun fact: Light is fast.",
+        "Air scatters blue light. Fun fact: The sky changes.",
+    ]
+    assert all(slide["publication_script"] == library.publication_audio_text(slide)
+               for slide in lesson["slides"])
+
+
 def test_editor_can_choose_representative_cover_slide():
     lesson = _lesson()
     lesson["slides"][1]["image_data_url"] = _image_data_url("#ea4c3a")
