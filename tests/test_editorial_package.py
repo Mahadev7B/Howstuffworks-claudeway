@@ -71,7 +71,15 @@ def test_first_six_batch_uses_reviewed_assets_and_copy():
     rocket_copy = lessons["how-do-rockets-fly"]["slides"]
     assert "coast" in rocket_copy[0]["narration"]
     assert "Rockets like these carry both fuel and an oxidizer" in rocket_copy[2]["narration"]
-    diwali_copy = lessons["how-diwali-is-celebrated"]["slides"][1]
+    diwali_slides = lessons["how-diwali-is-celebrated"]["slides"]
+    expanded_diwali_opening = (
+        "Diwali, also called Deepavali, is the festival of lights, celebrated in India and around the world. "
+        "It celebrates the victory of light over darkness and good over evil. Glowing lamps brighten homes as "
+        "families gather to share joy and welcome new beginnings."
+    )
+    assert diwali_slides[0]["narration"] == expanded_diwali_opening
+    assert diwali_slides[0]["explanation"] == expanded_diwali_opening
+    diwali_copy = diwali_slides[1]
     unified_diwali_copy = (
         "Diwali celebrations bring families together for prayers, glowing diyas, colorful rangoli, "
         "sweets, festive meals, and fireworks."
