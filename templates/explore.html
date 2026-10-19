@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Explore lessons — Ask Lil Owl</title>
+  <meta name="description" content="Explore illustrated, kid-friendly lessons about science, nature, inventions, and more.">
+  <link rel="canonical" href="https://www.asklilowl.com/explore">
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='library.css') }}">
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="library-page">
+  <div class="library-orbit library-orbit-one" aria-hidden="true"></div>
+  <div class="library-orbit library-orbit-two" aria-hidden="true"></div>
+  <header class="library-site-header">
+    <nav class="library-top library-shell" aria-label="Main navigation">
+      <a class="library-logo" href="{{ url_for('home') }}"><span class="library-logo-owl" aria-hidden="true">🦉</span><span>Ask Lil Owl</span></a>
+      <div class="library-top-links"><a href="{{ url_for('explore') }}" aria-current="page">Explore</a><a class="library-ask-link" href="{{ url_for('home') }}">Ask a question <span aria-hidden="true">↗</span></a></div>
+    </nav>
+  </header>
+
+  <main>
+    {% if config.EDITORIAL_PREVIEW %}<p class="library-preview-note library-shell">Local visual preview only · six draft lessons · not published · narration pending review</p>{% endif %}
+    {% if spotlight %}
+    <section class="library-spotlight library-shell" aria-label="Featured lesson">
+      <img class="spotlight-art" src="{{ url_for('explore_thumbnail', slug=spotlight.slug) }}" alt="Illustration for {{ spotlight.title }}">
+      <div class="spotlight-copy">
+        <p class="spotlight-kicker"><span aria-hidden="true">✦</span> Featured lesson</p>
+        <h1>{{ spotlight.title }}</h1>
+        <p>{{ spotlight.summary }}</p>
+        <div class="spotlight-actions"><a class="spotlight-play" href="{{ url_for('explore_lesson', slug=spotlight.slug) }}"><span aria-hidden="true">▶</span> Start lesson</a><span class="spotlight-category">{{ spotlight.category }}</span></div>
+      </div>
+    </section>
+    {% else %}
+    <section class="library-spotlight library-spotlight-empty library-shell"><div class="spotlight-copy"><p class="spotlight-kicker"><span aria-hidden="true">✦</span> A world of wonder</p><h1>Explore lessons</h1><p>Pick a question and see where it takes you.</p><a class="spotlight-play" href="{{ url_for('home') }}">Ask your own question <span aria-hidden="true">↗</span></a></div><span class="empty-owl" aria-hidden="true">🦉</span></section>
+    {% endif %}
+
+    <div class="library-shell library-content">
+      <div class="library-toolbar">
+        <div><p class="library-overline">The curiosity collection</p><h2>What will you discover?</h2></div>
+        <label class="library-search"><span class="visually-hidden">Find a lesson</span><span aria-hidden="true">⌕</span><input id="lessonSearch" type="search" placeholder="Search lessons" autocomplete="off"></label>
+      </div>
+
+      {% if categories %}
+        <nav class="library-categories" aria-label="Lesson categories">
+          {% if featured %}<a href="#featured-lessons">Featured</a>{% endif %}<a href="#all-lessons">All lessons</a>{% for category in categories %}<a href="#shelf-{{ loop.index }}">{{ category }}</a>{% endfor %}
+        </nav>
+        {% if featured %}
+        <section class="library-shelf" id="featured-lessons" aria-label="Featured lessons" data-library-section>
+          <div class="shelf-heading"><div><p class="shelf-eyebrow">Handpicked for you</p><h2>Featured <span aria-hidden="true">✦</span></h2></div><div class="shelf-controls"><button type="button" data-scroll="prev" aria-label="Scroll featured lessons left">←</button><button type="button" data-scroll="next" aria-label="Scroll featured lessons right">→</button></div></div>
+          <div class="library-row" data-library-rail>
+          {% for card in featured %}
+            <a class="library-card" href="{{ url_for('explore_lesson', slug=card.slug) }}" data-library-card data-search="{{ (card.title ~ ' ' ~ card.summary ~ ' ' ~ card.category)|lower }}">
+              <span class="library-card-art"><img src="{{ url_for('explore_thumbnail', slug=card.slug) }}" alt="Illustration for {{ card.title }}" loading="lazy"><span class="library-card-play" aria-hidden="true">▶</span></span>
+              <span class="library-card-copy"><span class="library-card-tag">{{ card.category }}</span><strong>{{ card.title }}</strong><span>{{ card.summary }}</span></span>
+            </a>
+          {% endfor %}</div>
+        </section>
+        {% endif %}
+        <section class="library-shelf" id="all-lessons" aria-label="All lessons" data-library-section>
+          <div class="shelf-heading"><div><p class="shelf-eyebrow">Start here</p><h2>All lessons <span aria-hidden="true">✦</span></h2></div><div class="shelf-controls"><button type="button" data-scroll="prev" aria-label="Scroll all lessons left">←</button><button type="button" data-scroll="next" aria-label="Scroll all lessons right">→</button></div></div>
+          <div class="library-row" data-library-rail>
+          {% for card in cards %}
+            <a class="library-card" href="{{ url_for('explore_lesson', slug=card.slug) }}" data-library-card data-search="{{ (card.title ~ ' ' ~ card.summary ~ ' ' ~ card.category)|lower }}">
+              <span class="library-card-art"><img src="{{ url_for('explore_thumbnail', slug=card.slug) }}" alt="Illustration for {{ card.title }}" loading="lazy"><span class="library-card-play" aria-hidden="true">▶</span></span>
+              <span class="library-card-copy"><span class="library-card-tag">{{ card.category }}</span><strong>{{ card.title }}</strong><span>{{ card.summary }}</span></span>
+            </a>
+          {% endfor %}</div>
+        </section>
+        {% for category, entries in categories.items() %}
+        <section class="library-shelf" id="shelf-{{ loop.index }}" aria-label="{{ category }}" data-library-section>
+          <div class="shelf-heading"><div><p class="shelf-eyebrow">Keep exploring</p><h2>{{ category }} <span aria-hidden="true">✦</span></h2></div><div class="shelf-controls"><button type="button" data-scroll="prev" aria-label="Scroll {{ category }} lessons left">←</button><button type="button" data-scroll="next" aria-label="Scroll {{ category }} lessons right">→</button></div></div>
+          <div class="library-row" data-library-rail>
+          {% for card in entries %}
+            <a class="library-card" href="{{ url_for('explore_lesson', slug=card.slug) }}" data-library-card data-search="{{ (card.title ~ ' ' ~ card.summary ~ ' ' ~ card.category)|lower }}">
+              <span class="library-card-art"><img src="{{ url_for('explore_thumbnail', slug=card.slug) }}" alt="Illustration for {{ card.title }}" loading="lazy"><span class="library-card-play" aria-hidden="true">▶</span></span>
+              <span class="library-card-copy"><span class="library-card-tag">{{ card.category }}</span><strong>{{ card.title }}</strong><span>{{ card.summary }}</span></span>
+            </a>
+          {% endfor %}</div>
+        </section>
+        {% endfor %}
+        <p id="noSearchResults" class="library-empty" hidden>No matching lessons yet. Try another word—or <a href="{{ url_for('home') }}">ask your own question</a>.</p>
+      {% else %}
+        <p class="library-empty">New lessons are being prepared. Meanwhile, <a href="{{ url_for('home') }}">ask your own question</a>!</p>
+      {% endif %}
+    </div>
+  </main>
+  <footer class="library-footer library-shell"><span>Made for curious minds 🦉</span><a href="{{ url_for('home') }}">Ask Lil Owl</a></footer>
+  <script>
+    const search = document.getElementById('lessonSearch');
+    const cards = [...document.querySelectorAll('[data-library-card]')];
+    const shelves = [...document.querySelectorAll('[data-library-section]')];
+    function updateControls(shelf) {
+      const rail = shelf.querySelector('[data-library-rail]');
+      const canScroll = rail.scrollWidth > rail.clientWidth + 3;
+      shelf.querySelectorAll('[data-scroll]').forEach(button => { button.disabled = !canScroll; });
+    }
+    for (const shelf of shelves) {
+      shelf.querySelectorAll('[data-scroll]').forEach(button => button.addEventListener('click', () => {
+        const rail = shelf.querySelector('[data-library-rail]');
+        rail.scrollBy({ left: (button.dataset.scroll === 'next' ? 1 : -1) * rail.clientWidth * .8,
+                        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+      }));
+      updateControls(shelf);
+    }
+    window.addEventListener('resize', () => shelves.forEach(updateControls));
+    search.addEventListener('input', () => {
+      const query = search.value.trim().toLowerCase();
+      let visible = 0;
+      for (const card of cards) {
+        card.hidden = !card.dataset.search.includes(query);
+        if (!card.hidden) visible++;
+      }
+      for (const shelf of shelves) {
+        shelf.hidden = !shelf.querySelector('[data-library-card]:not([hidden])');
+        if (!shelf.hidden) updateControls(shelf);
+      }
+      const empty = document.getElementById('noSearchResults');
+      if (empty) empty.hidden = visible !== 0;
+    });
+  </script>
+</body>
+</html>

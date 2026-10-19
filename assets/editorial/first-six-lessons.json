@@ -1,0 +1,98 @@
+[
+  {
+    "slug": "why-is-the-sky-blue",
+    "question": "Why is the sky blue?",
+    "title": "Why Is the Sky Blue?",
+    "summary": "Follow sunlight through the air and discover where blue skies and red sunsets come from.",
+    "category": "Earth & Nature",
+    "sort_order": 1,
+    "featured_rank": 1,
+    "cover": "why-is-the-sky-blue-cover-v1.png",
+    "slides": [
+      {"title": "Sunlight has many colors", "explanation": "Sunlight looks white, but it contains many colors. A glass prism can separate those colors into a rainbow.", "fun_fact": "Raindrops can separate sunlight too—that is one way a rainbow appears.", "narration": "Sunlight may look white, but it contains many colors. A rainbow helps us see those colors when sunlight passes through drops of water.", "image": "slide-art/sky/01-prism-colors-v1.png"},
+      {"title": "Air surrounds Earth", "explanation": "Earth is wrapped in air. Tiny gas molecules in that air scatter some sunlight in different directions.", "fun_fact": "The air is mostly invisible, even though it is all around us.", "narration": "Earth has a blanket of air around it. Tiny molecules in that air scatter sunlight in different directions.", "image": "slide-art/sky/02-atmosphere-v1.png"},
+      {"title": "Blue light spreads around", "explanation": "Blue light is scattered by air molecules more strongly than red light. It reaches our eyes from many parts of the daytime sky.", "fun_fact": "The blue color is not a blue roof above Earth-it is sunlight arriving from different directions.", "narration": "Blue light scatters more easily than red and orange light. Scattered blue light reaches our eyes from all across the daytime sky.", "image": "slide-art/sky/03-blue-scattering-v3.png"},
+      {"title": "Why sunsets look warm", "explanation": "When the Sun is low, its light travels through more air. Much of the blue light scatters out of the direct path, leaving warmer colors near the Sun.", "fun_fact": "The same Sun can look different at noon and at sunset because its light takes a different path through the air.", "narration": "Near sunset, sunlight travels through more air before reaching us. Much of its blue light scatters away from the direct path, so the Sun and nearby sky can look orange or red.", "image": "slide-art/sky/04-sunset-v1.png"}
+    ]
+  },
+  {
+    "slug": "how-do-rockets-fly",
+    "question": "How do rockets fly?",
+    "title": "How Do Rockets Fly?",
+    "summary": "See how thrust lifts a rocket, why stages separate, and what it takes to orbit Earth.",
+    "category": "Space",
+    "sort_order": 2,
+    "featured_rank": 2,
+    "cover": "how-do-rockets-fly-cover-v1.png",
+    "slides": [
+      {"title": "A powerful lift", "explanation": "A rocket needs an upward push called thrust to lift off against Earth's gravity. After an engine stops, a rocket can keep coasting for a while.", "fun_fact": "Gravity still pulls on a rocket as it climbs, whether its engine is firing or it is coasting.", "narration": "Have you seen a rocket rise off its launch pad? It needs a strong push called thrust to lift against Earth's gravity. Later, it can coast for a while even when its engine is off.", "image": "slide-art/rockets/01-launch-thrust-v1.png"},
+      {"title": "Gas out, rocket up", "explanation": "The engine sends hot gas out of its nozzle. The rocket is pushed in the opposite direction.", "fun_fact": "A rocket does not need to push against the ground or air to keep moving.", "narration": "A rocket engine sends hot gas out the back at high speed. The gas pushes one way, and the rocket is pushed the other way—up and away from the ground.", "image": "slide-art/rockets/02-exhaust-action-reaction-v1.png"},
+      {"title": "Fuel and lighter stages", "explanation": "Rockets like these carry fuel and an oxidizer, which lets the fuel burn without using oxygen from the air. Some rockets release an empty stage so the remaining part has less mass to carry.", "fun_fact": "A rocket engine can work in space because it carries its own oxidizer.", "narration": "Rockets like these carry both fuel and an oxidizer, so their engines can work even where there is no air. As a rocket climbs, it can let go of empty sections so the rest has less mass to carry.", "image": "slide-art/rockets/03-propellant-stage-separation-v1.png"},
+      {"title": "Getting into orbit", "explanation": "Reaching space is not enough to stay there. A spacecraft in orbit also travels sideways so fast that it keeps falling around Earth.", "fun_fact": "An orbiting spacecraft is still being pulled by Earth's gravity.", "narration": "Reaching space and staying in orbit are different jobs. To orbit Earth, a spacecraft must also move sideways fast enough that it keeps falling around our planet instead of straight back down.", "image": "slide-art/rockets/04-sideways-orbit-v1.png"}
+    ]
+  },
+  {
+    "slug": "how-does-a-volcano-erupt",
+    "question": "How does a volcano erupt?",
+    "title": "How Does a Volcano Erupt?",
+    "summary": "Explore magma, lava, different eruptions, and how scientists help people prepare.",
+    "category": "Earth & Nature",
+    "sort_order": 3,
+    "featured_rank": 3,
+    "cover": "how-does-a-volcano-erupt-cover-v1.png",
+    "slides": [
+      {"title": "Hot rock underground", "explanation": "Some rock deep inside Earth melts. Melted rock that is still underground is called magma.", "fun_fact": "Not all underground rock is melted; much of Earth's rock stays solid.", "narration": "Deep below some places on Earth, rock is hot enough to melt. Melted rock underground is called magma.", "image": "slide-art/volcano/01-underground-magma-v2.png"},
+      {"title": "Magma becomes lava", "explanation": "Magma can move up through cracks. Once melted rock reaches Earth's surface, we call it lava.", "fun_fact": "Magma and lava are names for melted rock in different places.", "narration": "Magma can rise through cracks toward the surface. When it reaches the surface, we call it lava.", "image": "slide-art/volcano/02-magma-to-surface-lava-v2.png"},
+      {"title": "Eruptions can differ", "explanation": "Some volcanoes produce flowing lava. Others send ash and broken rock high into the air. The magma and its gases help shape the eruption.", "fun_fact": "Volcanic ash is made of tiny pieces of rock and glass—not the soft ash left by a campfire.", "narration": "Volcanoes do not all erupt the same way. Some let lava flow out; others send up ash and broken rock in an explosive eruption. The magma and its gases help decide what happens.", "image": "slide-art/volcano/03-flow-and-explosive-eruptions-v1.png"},
+      {"title": "Watching for changes", "explanation": "Scientists measure earthquakes, ground movement, and gases around volcanoes. Their observations help communities prepare.", "fun_fact": "A volcano can change in ways that instruments detect before people can see a change.", "narration": "Scientists watch volcanoes for signs of change, such as earthquakes and swelling ground. Their work helps nearby communities prepare and stay safe.", "image": "slide-art/volcano/04-scientists-monitoring-v1.png"}
+    ]
+  },
+  {
+    "slug": "how-octopuses-change-color",
+    "question": "How do octopuses change color?",
+    "title": "How Octopuses Change Color",
+    "summary": "Look closely at color-changing skin and the many reasons an octopus may change its look.",
+    "category": "Animals",
+    "sort_order": 4,
+    "featured_rank": null,
+    "cover": "how-octopuses-change-color-cover-v1.png",
+    "slides": [
+      {"title": "A changing appearance", "explanation": "Many octopuses can change their appearance quickly. Their skin holds tiny color-filled sacs called chromatophores.", "fun_fact": "An octopus can change its pattern as well as its color.", "narration": "An octopus can change its appearance astonishingly fast. Its skin contains tiny color-filled sacs called chromatophores.", "image": "slide-art/octopus/01-chromatophore-skin-v1.png"},
+      {"title": "Tiny muscles at work", "explanation": "Small muscles can stretch a color sac wider or let it shrink. That changes how much color we see.", "fun_fact": "Thousands of tiny color-changing structures work together across the skin.", "narration": "Muscles pull these sacs open or let them shrink. That changes how much of each color we can see on the octopus's skin.", "image": "slide-art/octopus/02-muscles-open-close-sacs-v1.png"},
+      {"title": "More than color", "explanation": "Other skin structures reflect light. Some octopuses can also raise parts of their skin to change its texture.", "fun_fact": "Changing texture can help an octopus blend with bumpy rocks or coral.", "narration": "Other structures in the skin reflect light and help make even more colors and patterns. Some octopuses also change their skin's texture.", "image": "slide-art/octopus/03-reflective-color-and-texture-v1.png"},
+      {"title": "Hiding and signaling", "explanation": "An octopus may change its look to blend in or signal to another octopus. One color alone does not tell us exactly how it feels.", "fun_fact": "Camouflage can make an octopus difficult to spot even when it is right in front of you.", "narration": "An octopus may use these changes to hide, to signal to another octopus, or to react to what is happening nearby. A color alone does not tell us exactly what it is feeling.", "image": "slide-art/octopus/04-camouflage-and-signaling-v1.png"}
+    ]
+  },
+  {
+    "slug": "how-the-internet-works",
+    "question": "How internet works?",
+    "title": "How the Internet Works",
+    "summary": "Follow a web page's journey from a server to the screen in your hands.",
+    "category": "Technology",
+    "sort_order": 5,
+    "featured_rank": null,
+    "cover": "how-the-internet-works-cover-v1.png",
+    "slides": [
+      {"title": "Ask another computer", "explanation": "When you open a web page, your device asks a computer called a server for the page's information.", "fun_fact": "A server may be far away from your home, even though the page appears on your screen.", "narration": "When you open a page online, your device sends a request to another computer called a server. That server can send back the page's information.", "image": "slide-art/internet/01-device-request-and-server-v1.png"},
+      {"title": "Information in packets", "explanation": "Information often travels in small packages called packets. Like labeled envelopes, they carry data plus details that help the network deliver them.", "fun_fact": "A picture can need many packets, but the packets carry coded data-not little picture tiles.", "narration": "Information often travels in small packages called packets. Think of them like labeled envelopes carrying coded data, not little pieces cut from a picture.", "image": "slide-art/internet/02-data-packets-v2.png"},
+      {"title": "Many possible routes", "explanation": "Packets can pass through cables, wireless links, and different networks. Routers help direct them toward your device.", "fun_fact": "The internet is a network of networks, not one giant machine.", "narration": "Packets can cross cables, radio links, and other networks. Special devices called routers help direct them toward the right place.", "image": "slide-art/internet/03-cables-radio-and-routers-v1.png"},
+      {"title": "A page appears", "explanation": "Your device reads the arriving data and uses it to build the page, picture, or message you requested.", "fun_fact": "Some packets may take different routes and still help make one page appear.", "narration": "Your device reads the arriving data and uses it to build the page, picture, or message. How long this takes depends on the connection and how much information must travel.", "image": "slide-art/internet/04-page-built-from-data-v2.png"}
+    ]
+  },
+  {
+    "slug": "how-diwali-is-celebrated",
+    "question": "How is Diwali celebrated?",
+    "title": "How Diwali Is Celebrated",
+    "summary": "Discover lights, family traditions, and the many ways people celebrate Diwali.",
+    "category": "World & Culture",
+    "sort_order": 6,
+    "featured_rank": null,
+    "cover": "how-diwali-is-celebrated-cover-v1.png",
+    "slides": [
+      {"title": "A festival of lights", "explanation": "Diwali, also called Deepavali, is celebrated by many families in India and around the world. Customs vary by family and community.", "fun_fact": "The name Deepavali is often connected with rows of lights or lamps.", "narration": "Diwali, also called Deepavali, is a festival of lights celebrated by many families in India and around the world. It does not look exactly the same in every home.", "image": "slide-art/diwali/01-varied-family-celebrations-v1.png"},
+      {"title": "Many ways to celebrate", "explanation": "Some families light diyas, make rangoli, share food, visit relatives, pray, or tell stories. No one family does everything the same way.", "fun_fact": "Rangoli are decorative patterns that may be made with colored powder, sand, flowers, or other materials.", "narration": "Some families light small lamps called diyas or decorate with colorful rangoli. Others share special food, visit loved ones, pray, or tell stories connected with the festival.", "image": "slide-art/diwali/02-diyas-rangoli-food-and-visits-v1.png"},
+      {"title": "Different stories and meanings", "explanation": "Different communities connect Diwali with different stories and meanings. For many, light can express hope or the victory of good over harm.", "fun_fact": "You can learn more by listening to how people describe their own family's celebration.", "narration": "Different communities connect Diwali with different histories and meanings. For many people, light is a way to express hope, welcome, or the triumph of good over harm.", "image": "slide-art/diwali/03-family-storytelling-and-light-v1.png"},
+      {"title": "Ask and learn", "explanation": "If a friend celebrates Diwali, ask what their family enjoys doing. Listen to their answer instead of guessing.", "fun_fact": "Two friends may both celebrate Diwali but have different favorite traditions.", "narration": "If a friend celebrates Diwali, the best way to learn about their tradition is to ask what their family does. There are many ways to share the joy of the festival.", "image": "slide-art/diwali/04-friends-discuss-family-traditions-v1.png"}
+    ]
+  }
+]

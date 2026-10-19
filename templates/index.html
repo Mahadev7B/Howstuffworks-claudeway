@@ -6,6 +6,7 @@
   <title>Ask Lil Owl — Learn Anything!</title>
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='library.css') }}">
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
@@ -331,6 +332,23 @@
       </div>
     </div>
   </section>
+
+  {% if featured_lessons %}
+  <section class="library-preview" aria-label="Featured lessons">
+    <p class="library-preview-kicker">✦ Handpicked for curious minds</p>
+    <div class="library-preview-head"><h2>Watch a lesson, spark a question</h2><a href="{{ url_for('explore') }}">Explore all lessons →</a></div>
+    <div class="library-row">
+      {% for card in featured_lessons %}
+      <a class="library-card" href="{{ url_for('explore_lesson', slug=card.slug) }}">
+        <img src="{{ url_for('explore_thumbnail', slug=card.slug) }}" alt="Illustration for {{ card.title }}" loading="lazy">
+        <span class="library-card-copy"><strong>{{ card.title }}</strong><span>{{ card.summary }}</span></span>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+  {% else %}
+  <div class="library-preview library-preview-empty"><a href="{{ url_for('explore') }}">Explore lessons →</a></div>
+  {% endif %}
 
   <!-- Feature cards -->
   <section class="features">

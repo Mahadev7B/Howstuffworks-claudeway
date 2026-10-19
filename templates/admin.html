@@ -31,6 +31,7 @@
         </span>
       {% endif %}
       <a href="/" class="btn btn-sm btn-outline-light me-2">View site</a>
+      <a href="{{ url_for('admin_publications') }}" class="btn btn-sm btn-outline-light me-2">Lesson library</a>
       <form method="post" action="{{ url_for('admin_logout') }}" class="d-inline">
         <button type="submit" class="btn btn-sm btn-outline-light">Logout</button>
       </form>

@@ -3,10 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{{ lesson.title }} — Ask Lil Owl</title>
-  <meta property="og:title" content="{{ lesson.title }}">
-  <meta property="og:description" content="{{ question }}">
-  <meta property="og:image" content="{{ url_for('static', filename='favicon.svg', _external=True) }}">
+  <title>{{ publication.title if published else lesson.title }} — Ask Lil Owl</title>
+  <meta name="description" content="{{ publication.summary if published else question }}">
+  <meta property="og:title" content="{{ publication.title if published else lesson.title }}">
+  <meta property="og:description" content="{{ publication.summary if published else question }}">
+  {% if published %}<link rel="canonical" href="{{ canonical_url }}">{% endif %}
+  <meta property="og:image" content="{{ url_for('explore_thumbnail', slug=slug, _external=True) if published else url_for('static', filename='favicon.svg', _external=True) }}">
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -38,9 +40,19 @@
     .share-copy-btn:hover { background: #fff; color: #FF6B35; }
     .share-ask-link { color: #fff; font-weight: 600; text-decoration: underline; font-size: 0.9rem; align-self: center; }
     .tap-to-play { background: rgba(255,107,53,0.08); border-radius: 12px; text-align: center; padding: 0.8rem; margin-bottom: 1rem; color: #FF6B35; font-weight: 600; font-size: 0.95rem; }
+    /* Curated artwork carries teaching detail across the full landscape frame. */
+    .published-lesson .deck { padding: 1.25rem; }
+    .published-lesson .slide.active { display: block; min-height: 0; }
+    .published-lesson .slide .slide-head { padding: 0.25rem 0.25rem 1rem; }
+    .published-lesson .slide .illustration { display: block; margin: 0; border-radius: 14px; }
+    .published-lesson .illustration .slide-image { width: 100%; height: auto; max-height: min(68vh, 650px); object-fit: contain; border-radius: 14px; }
+    .published-lesson .slide .explanation { padding: 1.2rem 0.25rem 0.8rem; }
+    .published-lesson .slide .fun-fact { margin: 0 0.25rem 0.25rem; }
+    .published-lesson .controls button:disabled { opacity: .45; cursor: not-allowed; filter: grayscale(.4); }
+    @media (max-width: 700px) { .published-lesson .deck { padding: 0.9rem; } }
   </style>
 </head>
-<body>
+<body class="{% if published %}published-lesson{% endif %}">
   <main class="lesson">
 
     <header class="lesson-header">
@@ -50,19 +62,23 @@
       </div>
       <div class="lesson-titles">
         <p class="question">{{ question }}</p>
-        <h1>{{ lesson.title }}</h1>
+        <h1>{{ publication.title if published else lesson.title }}</h1>
       </div>
     </header>
 
     <div class="share-banner">
-      <p>Someone shared this lesson with you!</p>
+      <p>{{ 'Visual draft — not published' if published and publication.preview else ('Explore this lesson!' if published else 'Someone shared this lesson with you!') }}</p>
       <div class="share-actions">
         <button class="share-copy-btn" id="copyLinkBtn">📋 Copy link</button>
+        {% if published %}<a href="{{ url_for('explore') }}" class="share-ask-link">Explore more lessons</a>{% endif %}
         <a href="{{ url_for('home') }}" class="share-ask-link">Ask your own question →</a>
       </div>
     </div>
 
-    <div class="tap-to-play" id="tapPrompt">Tap ▶ Play to hear the lesson read aloud</div>
+    {% if published and publication.preview %}<p class="voice-disclosure">Visual preview only. Narration has not been generated or reviewed.</p>
+    {% elif published %}<p class="voice-disclosure">AI-generated narration. Press Play to listen.</p>{% endif %}
+
+    <div class="tap-to-play" id="tapPrompt">{{ 'Use the arrows to browse this draft' if published and publication.preview else 'Tap ▶ Play to hear the lesson read aloud' }}</div>
 
     <div class="progress"><div class="progress-fill" id="progress"></div></div>
 
@@ -99,10 +115,10 @@
 
     <div class="controls">
       <div class="btn-row">
-        <button id="autoBtn" class="primary">▶ Play lesson</button>
-        <button id="readBtn">🔊 Read this slide</button>
+        <button id="autoBtn" class="primary" {% if published and publication.preview %}disabled{% endif %}>▶ Play lesson</button>
+        <button id="readBtn" {% if published and publication.preview %}disabled{% endif %}>🔊 Read this slide</button>
       </div>
-      <span class="status" id="status">Press play to start the lesson</span>
+      <span class="status" id="status">{{ 'Narration is pending review' if published and publication.preview else 'Press play to start the lesson' }}</span>
       <label class="speed">
         Speed
         <input type="range" min="0.6" max="1.4" step="0.1" value="0.9" id="speed">
@@ -191,6 +207,11 @@
       async function getAudioUrl(idx) {
         if (audioCache.has(idx)) return audioCache.get(idx);
         if (audioInflight.has(idx)) return audioInflight.get(idx);
+        {% if published %}
+        const url = '{{ url_for("explore_audio", slug=slug, slide_index=0) }}'.replace('/0.mp3', '/' + idx + '.mp3');
+        audioCache.set(idx, url);
+        return url;
+        {% else %}
         const text = slideText(idx);
         const promise = (async () => {
           const res = await fetch('/api/tts', {
@@ -207,6 +228,7 @@
         audioInflight.set(idx, promise);
         promise.finally(() => audioInflight.delete(idx));
         return promise;
+        {% endif %}
       }
 
       function preloadAudio(idx) {
@@ -337,7 +359,7 @@
 
       show(0);
       updateProgress();
-      preloadAudio(0);
+      {% if not published %}preloadAudio(0);{% endif %}
 
       // Copy share link
       const copyBtn = document.getElementById('copyLinkBtn');

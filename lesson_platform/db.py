@@ -178,6 +178,35 @@ ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS input_chars  INTEGER NOT NULL DEF
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS output_chars INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE cached_lessons ADD COLUMN IF NOT EXISTS share_slug TEXT UNIQUE;
 CREATE INDEX IF NOT EXISTS cached_lessons_slug_idx ON cached_lessons (share_slug);
+
+CREATE TABLE IF NOT EXISTS published_lessons (
+  slug TEXT PRIMARY KEY,
+  source_question_hash TEXT NOT NULL,
+  question TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  category TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  featured_rank INTEGER,
+  cover_slide_index INTEGER NOT NULL DEFAULT 0,
+  lesson JSONB NOT NULL,
+  thumbnail BYTEA NOT NULL,
+  thumbnail_mime TEXT NOT NULL,
+  published_at TIMESTAMPTZ,
+  active BOOLEAN NOT NULL DEFAULT false
+);
+CREATE INDEX IF NOT EXISTS published_lessons_active_order_idx
+  ON published_lessons (sort_order, slug) WHERE active = true;
+ALTER TABLE published_lessons ADD COLUMN IF NOT EXISTS cover_slide_index INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS published_lesson_audio (
+  slug TEXT NOT NULL REFERENCES published_lessons(slug) ON DELETE CASCADE,
+  slide_index INTEGER NOT NULL,
+  mp3 BYTEA NOT NULL,
+  model TEXT NOT NULL,
+  voice TEXT NOT NULL,
+  source_text_hash TEXT NOT NULL,
+  PRIMARY KEY (slug, slide_index)
+);
 """
 
 

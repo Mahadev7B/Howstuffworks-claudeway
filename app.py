@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 from flask import (
     Flask,
     Response,
+    abort,
     jsonify,
     redirect,
     render_template,
@@ -56,6 +57,8 @@ from lesson_platform import (
     today_spend_usd,
 )
 from lesson_platform.db import get_pool_stats, get_write_stats
+from lesson_platform import library
+from lesson_platform import library_audio
 
 load_dotenv()
 
@@ -533,7 +536,79 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
 @app.route("/", methods=["GET"])
 def home():
     prefill = (request.args.get("q") or "").strip()[:200]
-    return render_template("index.html", examples=EXAMPLE_QUESTIONS, prefill=prefill)
+    try:
+        featured = sorted((card for card in library.list_published_cards()
+                           if card.get("featured_rank") is not None),
+                          key=lambda card: card["featured_rank"])[:6]
+    except RuntimeError:
+        featured = []
+    return render_template("index.html", examples=EXAMPLE_QUESTIONS, prefill=prefill,
+                           featured_lessons=featured)
+
+
+@app.get("/explore")
+def explore():
+    try:
+        cards = library.list_published_cards()
+    except RuntimeError:
+        cards = []
+    categories = {}
+    for card in cards:
+        categories.setdefault(card["category"], []).append(card)
+    featured = sorted((card for card in cards if card.get("featured_rank") is not None),
+                      key=lambda card: card["featured_rank"])
+    spotlight = featured[0] if featured else (cards[0] if cards else None)
+    return render_template("explore.html", categories=categories, cards=cards,
+                           featured=featured, spotlight=spotlight)
+
+
+@app.get("/explore/<slug>")
+def explore_lesson(slug: str):
+    publication = library.get_published_lesson(slug)
+    if publication is None:
+        abort(404)
+    return render_template("share.html", lesson=publication["lesson"],
+                           question=publication["summary"], slug=slug,
+                           published=True, publication=publication,
+                           canonical_url="https://www.asklilowl.com/explore/" + slug)
+
+
+@app.get("/explore/<slug>/thumbnail.webp")
+def explore_thumbnail(slug: str):
+    result = library.get_published_thumbnail(slug)
+    if result is None:
+        abort(404)
+    return Response(result[0], mimetype=result[1],
+                    headers={"Cache-Control": "no-store"})
+
+
+@app.get("/explore/<slug>/audio/<int:slide_index>.mp3")
+def explore_audio(slug: str, slide_index: int):
+    result = library.get_published_audio(slug, slide_index)
+    if result is None:
+        abort(404)
+    return Response(result, mimetype="audio/mpeg",
+                    headers={"Cache-Control": "no-store"})
+
+
+@app.get("/sitemap.xml")
+def sitemap():
+    from xml.sax.saxutils import escape
+    try:
+        cards = library.list_published_cards()
+    except RuntimeError:
+        cards = []
+    urls = ["https://www.asklilowl.com/", "https://www.asklilowl.com/explore"]
+    urls.extend("https://www.asklilowl.com/explore/" + card["slug"] for card in cards)
+    body = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+    body += "".join("<url><loc>" + escape(url) + "</loc></url>" for url in urls) + "</urlset>"
+    return Response(body, mimetype="application/xml")
+
+
+@app.get("/robots.txt")
+def robots():
+    return Response("User-agent: *\nAllow: /\nSitemap: https://www.asklilowl.com/sitemap.xml\n",
+                    mimetype="text/plain")
 
 
 def _lookup_only(question: str, ctx: dict) -> dict | None:
@@ -1098,6 +1173,125 @@ def _admin_authed() -> bool:
 
 def _admin_password() -> str:
     return os.environ.get("ADMIN_PASSWORD", "")
+
+
+def _library_csrf_token() -> str:
+    token = session.get("library_csrf")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session["library_csrf"] = token
+    return token
+
+
+def _library_write_allowed() -> bool:
+    expected = session.get("library_csrf")
+    supplied = request.form.get("csrf_token", "")
+    # Publishing must fail closed if the app still uses its known dev cookie key.
+    return bool(app.secret_key != "dev-secret-key" and _admin_authed() and expected and supplied and
+                secrets.compare_digest(expected, supplied))
+
+
+@app.get("/admin/published-lessons")
+def admin_publications():
+    if not _admin_authed():
+        return redirect(url_for("admin_login"))
+    if not db_enabled:
+        return render_template("admin_publications.html", rows=[], csrf_token=_library_csrf_token(),
+                               error="Database is unavailable"), 503
+    return render_template("admin_publications.html",
+                           rows=library.list_editorial_publications(),
+                           csrf_token=_library_csrf_token(), error=request.args.get("error"),
+                           unsafe_session_key=app.secret_key == "dev-secret-key")
+
+
+@app.post("/admin/published-lessons")
+def admin_stage_publication():
+    if not _library_write_allowed():
+        abort(403)
+    if not db_enabled:
+        abort(503)
+    try:
+        rank = request.form.get("featured_rank", "").strip()
+        library.stage_cached_lesson(
+            request.form.get("question", ""), request.form.get("slug", ""),
+            request.form.get("title", ""), request.form.get("summary", ""),
+            request.form.get("category", ""), int(request.form.get("sort_order", "0")),
+            int(rank) if rank else None,
+            int(request.form.get("cover_slide_number", "1")) - 1)
+    except ValueError as exc:
+        return redirect(url_for("admin_publications", error=str(exc)))
+    return redirect(url_for("admin_publications"))
+
+
+@app.post("/admin/published-lessons/<slug>/audio")
+def admin_generate_publication_audio(slug: str):
+    if not _library_write_allowed():
+        abort(403)
+    if not db_enabled:
+        abort(503)
+    try:
+        library_audio.generate_publication_audio(slug, settings)
+    except (ValueError, RuntimeError) as exc:
+        return redirect(url_for("admin_publications", error=str(exc)))
+    return redirect(url_for("admin_publications"))
+
+
+@app.post("/admin/published-lessons/<slug>/visibility")
+def admin_publication_visibility(slug: str):
+    if not _library_write_allowed():
+        abort(403)
+    if not db_enabled:
+        abort(503)
+    desired = request.form.get("active")
+    if desired not in ("0", "1"):
+        abort(400)
+    if desired == "1" and request.form.get("reviewed_audio") != "1":
+        abort(400)
+    try:
+        if not library.set_publication_active(slug, desired == "1"):
+            abort(404)
+    except ValueError as exc:
+        return redirect(url_for("admin_publications", error=str(exc)))
+    return redirect(url_for("admin_publications"))
+
+
+@app.get("/admin/published-lessons/<slug>/audio/<int:slide_index>.mp3")
+def admin_publication_audio_preview(slug: str, slide_index: int):
+    if not _admin_authed():
+        abort(403)
+    if not db_enabled:
+        abort(503)
+    clip = library.get_editorial_audio(slug, slide_index)
+    if clip is None:
+        abort(404)
+    return Response(clip, mimetype="audio/mpeg", headers={"Cache-Control": "private, no-store"})
+
+
+@app.get("/admin/published-lessons/<slug>/thumbnail.webp")
+def admin_publication_thumbnail_preview(slug: str):
+    if not _admin_authed():
+        abort(403)
+    if not db_enabled:
+        abort(503)
+    result = library.get_editorial_thumbnail(slug)
+    if result is None:
+        abort(404)
+    return Response(result[0], mimetype=result[1], headers={"Cache-Control": "private, no-store"})
+
+
+@app.post("/admin/published-lessons/<slug>/cover")
+def admin_publication_cover(slug: str):
+    if not _library_write_allowed():
+        abort(403)
+    if not db_enabled:
+        abort(503)
+    try:
+        index = int(request.form.get("cover_slide_number", "")) - 1
+        if not library.update_publication_cover(slug, index):
+            abort(404)
+    except ValueError as exc:
+        return redirect(url_for("admin_publications", error=str(exc)))
+    return redirect(url_for("admin_publications"))
 
 
 @app.route("/admin/login", methods=["GET", "POST"])
