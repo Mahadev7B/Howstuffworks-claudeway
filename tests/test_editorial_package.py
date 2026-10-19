@@ -116,3 +116,11 @@ def test_second_six_manifest_has_complete_review_copy():
                for lesson in lessons for slide in lesson["slides"])
     assert "more than ten Earths" in lessons[1]["slides"][0]["narration"]
     assert "does not eat sunlight" in lessons[5]["slides"][0]["narration"]
+
+    entries = load_editorial_batch(manifest)
+    assert len(entries) == 6
+    assert all(len(entry["lesson"]["slides"]) == 4 for entry in entries)
+    assert all(prepare_publication(entry["lesson"], cover_data_url=entry["cover_data_url"])
+               for entry in entries)
+    assert all(publication_audio_text(slide).endswith(slide["fun_fact"])
+               for entry in entries for slide in entry["lesson"]["slides"])
