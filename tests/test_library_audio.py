@@ -28,6 +28,29 @@ def test_generates_one_clip_per_slide(monkeypatch):
                for c in calls if isinstance(c, dict))
 
 
+def test_generated_clip_speaks_the_visible_fun_fact(monkeypatch):
+    requests = []
+    saved = []
+    monkeypatch.setattr(library_audio.library, "get_staged_lesson", lambda slug: {
+        "slides": [{"narration": "Sunlight contains many colors.",
+                    "fun_fact": "Raindrops can separate sunlight too."}]})
+    monkeypatch.setattr(library_audio.library, "get_audio_metadata", lambda slug: {})
+    monkeypatch.setattr(library_audio.library, "save_publication_audio", lambda *args: saved.append(args))
+
+    class Speech:
+        def create(self, **kwargs):
+            requests.append(kwargs)
+            return SimpleNamespace(content=b"mp3")
+
+    monkeypatch.setattr(library_audio, "OpenAI", lambda **kwargs: SimpleNamespace(
+        audio=SimpleNamespace(speech=Speech())))
+
+    assert library_audio.generate_publication_audio("sky", _settings()) == 1
+    expected = "Sunlight contains many colors. Fun fact: Raindrops can separate sunlight too."
+    assert requests[0]["input"] == expected
+    assert saved[0][-1] == library_audio.text_hash(expected)
+
+
 def test_matching_clip_is_reused(monkeypatch):
     narration = "First."
     digest = library_audio.text_hash(narration)

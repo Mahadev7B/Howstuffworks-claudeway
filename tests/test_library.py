@@ -1,6 +1,7 @@
 """Publication validation must reject incomplete or unsafe cached lessons."""
 
 import base64
+import hashlib
 import io
 from unittest.mock import MagicMock
 
@@ -154,6 +155,22 @@ def test_activation_requires_every_slide_clip(monkeypatch):
     with pytest.raises(ValueError, match="audio"):
         library.set_publication_active("sky", True)
     assert not any("UPDATE published_lessons" in c.args[0] for c in cur.execute.call_args_list)
+
+
+def test_activation_accepts_clips_that_include_the_fun_fact(monkeypatch):
+    lesson = _lesson()
+    _, cur = _fake_db(monkeypatch, [(lesson,), ("sky",)])
+    expected_texts = [
+        "Sunlight contains many colors. Fun fact: Light is fast.",
+        "Air scatters blue light. Fun fact: The sky changes.",
+    ]
+    cur.fetchall.return_value = [
+        (index, hashlib.sha256(text.encode("utf-8")).hexdigest())
+        for index, text in enumerate(expected_texts)
+    ]
+
+    assert library.set_publication_active("sky", True) is True
+    assert any("UPDATE published_lessons" in c.args[0] for c in cur.execute.call_args_list)
 
 
 def test_draft_cover_can_be_changed_without_touching_lesson(monkeypatch):

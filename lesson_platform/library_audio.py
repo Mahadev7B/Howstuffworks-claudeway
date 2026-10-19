@@ -25,7 +25,7 @@ def generate_publication_audio(slug: str, settings) -> int:
     metadata = library.get_audio_metadata(slug)
     pending = []
     for index, slide in enumerate(slides):
-        narration = slide["narration"].strip()
+        narration = library.publication_audio_text(slide)
         digest = text_hash(narration)
         old = metadata.get(index)
         if old and (old["model"], old["voice"], old["source_text_hash"]) == (MODEL, VOICE, digest):

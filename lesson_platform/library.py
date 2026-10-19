@@ -24,6 +24,13 @@ class PreparedPublication:
     thumbnail_mime: str
 
 
+def publication_audio_text(slide: dict) -> str:
+    """Return the complete spoken copy for one curated slide."""
+    narration = slide["narration"].strip()
+    fun_fact = slide.get("fun_fact", "").strip()
+    return f"{narration} Fun fact: {fun_fact}" if fun_fact else narration
+
+
 def _decode_raster(data_url: str) -> Image.Image:
     if not isinstance(data_url, str) or not data_url.startswith("data:"):
         raise ValueError("Every slide needs a raster image")
@@ -160,7 +167,7 @@ def set_publication_active(slug: str, active: bool) -> bool:
             slides = row[0].get("slides", [])
             cur.execute("SELECT slide_index, source_text_hash FROM published_lesson_audio WHERE slug = %s", (slug,))
             hashes = dict(cur.fetchall())
-            if not slides or any(hashes.get(index) != hashlib.sha256(slide["narration"].strip().encode("utf-8")).hexdigest()
+            if not slides or any(hashes.get(index) != hashlib.sha256(publication_audio_text(slide).encode("utf-8")).hexdigest()
                                  for index, slide in enumerate(slides)):
                 raise ValueError("Every slide needs saved audio before activation")
         cur.execute(
@@ -251,11 +258,14 @@ def list_editorial_publications() -> list[dict]:
     with _connect() as conn, conn.cursor() as cur:
         cur.execute(
             """SELECT p.slug, p.title, p.active, jsonb_array_length(p.lesson->'slides'),
-                      COUNT(a.slide_index) AS clips, p.cover_slide_index
+                      COUNT(a.slide_index) AS clips, p.cover_slide_index,
+                      ARRAY(SELECT slide->>'fun_fact'
+                            FROM jsonb_array_elements(p.lesson->'slides') WITH ORDINALITY AS item(slide, position)
+                            ORDER BY position) AS fun_facts
                FROM published_lessons p
                LEFT JOIN published_lesson_audio a ON a.slug = p.slug
                GROUP BY p.slug ORDER BY p.sort_order, p.slug""")
-        return [dict(zip(("slug", "title", "active", "slide_count", "clip_count", "cover_slide_index"), row))
+        return [dict(zip(("slug", "title", "active", "slide_count", "clip_count", "cover_slide_index", "fun_facts"), row))
                 for row in cur.fetchall()]
 
 

@@ -38,6 +38,22 @@ def test_editorial_page_lists_drafts(admin_site, monkeypatch):
     assert b"1 / 2" in response.data
 
 
+def test_editorial_page_shows_each_fun_fact_beside_its_audio(admin_site, monkeypatch):
+    module, client = admin_site
+    monkeypatch.setattr(module.library, "list_editorial_publications", lambda: [
+        {"slug": "sky", "title": "Why sky?", "active": False, "slide_count": 2,
+         "clip_count": 2, "cover_slide_index": 0,
+         "fun_facts": ["Raindrops can separate sunlight.", "Air is all around us."]}])
+    with client.session_transaction() as session:
+        session["admin"] = True
+
+    response = client.get("/admin/published-lessons")
+
+    assert response.status_code == 200
+    assert b"Raindrops can separate sunlight." in response.data
+    assert b"Air is all around us." in response.data
+
+
 def test_valid_stage_is_inactive(admin_site, monkeypatch):
     module, client = admin_site
     staged = []
