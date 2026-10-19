@@ -193,11 +193,13 @@ CREATE TABLE IF NOT EXISTS published_lessons (
   thumbnail BYTEA NOT NULL,
   thumbnail_mime TEXT NOT NULL,
   published_at TIMESTAMPTZ,
+  approved_for_publish BOOLEAN NOT NULL DEFAULT false,
   active BOOLEAN NOT NULL DEFAULT false
 );
 CREATE INDEX IF NOT EXISTS published_lessons_active_order_idx
   ON published_lessons (sort_order, slug) WHERE active = true;
 ALTER TABLE published_lessons ADD COLUMN IF NOT EXISTS cover_slide_index INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE published_lessons ADD COLUMN IF NOT EXISTS approved_for_publish BOOLEAN NOT NULL DEFAULT false;
 CREATE TABLE IF NOT EXISTS published_lesson_audio (
   slug TEXT NOT NULL REFERENCES published_lessons(slug) ON DELETE CASCADE,
   slide_index INTEGER NOT NULL,

@@ -1276,6 +1276,20 @@ def admin_publication_visibility(slug: str):
     return redirect(url_for("admin_publications"))
 
 
+@app.post("/admin/published-lessons/<slug>/approval")
+def admin_publication_approval(slug: str):
+    if not _library_write_allowed():
+        abort(403)
+    if not db_enabled:
+        abort(503)
+    desired = request.form.get("approved")
+    if desired not in ("0", "1"):
+        abort(400)
+    if not library.set_publication_approved(slug, desired == "1"):
+        abort(404)
+    return redirect(url_for("admin_publications"))
+
+
 @app.get("/admin/published-lessons/<slug>/audio/<int:slide_index>.mp3")
 def admin_publication_audio_preview(slug: str, slide_index: int):
     if not _admin_authed():

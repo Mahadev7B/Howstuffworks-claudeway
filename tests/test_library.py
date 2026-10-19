@@ -167,7 +167,7 @@ def test_public_queries_filter_active_records(monkeypatch):
 
 
 def test_activation_requires_every_slide_clip(monkeypatch):
-    _, cur = _fake_db(monkeypatch, [(_lesson(),)])
+    _, cur = _fake_db(monkeypatch, [(_lesson(), True)])
     with pytest.raises(ValueError, match="audio"):
         library.set_publication_active("sky", True)
     assert not any("UPDATE published_lessons" in c.args[0] for c in cur.execute.call_args_list)
@@ -175,7 +175,7 @@ def test_activation_requires_every_slide_clip(monkeypatch):
 
 def test_activation_accepts_clips_that_include_the_fun_fact(monkeypatch):
     lesson = _lesson()
-    _, cur = _fake_db(monkeypatch, [(lesson,), ("sky",)])
+    _, cur = _fake_db(monkeypatch, [(lesson, True), ("sky",)])
     expected_texts = [
         "Sunlight contains many colors. Fun fact: Light is fast.",
         "Air scatters blue light. Fun fact: The sky changes.",
@@ -187,6 +187,33 @@ def test_activation_accepts_clips_that_include_the_fun_fact(monkeypatch):
 
     assert library.set_publication_active("sky", True) is True
     assert any("UPDATE published_lessons" in c.args[0] for c in cur.execute.call_args_list)
+
+
+def test_activation_rejects_unapproved_draft(monkeypatch):
+    _, cur = _fake_db(monkeypatch, [(_lesson(), False)])
+
+    with pytest.raises(ValueError, match="approved"):
+        library.set_publication_active("sky", True)
+
+    assert not any("SET active" in c.args[0] for c in cur.execute.call_args_list)
+
+
+def test_private_draft_can_be_approved_without_becoming_active(monkeypatch):
+    _, cur = _fake_db(monkeypatch, [("sky",)])
+
+    assert library.set_publication_approved("sky", True) is True
+
+    update = next(c for c in cur.execute.call_args_list if "UPDATE published_lessons" in c.args[0])
+    assert "approved_for_publish" in update.args[0]
+    assert "active = false" in update.args[0]
+    assert update.args[1] == (True, "sky")
+
+
+def test_public_draft_cannot_have_approval_changed(monkeypatch):
+    _, cur = _fake_db(monkeypatch, [None])
+
+    assert library.set_publication_approved("sky", False) is False
+    assert any("active = false" in c.args[0] for c in cur.execute.call_args_list)
 
 
 def test_draft_cover_can_be_changed_without_touching_lesson(monkeypatch):

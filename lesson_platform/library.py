@@ -172,10 +172,12 @@ def set_publication_active(slug: str, active: bool) -> bool:
     with _connect() as conn, conn.transaction(), conn.cursor() as cur:
         if active:
             cur.execute(
-                "SELECT lesson FROM published_lessons WHERE slug = %s FOR UPDATE", (slug,))
+                "SELECT lesson, approved_for_publish FROM published_lessons WHERE slug = %s FOR UPDATE", (slug,))
             row = cur.fetchone()
             if row is None:
                 return False
+            if not row[1]:
+                raise ValueError("Lesson must be approved before publication")
             slides = row[0].get("slides", [])
             cur.execute("SELECT slide_index, source_text_hash FROM published_lesson_audio WHERE slug = %s", (slug,))
             hashes = dict(cur.fetchall())
@@ -186,6 +188,19 @@ def set_publication_active(slug: str, active: bool) -> bool:
             """UPDATE published_lessons
                SET active = %s, published_at = CASE WHEN %s THEN COALESCE(published_at, NOW()) ELSE published_at END
                WHERE slug = %s RETURNING slug""", (active, active, slug))
+        return cur.fetchone() is not None
+
+
+def set_publication_approved(slug: str, approved: bool) -> bool:
+    """Record editorial approval without changing public visibility."""
+    with _connect() as conn, conn.transaction(), conn.cursor() as cur:
+        cur.execute(
+            """UPDATE published_lessons
+               SET approved_for_publish = %s
+               WHERE slug = %s AND active = false
+               RETURNING slug""",
+            (approved, slug),
+        )
         return cur.fetchone() is not None
 
 
@@ -279,7 +294,8 @@ def list_editorial_publications() -> list[dict]:
     """Admin metadata only; no lesson artwork or audio blobs in the dashboard."""
     with _connect() as conn, conn.cursor() as cur:
         cur.execute(
-            """SELECT p.slug, p.title, p.active, jsonb_array_length(p.lesson->'slides'),
+            """SELECT p.slug, p.title, p.active, p.approved_for_publish,
+                      jsonb_array_length(p.lesson->'slides'),
                       COUNT(a.slide_index) AS clips, p.cover_slide_index,
                       ARRAY(SELECT slide->>'fun_fact'
                             FROM jsonb_array_elements(p.lesson->'slides') WITH ORDINALITY AS item(slide, position)
@@ -287,7 +303,7 @@ def list_editorial_publications() -> list[dict]:
                FROM published_lessons p
                LEFT JOIN published_lesson_audio a ON a.slug = p.slug
                GROUP BY p.slug ORDER BY p.sort_order, p.slug""")
-        return [dict(zip(("slug", "title", "active", "slide_count", "clip_count", "cover_slide_index", "fun_facts"), row))
+        return [dict(zip(("slug", "title", "active", "approved_for_publish", "slide_count", "clip_count", "cover_slide_index", "fun_facts"), row))
                 for row in cur.fetchall()]
 
 

@@ -101,3 +101,18 @@ def test_first_six_batch_uses_reviewed_assets_and_copy():
     assert len(displayed_scripts) == 24
     normalize = lambda text: re.sub(r"\s+", " ", text).strip()
     assert [normalize(text) for text in displayed_scripts] == [normalize(text) for text in spoken_scripts]
+
+
+def test_second_six_manifest_has_complete_review_copy():
+    manifest = Path(__file__).parents[1] / "assets" / "editorial" / "second-six-lessons.json"
+    lessons = json.loads(manifest.read_text(encoding="utf-8"))
+
+    assert [lesson["slug"] for lesson in lessons] == [
+        "how-does-rain-happen", "jupiter-the-biggest-planet", "how-do-fireflies-glow",
+        "platypuses-lay-eggs", "where-jumping-spiders-live", "how-plants-eat-sunlight",
+    ]
+    assert sum(len(lesson["slides"]) for lesson in lessons) == 24
+    assert all(slide["narration"].strip() and slide["fun_fact"].strip()
+               for lesson in lessons for slide in lesson["slides"])
+    assert "more than ten Earths" in lessons[1]["slides"][0]["narration"]
+    assert "does not eat sunlight" in lessons[5]["slides"][0]["narration"]

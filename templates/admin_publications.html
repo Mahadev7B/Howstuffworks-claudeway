@@ -33,6 +33,7 @@
       {% for row in rows %}
       <article class="card p-3 my-3">
         <div class="d-flex justify-content-between flex-wrap gap-2"><h3 class="h5">{{ row.title }}</h3><span>{{ 'Public' if row.active else 'Private draft' }} · {{ row.clip_count }} / {{ row.slide_count }} voice clips</span></div>
+        <p class="mb-1"><strong>{{ 'Approved for publication' if row.approved_for_publish else 'Awaiting approval' }}</strong></p>
         <p class="text-muted mb-2">/explore/{{ row.slug }}</p>
         <div class="d-flex flex-wrap align-items-start gap-3 mb-3">
           <img src="{{ url_for('admin_publication_thumbnail_preview', slug=row.slug) }}" alt="Current cover for {{ row.title }}" width="240" height="150" style="object-fit:cover;border-radius:12px">
@@ -41,9 +42,10 @@
         <div class="d-flex flex-wrap gap-2">
           {% if not row.active %}<a class="btn btn-primary" href="{{ url_for('admin_publication_preview', slug=row.slug) }}">Preview full lesson</a>{% endif %}
           {% if not row.active %}<form method="post" action="{{ url_for('admin_generate_publication_audio', slug=row.slug) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn btn-outline-primary" type="submit">Generate missing voice clips</button></form>{% endif %}
+          {% if not row.active %}<form method="post" action="{{ url_for('admin_publication_approval', slug=row.slug) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="approved" value="{{ '0' if row.approved_for_publish else '1' }}"><button class="btn {{ 'btn-outline-warning' if row.approved_for_publish else 'btn-outline-success' }}" type="submit">{{ 'Revoke approval' if row.approved_for_publish else 'Mark approved' }}</button></form>{% endif %}
           {% if row.active %}
           <form method="post" action="{{ url_for('admin_publication_visibility', slug=row.slug) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="active" value="0"><button class="btn btn-outline-danger" type="submit">Hide</button></form>
-          {% elif row.clip_count == row.slide_count and row.slide_count > 0 %}
+          {% elif row.approved_for_publish and row.clip_count == row.slide_count and row.slide_count > 0 %}
           <form method="post" action="{{ url_for('admin_publication_visibility', slug=row.slug) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="active" value="1"><label class="me-2"><input type="checkbox" name="reviewed_audio" value="1" required> I listened to every clip and reviewed the lesson</label><button class="btn btn-success" type="submit">Publish</button></form>
           {% endif %}
         </div>

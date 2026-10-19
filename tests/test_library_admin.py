@@ -113,6 +113,7 @@ def test_valid_stage_is_inactive(admin_site, monkeypatch):
 
 @pytest.mark.parametrize("path", ["/admin/published-lessons/sky/audio",
                                     "/admin/published-lessons/sky/visibility",
+                                    "/admin/published-lessons/sky/approval",
                                     "/admin/published-lessons/sky/cover"])
 def test_audio_and_visibility_require_csrf(admin_site, monkeypatch, path):
     module, client = admin_site
@@ -131,6 +132,39 @@ def test_publish_requires_review_confirmation(admin_site, monkeypatch):
     response = client.post("/admin/published-lessons/sky/visibility",
                            data={"csrf_token": "good-token", "active": "1"})
     assert response.status_code == 400
+
+
+def test_admin_can_mark_private_draft_approved_without_publishing(admin_site, monkeypatch):
+    module, client = admin_site
+    changes = []
+    monkeypatch.setattr(module.library, "set_publication_approved",
+                        lambda slug, approved: changes.append((slug, approved)) or True)
+    with client.session_transaction() as session:
+        session["admin"] = True
+        session["library_csrf"] = "good-token"
+
+    response = client.post("/admin/published-lessons/sky/approval",
+                           data={"csrf_token": "good-token", "approved": "1"})
+
+    assert response.status_code == 302
+    assert changes == [("sky", True)]
+
+
+def test_editorial_page_distinguishes_approval_from_publication(admin_site, monkeypatch):
+    module, client = admin_site
+    monkeypatch.setattr(module.library, "list_editorial_publications", lambda: [{
+        "slug": "sky", "title": "Why sky?", "active": False,
+        "approved_for_publish": True, "slide_count": 2, "clip_count": 2,
+        "cover_slide_index": 0, "fun_facts": ["One", "Two"],
+    }])
+    with client.session_transaction() as session:
+        session["admin"] = True
+
+    response = client.get("/admin/published-lessons")
+
+    assert response.status_code == 200
+    assert b"Approved for publication" in response.data
+    assert b"Private draft" in response.data
 
 
 def test_admin_can_preview_and_update_draft_cover(admin_site, monkeypatch):
