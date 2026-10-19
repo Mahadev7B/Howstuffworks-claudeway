@@ -71,6 +71,15 @@ def test_first_six_batch_uses_reviewed_assets_and_copy():
     rocket_copy = lessons["how-do-rockets-fly"]["slides"]
     assert "coast" in rocket_copy[0]["narration"]
     assert "Rockets like these carry both fuel and an oxidizer" in rocket_copy[2]["narration"]
+    diwali_copy = lessons["how-diwali-is-celebrated"]["slides"][1]
+    unified_diwali_copy = (
+        "Diwali celebrations bring families together for prayers, glowing diyas, colorful rangoli, "
+        "sweets, festive meals, and fireworks."
+    )
+    assert diwali_copy["narration"] == unified_diwali_copy
+    assert diwali_copy["explanation"] == unified_diwali_copy
+    assert "Some families" not in diwali_copy["narration"]
+    assert "Others" not in diwali_copy["narration"]
 
     displayed_scripts = []
     spoken_scripts = []
