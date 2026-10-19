@@ -36,6 +36,42 @@ def test_editorial_page_lists_drafts(admin_site, monkeypatch):
     assert response.status_code == 200
     assert b"Why sky?" in response.data
     assert b"1 / 2" in response.data
+    assert b'href="/admin/published-lessons/sky/preview"' in response.data
+
+
+def test_private_full_lesson_preview_requires_admin(admin_site, monkeypatch):
+    module, client = admin_site
+    monkeypatch.setattr(module.library, "get_editorial_publication",
+                        lambda slug: pytest.fail("unauthorized draft read"))
+
+    assert client.get("/admin/published-lessons/sky/preview").status_code == 403
+
+
+def test_admin_full_lesson_preview_uses_saved_versioned_audio(admin_site, monkeypatch):
+    module, client = admin_site
+    lesson = {"title": "Blue sky", "slides": [{
+        "title": "Air scatters light", "subtitle": "Not a roof",
+        "image_data_url": "data:image/png;base64,abc", "explanation": "Light meets air.",
+        "narration": "Sunlight meets tiny bits of air.", "fun_fact": "Air is all around us.",
+    }]}
+    monkeypatch.setattr(module.library, "get_editorial_publication", lambda slug: {
+        "lesson": lesson, "title": "Why is the sky blue?", "summary": "Light and air",
+        "category": "Science", "active": False,
+    })
+    monkeypatch.setattr(module.library, "get_audio_metadata", lambda slug: {
+        0: {"model": "gpt-4o-mini-tts", "voice": "marin", "source_text_hash": "fresh-hash"}
+    })
+    with client.session_transaction() as session:
+        session["admin"] = True
+
+    response = client.get("/admin/published-lessons/sky/preview")
+
+    assert response.status_code == 200
+    assert b"Private draft preview" in response.data
+    assert b"Air scatters light" in response.data
+    assert b"Air is all around us." in response.data
+    assert b"/admin/published-lessons/sky/audio/0.mp3?v=fresh-hash" in response.data
+    assert b'id="autoBtn" class="primary" disabled' not in response.data
 
 
 def test_editorial_page_shows_each_fun_fact_beside_its_audio(admin_site, monkeypatch):

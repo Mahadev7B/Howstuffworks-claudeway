@@ -7,8 +7,8 @@
   <meta name="description" content="{{ publication.summary if published else question }}">
   <meta property="og:title" content="{{ publication.title if published else lesson.title }}">
   <meta property="og:description" content="{{ publication.summary if published else question }}">
-  {% if published %}<link rel="canonical" href="{{ canonical_url }}">{% endif %}
-  <meta property="og:image" content="{{ url_for('explore_thumbnail', slug=slug, _external=True) if published else url_for('static', filename='favicon.svg', _external=True) }}">
+  {% if published and not editorial_preview|default(false) %}<link rel="canonical" href="{{ canonical_url }}">{% endif %}
+  <meta property="og:image" content="{{ url_for('admin_publication_thumbnail_preview', slug=slug, _external=True) if editorial_preview|default(false) else (url_for('explore_thumbnail', slug=slug, _external=True) if published else url_for('static', filename='favicon.svg', _external=True)) }}">
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -67,7 +67,7 @@
     </header>
 
     <div class="share-banner">
-      <p>{{ 'Visual draft — not published' if published and publication.preview else ('Explore this lesson!' if published else 'Someone shared this lesson with you!') }}</p>
+      <p>{{ 'Private draft preview - not published' if editorial_preview|default(false) else ('Visual draft - not published' if published and publication.preview else ('Explore this lesson!' if published else 'Someone shared this lesson with you!')) }}</p>
       <div class="share-actions">
         <button class="share-copy-btn" id="copyLinkBtn">📋 Copy link</button>
         {% if published %}<a href="{{ url_for('explore') }}" class="share-ask-link">Explore more lessons</a>{% endif %}
@@ -75,7 +75,8 @@
       </div>
     </div>
 
-    {% if published and publication.preview %}<p class="voice-disclosure">Visual preview only. Narration has not been generated or reviewed.</p>
+    {% if editorial_preview|default(false) %}<p class="voice-disclosure">Private editorial preview with saved AI-generated narration.</p>
+    {% elif published and publication.preview %}<p class="voice-disclosure">Visual preview only. Narration has not been generated or reviewed.</p>
     {% elif published %}<p class="voice-disclosure">AI-generated narration. Press Play to listen.</p>{% endif %}
 
     <div class="tap-to-play" id="tapPrompt">{{ 'Use the arrows to browse this draft' if published and publication.preview else 'Tap ▶ Play to hear the lesson read aloud' }}</div>
@@ -207,7 +208,12 @@
       async function getAudioUrl(idx) {
         if (audioCache.has(idx)) return audioCache.get(idx);
         if (audioInflight.has(idx)) return audioInflight.get(idx);
-        {% if published %}
+        {% if editorial_preview|default(false) %}
+        const url = {{ audio_urls|tojson }}[idx];
+        if (!url) throw new Error('Saved audio is unavailable for slide ' + (idx + 1));
+        audioCache.set(idx, url);
+        return url;
+        {% elif published %}
         const url = '{{ url_for("explore_audio", slug=slug, slide_index=0) }}'.replace('/0.mp3', '/' + idx + '.mp3');
         audioCache.set(idx, url);
         return url;

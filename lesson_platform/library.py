@@ -224,6 +224,16 @@ def get_staged_lesson(slug: str) -> dict | None:
         return row[0] if row and not row[1] else None
 
 
+def get_editorial_publication(slug: str) -> dict | None:
+    """Return a private publication to an authenticated editorial route."""
+    with _connect() as conn, conn.cursor() as cur:
+        cur.execute(
+            """SELECT lesson, title, summary, category, active
+               FROM published_lessons WHERE slug = %s AND active = false""", (slug,))
+        row = cur.fetchone()
+        return dict(zip(("lesson", "title", "summary", "category", "active"), row)) if row else None
+
+
 def get_audio_metadata(slug: str) -> dict[int, dict]:
     with _connect() as conn, conn.cursor() as cur:
         cur.execute("""SELECT slide_index, model, voice, source_text_hash

@@ -1204,6 +1204,27 @@ def admin_publications():
                            unsafe_session_key=app.secret_key == "dev-secret-key")
 
 
+@app.get("/admin/published-lessons/<slug>/preview")
+def admin_publication_preview(slug: str):
+    if not _admin_authed():
+        abort(403)
+    if not db_enabled:
+        abort(503)
+    publication = library.get_editorial_publication(slug)
+    if publication is None:
+        abort(404)
+    metadata = library.get_audio_metadata(slug)
+    audio_urls = [
+        url_for("admin_publication_audio_preview", slug=slug, slide_index=index,
+                v=metadata.get(index, {}).get("source_text_hash", "missing"))
+        for index in range(len(publication["lesson"].get("slides", [])))
+    ]
+    return render_template("share.html", lesson=publication["lesson"],
+                           question=publication["summary"], slug=slug,
+                           published=True, publication=publication,
+                           editorial_preview=True, audio_urls=audio_urls)
+
+
 @app.post("/admin/published-lessons")
 def admin_stage_publication():
     if not _library_write_allowed():
