@@ -25,6 +25,7 @@
     .slide h2 { font-family: 'Fredoka', sans-serif; color: #FF6B35; font-weight: 700; }
     .fun-fact { background: #FFF3E8; border-left-color: #FF6B35; }
     .fun-fact strong { color: #FF6B35; }
+    .publication-fun-fact strong { color: #96380F; }
     .controls { border-radius: 16px; border-color: rgba(255,107,53,0.2); }
     .controls button.primary { background: linear-gradient(135deg, #FF6B35, #F7B801); border-color: #FF6B35; }
     .controls button.primary:hover { background: #6A4C93; border-color: #6A4C93; }
@@ -106,7 +107,10 @@
           </div>
 
           {% if published %}
-          <p class="explanation publication-script">{{ slide.publication_script }}</p>
+          <p class="explanation publication-narration">{{ slide.publication_narration }}</p>
+          <div class="fun-fact publication-fun-fact">
+            <strong>Fun fact:</strong> {{ slide.publication_fun_fact }}
+          </div>
           {% else %}
           <p class="explanation">{{ slide.explanation }}</p>
           <div class="fun-fact">

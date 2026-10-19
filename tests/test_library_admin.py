@@ -70,8 +70,10 @@ def test_admin_full_lesson_preview_uses_saved_versioned_audio(admin_site, monkey
     assert b"Private draft preview" in response.data
     assert b"Air scatters light" in response.data
     assert b"Air is all around us." in response.data
-    assert (b"Sunlight meets tiny bits of air. Fun fact: Air is all around us."
+    assert (b'<p class="explanation publication-narration">Sunlight meets tiny bits of air.</p>'
             in response.data)
+    assert (b'<div class="fun-fact publication-fun-fact">' in response.data)
+    assert b"<strong>Fun fact:</strong> Air is all around us." in response.data
     assert b"Light meets air." not in response.data
     assert b"/admin/published-lessons/sky/audio/0.mp3?v=fresh-hash" in response.data
     assert b'id="autoBtn" class="primary" disabled' not in response.data

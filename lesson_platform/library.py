@@ -36,6 +36,8 @@ def with_publication_scripts(lesson: dict) -> dict:
     """Return a display snapshot whose script is exactly the saved TTS input."""
     result = copy.deepcopy(lesson)
     for slide in result.get("slides", []):
+        slide["publication_narration"] = slide["narration"].strip()
+        slide["publication_fun_fact"] = slide.get("fun_fact", "").strip()
         slide["publication_script"] = publication_audio_text(slide)
     return result
 

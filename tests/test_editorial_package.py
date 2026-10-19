@@ -1,6 +1,7 @@
 """Local editorial assets must validate without a database or paid generation."""
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -76,7 +77,10 @@ def test_first_six_batch_uses_reviewed_assets_and_copy():
     for entry in entries:
         prepared = prepare_publication(entry["lesson"], cover_data_url=entry["cover_data_url"])
         for slide in prepared.lesson["slides"]:
-            displayed_scripts.append(slide["publication_script"])
+            displayed_scripts.append(" ".join((slide["publication_narration"],
+                                                "Fun fact:",
+                                                slide["publication_fun_fact"])))
             spoken_scripts.append(publication_audio_text(slide))
     assert len(displayed_scripts) == 24
-    assert displayed_scripts == spoken_scripts
+    normalize = lambda text: re.sub(r"\s+", " ", text).strip()
+    assert [normalize(text) for text in displayed_scripts] == [normalize(text) for text in spoken_scripts]

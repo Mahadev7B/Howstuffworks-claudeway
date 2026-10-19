@@ -51,6 +51,11 @@ def test_canonical_publication_script_is_identical_for_display_and_tts():
     ]
     assert all(slide["publication_script"] == library.publication_audio_text(slide)
                for slide in lesson["slides"])
+    assert [(slide["publication_narration"], slide["publication_fun_fact"])
+            for slide in lesson["slides"]] == [
+        ("Sunlight contains many colors.", "Light is fast."),
+        ("Air scatters blue light.", "The sky changes."),
+    ]
 
 
 def test_editor_can_choose_representative_cover_slide():
