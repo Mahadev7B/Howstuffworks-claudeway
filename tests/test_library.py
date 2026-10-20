@@ -151,6 +151,52 @@ def test_stage_editorial_lesson_without_mutating_cache(monkeypatch):
     assert any("INSERT INTO published_lessons" in call.args[0] for call in cur.execute.call_args_list)
 
 
+def test_revision_is_private_unapproved_and_replaces_only_stale_audio(monkeypatch):
+    lesson = _lesson()
+    replacement_text = library.publication_audio_text(lesson["slides"][1])
+    replacement_hash = hashlib.sha256(replacement_text.encode("utf-8")).hexdigest()
+    _, cur = _fake_db(monkeypatch, [(True,)])
+
+    revised = library.revise_editorial_lesson(
+        lesson, "Why is the sky blue?", "sky-blue", "Why is the sky blue?",
+        "Discover light and air.", "Earth & Nature", 1, 1,
+        cover_data_url=_image_data_url("#e94c32"),
+        audio_replacements={1: {
+            "mp3": b"replacement-mp3", "model": "Kokoro-82M ONNX v1.0",
+            "voice": "af_heart", "source_text_hash": replacement_hash,
+        }},
+    )
+
+    assert revised == {"slug": "sky-blue", "active": False,
+                       "approved_for_publish": False, "was_active": True}
+    update = next(c for c in cur.execute.call_args_list
+                  if "UPDATE published_lessons" in c.args[0])
+    assert "active = false" in update.args[0]
+    assert "approved_for_publish = false" in update.args[0]
+    delete = next(c for c in cur.execute.call_args_list
+                  if "DELETE FROM published_lesson_audio" in c.args[0])
+    assert replacement_hash in delete.args[1]
+    upsert = next(c for c in cur.execute.call_args_list
+                  if "INSERT INTO published_lesson_audio" in c.args[0])
+    assert upsert.args[1] == ("sky-blue", 1, b"replacement-mp3",
+                              "Kokoro-82M ONNX v1.0", "af_heart", replacement_hash)
+
+
+def test_revision_rejects_audio_that_does_not_match_canonical_text(monkeypatch):
+    _, cur = _fake_db(monkeypatch, [])
+
+    with pytest.raises(ValueError, match="source text"):
+        library.revise_editorial_lesson(
+            _lesson(), "Why sky?", "sky-blue", "Why sky?", "Summary", "Science",
+            audio_replacements={0: {
+                "mp3": b"replacement-mp3", "model": "Kokoro", "voice": "af_heart",
+                "source_text_hash": "wrong",
+            }},
+        )
+
+    assert not cur.execute.called
+
+
 def test_public_queries_filter_active_records(monkeypatch):
     _, cur = _fake_db(monkeypatch, [({"slides": []}, "Sky", "Summary", "Science"),
                                    (b"webp", "image/webp"), (b"mp3",)])

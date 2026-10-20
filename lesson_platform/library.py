@@ -168,6 +168,77 @@ def stage_editorial_lesson(lesson: dict, question: str, slug: str, title: str,
                                    category, sort_order, featured_rank, 0)
 
 
+def revise_editorial_lesson(lesson: dict, question: str, slug: str, title: str,
+                            summary: str, category: str, sort_order: int = 0,
+                            featured_rank: int | None = None,
+                            cover_data_url: str | None = None,
+                            audio_replacements: dict[int, dict] | None = None) -> dict:
+    """Atomically replace one existing lesson as an unapproved private draft.
+
+    Existing clips are retained only when their slide index and canonical source
+    hash still match. Prepared replacement clips are committed in the same
+    transaction as the new text so the draft never exposes a mixed state.
+    """
+    _validate_metadata(question, slug, title, summary, category, sort_order, featured_rank)
+    prepared = prepare_publication(lesson, cover_data_url=cover_data_url)
+    replacements = audio_replacements or {}
+    expected_hashes = {
+        index: hashlib.sha256(publication_audio_text(slide).encode("utf-8")).hexdigest()
+        for index, slide in enumerate(prepared.lesson["slides"])
+    }
+    for index, clip in replacements.items():
+        if not isinstance(index, int) or isinstance(index, bool) or index not in expected_hashes:
+            raise ValueError("Replacement audio slide index is out of range")
+        if not isinstance(clip, dict) or not clip.get("mp3"):
+            raise ValueError("Replacement audio is empty")
+        if clip.get("source_text_hash") != expected_hashes[index]:
+            raise ValueError("Replacement audio source text does not match the slide")
+        if not all(isinstance(clip.get(field), str) and clip[field].strip()
+                   for field in ("model", "voice")):
+            raise ValueError("Replacement audio needs model and voice metadata")
+
+    with _connect() as conn, conn.transaction(), conn.cursor() as cur:
+        cur.execute("SELECT active FROM published_lessons WHERE slug = %s FOR UPDATE", (slug,))
+        row = cur.fetchone()
+        if row is None:
+            raise ValueError("Publication was not found")
+        was_active = bool(row[0])
+        cur.execute(
+            """UPDATE published_lessons
+               SET source_question_hash = %s, question = %s, title = %s, summary = %s,
+                   category = %s, sort_order = %s, featured_rank = %s,
+                   cover_slide_index = 0, lesson = %s, thumbnail = %s,
+                   thumbnail_mime = %s, active = false, approved_for_publish = false
+               WHERE slug = %s""",
+            (db.question_hash(question), question.strip(), title.strip(), summary.strip(),
+             category.strip(), sort_order, featured_rank, Jsonb(prepared.lesson),
+             prepared.thumbnail, prepared.thumbnail_mime, slug),
+        )
+        expected_values = ", ".join(["(%s, %s)"] * len(expected_hashes))
+        expected_params = [value for item in expected_hashes.items() for value in item]
+        cur.execute(
+            f"""DELETE FROM published_lesson_audio AS audio
+                WHERE audio.slug = %s AND NOT EXISTS (
+                    SELECT 1 FROM (VALUES {expected_values}) AS expected(slide_index, source_text_hash)
+                    WHERE expected.slide_index = audio.slide_index
+                      AND expected.source_text_hash = audio.source_text_hash)""",
+            (slug, *expected_params),
+        )
+        for index, clip in replacements.items():
+            cur.execute(
+                """INSERT INTO published_lesson_audio
+                   (slug, slide_index, mp3, model, voice, source_text_hash)
+                   VALUES (%s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (slug, slide_index) DO UPDATE
+                   SET mp3 = EXCLUDED.mp3, model = EXCLUDED.model, voice = EXCLUDED.voice,
+                       source_text_hash = EXCLUDED.source_text_hash""",
+                (slug, index, clip["mp3"], clip["model"].strip(), clip["voice"].strip(),
+                 clip["source_text_hash"]),
+            )
+    return {"slug": slug, "active": False, "approved_for_publish": False,
+            "was_active": was_active}
+
+
 def set_publication_active(slug: str, active: bool) -> bool:
     with _connect() as conn, conn.transaction(), conn.cursor() as cur:
         if active:
