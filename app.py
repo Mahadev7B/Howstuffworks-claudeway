@@ -59,6 +59,7 @@ from lesson_platform import (
 from lesson_platform.db import get_pool_stats, get_write_stats
 from lesson_platform import library
 from lesson_platform import library_audio
+from lesson_platform import library_import
 
 load_dotenv()
 
@@ -1242,6 +1243,38 @@ def admin_stage_publication():
     except ValueError as exc:
         return redirect(url_for("admin_publications", error=str(exc)))
     return redirect(url_for("admin_publications"))
+
+
+@app.post("/admin/published-lessons/import")
+def admin_import_publication():
+    if not _admin_authed():
+        abort(403)
+    # Bound the request before multipart parsing; this does not change other routes.
+    if request.content_length is None or request.content_length > library_import.MAX_REQUEST_BYTES:
+        abort(413)
+    if not _library_write_allowed():
+        abort(403)
+    if not db_enabled:
+        abort(503)
+    uploaded = request.files.get("package")
+    if uploaded is None or not uploaded.filename or not uploaded.filename.lower().endswith(".json"):
+        return "Choose one prepared .json lesson package.", 400
+    try:
+        ready = library_import.prepare_import(uploaded.read(library_import.MAX_PACKET_BYTES + 1))
+        if request.form.get("validate_only") == "1":
+            return jsonify({"ok": True, "saved": False, "slug": ready.entry["slug"],
+                            "slides": 4, "audio_clips": 4})
+        result = library_import.save_import(ready)
+    except library_import.ImportConflict as exc:
+        return str(exc), 409
+    except library_import.ImportUnavailable as exc:
+        return str(exc), 503
+    except ValueError as exc:
+        return str(exc), 400
+    except Exception:
+        logger.exception("Private lesson import failed")
+        return "Import outcome is unconfirmed. Check the lesson list before retrying the identical package.", 503
+    return redirect(url_for("admin_publication_preview", slug=result["slug"]), code=303)
 
 
 @app.post("/admin/published-lessons/<slug>/audio")

@@ -13,6 +13,18 @@
   {% if unsafe_session_key %}<p class="alert alert-warning">Publishing is disabled until a private FLASK_SECRET_KEY is configured.</p>{% endif %}
   {% if error %}<p class="alert alert-danger" role="alert">{{ error }}</p>{% endif %}
   <section class="card p-3 my-4">
+    <h2 class="h4">Import private lesson</h2>
+    <p>Upload one prepared JSON package with its exact four slides, illustrations and four saved Kokoro Heart clips. No generation calls are made. New imports remain private and awaiting review; existing lessons are never overwritten.</p>
+    <form method="post" action="{{ url_for('admin_import_publication') }}" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label class="form-label">Prepared lesson package (.json, maximum 12 MiB)
+        <input class="form-control" type="file" name="package" accept=".json,application/json" required>
+      </label>
+      <button class="btn btn-primary" type="submit">Import private lesson</button>
+      <button class="btn btn-outline-secondary" type="submit" name="validate_only" value="1">Validate without saving</button>
+    </form>
+  </section>
+  <section class="card p-3 my-4">
     <h2 class="h4">Stage a lesson</h2>
     <form method="post" action="{{ url_for('admin_stage_publication') }}" class="row g-3">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
