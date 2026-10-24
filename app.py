@@ -60,10 +60,12 @@ from lesson_platform.db import get_pool_stats, get_write_stats
 from lesson_platform import library
 from lesson_platform import library_audio
 from lesson_platform import library_import
+from lesson_platform.private_api import register_private_api
 
 load_dotenv()
 
 app = Flask(__name__)
+register_private_api(app)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
