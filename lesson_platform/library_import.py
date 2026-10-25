@@ -4,10 +4,12 @@ import binascii
 from dataclasses import dataclass
 import hashlib
 import json
+from pathlib import Path
 import shutil
 import subprocess
 
 from . import db, library
+from .private_import_protocol import private_slide_count
 
 MAX_PACKET_BYTES = 12 * 1024 * 1024
 MAX_REQUEST_BYTES = MAX_PACKET_BYTES + 64 * 1024
@@ -49,8 +51,8 @@ def _keys(value, required, optional=()):
         raise ValueError("Package fields are missing or unsupported")
 
 
-def _validate_mp3(audio: bytes, index: int) -> None:
-    executable = shutil.which("ffmpeg")
+def _validate_mp3(audio: bytes, index: int, *, ffmpeg_path=None) -> None:
+    executable = str(Path(ffmpeg_path).resolve(strict=True)) if ffmpeg_path is not None else shutil.which("ffmpeg")
     if not executable:
         raise ImportUnavailable("Existing FFmpeg is required to validate saved MP3 clips")
     try:
@@ -68,7 +70,7 @@ def _validate_mp3(audio: bytes, index: int) -> None:
         raise ValueError(f"Slide {index + 1} needs a decodable MP3 between 0.25 and 90 seconds")
 
 
-def prepare_import(raw: bytes) -> PreparedImport:
+def prepare_import(raw: bytes, *, ffmpeg_path=None) -> PreparedImport:
     """Validate exact stored text/images/audio, without a DB or provider call."""
     if not raw or len(raw) > MAX_PACKET_BYTES:
         raise ValueError("Choose one JSON package no larger than 12 MiB")
@@ -94,9 +96,10 @@ def prepare_import(raw: bytes) -> PreparedImport:
     library._validate_metadata(*(entry[key] for key in (
         "question", "slug", "title", "summary", "category", "sort_order", "featured_rank")))
     lesson = entry["lesson"]
+    slide_count = private_slide_count(entry['slug'], entry['sort_order'])
     _keys(lesson, ("title", "slides"))
-    if lesson["title"] != entry["title"] or not isinstance(lesson["slides"], list) or len(lesson["slides"]) != 4:
-        raise ValueError("Package needs one matching lesson title and exactly four slides")
+    if lesson["title"] != entry["title"] or not isinstance(lesson["slides"], list) or len(lesson["slides"]) != slide_count:
+        raise ValueError(f"Package needs one matching lesson title and exactly {slide_count} slides")
     for slide in lesson["slides"]:
         _keys(slide, ("title", "explanation", "fun_fact", "narration", "image_data_url"),
               ("subtitle", "publication_narration", "publication_fun_fact", "publication_script"))
@@ -108,14 +111,14 @@ def prepare_import(raw: bytes) -> PreparedImport:
                for key in ("publication_narration", "publication_fun_fact", "publication_script")):
             raise ValueError("Displayed and spoken slide text must match")
     prepared = library.prepare_publication(lesson, cover_data_url=entry["cover_data_url"])
-    if not isinstance(packet["clips"], list) or len(packet["clips"]) != 4:
-        raise ValueError("Package needs exactly four saved narration clips")
+    if not isinstance(packet["clips"], list) or len(packet["clips"]) != slide_count:
+        raise ValueError(f"Package needs exactly {slide_count} saved narration clips")
     clips = []
     for index, clip in enumerate(packet["clips"]):
         _keys(clip, ("slide_index", "script", "source_text_hash", "mp3", "mp3_sha256", "model", "voice", "speed"))
         script = library.publication_audio_text(lesson["slides"][index])
         if type(clip["slide_index"]) is not int or clip["slide_index"] != index:
-            raise ValueError("Audio indices must be exactly 0, 1, 2, 3")
+            raise ValueError("Audio indices must cover every slide exactly in order")
         if clip["script"] != script or clip["source_text_hash"] != hashlib.sha256(script.encode()).hexdigest():
             raise ValueError("Saved narration source must match the canonical slide text including Fun fact")
         if (clip["model"], clip["voice"]) != (MODEL, VOICE) or isinstance(clip["speed"], bool) or clip["speed"] != 1.0:
@@ -129,7 +132,10 @@ def prepare_import(raw: bytes) -> PreparedImport:
             raise ValueError("Saved MP3 has invalid base64") from exc
         if not audio or len(audio) > MAX_AUDIO_BYTES or hashlib.sha256(audio).hexdigest() != clip["mp3_sha256"]:
             raise ValueError("Saved MP3 integrity check failed")
-        _validate_mp3(audio, index)
+        if ffmpeg_path is None:
+            _validate_mp3(audio, index)
+        else:
+            _validate_mp3(audio, index, ffmpeg_path=ffmpeg_path)
         clips.append({"mp3": audio, "model": MODEL, "voice": VOICE, "source_text_hash": clip["source_text_hash"]})
     return PreparedImport(entry, prepared, tuple(clips))
 

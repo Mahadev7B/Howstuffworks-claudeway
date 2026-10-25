@@ -10,7 +10,7 @@ from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 from . import library, library_import
 from .private_import_protocol import (
     MAX_PACKET_BYTES, METADATA_FIELDS, fingerprint_prepared, fingerprint_stored, preview_path,
-    valid_slug, valid_token,
+    valid_slug, valid_token, private_slide_count, CUBE_SLUG,
 )
 
 
@@ -54,10 +54,15 @@ def _lookup(slug):
     clips = [{"slide_index": r[14], "mp3": bytes(r[15]), "model": r[16], "voice": r[17],
               "source_text_hash": r[18]} for r in rows if r[14] is not None]
     slides = row[9].get("slides", [])
-    if len(slides) != 4 or [c["slide_index"] for c in clips] != [0, 1, 2, 3]:
+    try:
+        count = private_slide_count(slug, row[6])
+    except ValueError:
+        raise library_import.ImportConflict('Private lesson has an invalid slide policy') from None
+    if len(slides) != count or [c["slide_index"] for c in clips] != list(range(count)):
         raise library_import.ImportConflict("Private lesson is incomplete")
     metadata = dict(zip(METADATA_FIELDS, row[:9]))
-    return _receipt(slug, fingerprint_stored(metadata, row[9], row[10], row[11], clips))
+    return _receipt(slug, fingerprint_stored(metadata, row[9], row[10], row[11], clips),
+                    slides=count, audio_clips=count, **({'sort_order': 28} if slug == CUBE_SLUG else {}))
 
 
 def _kokoro_capabilities():
@@ -120,7 +125,9 @@ def register_private_api(app):
         try:
             fingerprint = fingerprint_prepared(ready)
             result = library_import.save_import(ready)
-            receipt = _receipt(result["slug"], fingerprint, created=result["created"])
+            count = len(ready.clips)
+            receipt = _receipt(result["slug"], fingerprint, slides=count, audio_clips=count,
+                               created=result["created"], **({'sort_order': 28} if result['slug'] == CUBE_SLUG else {}))
             return jsonify(receipt), 201 if result["created"] else 200
         except library_import.ImportConflict:
             return _error("Existing content or review state conflicts; nothing was changed", 409)

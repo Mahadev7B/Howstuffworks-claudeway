@@ -7,6 +7,7 @@ from . import db
 
 
 MAX_PACKET_BYTES = 12 * 1024 * 1024
+CUBE_SLUG = 'solve-a-2x2-rubiks-cube'
 _TOKEN = re.compile(r"[A-Za-z0-9._~-]{32,512}\Z", re.ASCII)
 _SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z", re.ASCII)
 _HASH = re.compile(r"[a-f0-9]{64}\Z", re.ASCII)
@@ -28,6 +29,15 @@ def valid_fingerprint(value):
 
 def preview_path(slug):
     return f"/admin/published-lessons/{slug}/preview"
+
+
+def private_slide_count(slug, sort_order):
+    """The held cube keeps its full draft; all other private imports use four."""
+    if slug == CUBE_SLUG:
+        if type(sort_order) is not int or sort_order != 28:
+            raise ValueError('The sixteen-slide cube must retain sort order 28')
+        return 16
+    return 4
 
 
 def fingerprint_stored(metadata, lesson, thumbnail, thumbnail_mime, clips):
@@ -54,10 +64,16 @@ def fingerprint_prepared(ready):
 
 
 def valid_receipt(receipt, slug, expected_fingerprint=None):
+    if not isinstance(receipt, dict):
+        return False
+    try:
+        count = private_slide_count(slug, receipt.get('sort_order'))
+    except ValueError:
+        return False
     return (isinstance(receipt, dict) and receipt.get("slug") == slug
             and valid_fingerprint(receipt.get("fingerprint"))
             and (expected_fingerprint is None or receipt["fingerprint"] == expected_fingerprint)
             and receipt.get("active") is False and receipt.get("approved_for_publish") is False
-            and type(receipt.get("slides")) is int and receipt["slides"] == 4
-            and type(receipt.get("audio_clips")) is int and receipt["audio_clips"] == 4
+            and type(receipt.get("slides")) is int and receipt["slides"] == count
+            and type(receipt.get("audio_clips")) is int and receipt["audio_clips"] == count
             and receipt.get("preview_url") == preview_path(slug))
