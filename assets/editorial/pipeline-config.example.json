@@ -1,0 +1,12 @@
+{
+  "workspace_root": "..",
+  "catalog": "assets/editorial/lesson-queue.json",
+  "state_path": "tmp/lesson-pipeline/state.json",
+  "work_dir": "tmp/lesson-pipeline/jobs",
+  "ffmpeg": "../japan-short/vendor/imageio_ffmpeg/binaries/ffmpeg-win-x86_64-v7.1.exe",
+  "server_url": "https://www.asklilowl.com",
+  "upload_authorized": false,
+  "preparation_dir": "../Howstuffworks-claudeway-library/assets/editorial/pipeline-inputs",
+  "recipe_file": null,
+  "artwork_manifest": null
+}
