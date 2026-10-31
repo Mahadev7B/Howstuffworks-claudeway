@@ -1,4 +1,4 @@
-"""Dedicated bearer scope: insert a complete private lesson or read a safe receipt."""
+"""Dedicated bearer scope: private imports, receipts, and held-cube formatting."""
 import hmac
 import importlib.util
 import os
@@ -8,6 +8,7 @@ from flask import jsonify, request
 from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
 
 from . import library, library_import
+from .private_cube_revision import ENDPOINT as CUBE_REVISION_ENDPOINT, register_cube_revision
 from .private_import_protocol import (
     MAX_PACKET_BYTES, METADATA_FIELDS, fingerprint_prepared, fingerprint_stored, preview_path,
     valid_slug, valid_token, private_slide_count, CUBE_SLUG,
@@ -85,15 +86,15 @@ def _kokoro_capabilities():
 
 
 def register_private_api(app):
-    """Register only import/receipt/capability routes; token grants no session or review access."""
+    """Register bounded private routes; token grants no session or review access."""
     @app.before_request
     def private_import_scope():
-        if request.endpoint in ("private_lessons_import", "private_lessons_receipt", "private_lessons_capabilities"):
+        if request.endpoint in ("private_lessons_import", "private_lessons_receipt", "private_lessons_capabilities", CUBE_REVISION_ENDPOINT):
             return _authorize()
 
     @app.after_request
     def private_import_no_store(response):
-        if request.endpoint in ("private_lessons_import", "private_lessons_receipt", "private_lessons_capabilities"):
+        if request.endpoint in ("private_lessons_import", "private_lessons_receipt", "private_lessons_capabilities", CUBE_REVISION_ENDPOINT):
             response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -151,3 +152,5 @@ def register_private_api(app):
             return _error("Lesson is not a complete unapproved private import", 409)
         except Exception:
             return _error("Private receipt lookup is unavailable", 503)
+
+    register_cube_revision(app, error=_error, receipt=_receipt)

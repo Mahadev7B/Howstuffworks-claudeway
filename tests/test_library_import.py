@@ -42,6 +42,14 @@ def packet():
                       "cover_data_url": art}, "clips": clips, "player_rate": 0.9}
 
 
+def cube_packet():
+    value = packet()
+    value['entry'].update(slug='solve-a-2x2-rubiks-cube', sort_order=28)
+    value['entry']['lesson']['slides'] = [copy.deepcopy(value['entry']['lesson']['slides'][i % 4]) for i in range(16)]
+    value['clips'] = [dict(copy.deepcopy(value['clips'][i % 4]), slide_index=i) for i in range(16)]
+    return value
+
+
 def prepare(importer, monkeypatch, value=None):
     # Only the external decoder is replaced; parsing, media hashes and storage stay real.
     monkeypatch.setattr(importer, "_validate_mp3", lambda audio, index: None)
@@ -53,6 +61,46 @@ def test_prepared_text_art_and_four_audio_hashes_are_preserved(importer, monkeyp
     assert result.entry["lesson"]["slides"][0]["narration"] == "Original body."
     assert result.prepared.lesson["slides"][0]["publication_script"] == "Original body. Fun fact: Separate fact."
     assert len(result.clips) == 4 and result.clips[3]["mp3"] == b"test decoder boundary \x03"
+
+
+def test_cube_sixteen_slides_preserve_canonical_audio_and_atomic_private_idempotence(importer, monkeypatch, storage):
+    ready = prepare(importer, monkeypatch, cube_packet())
+    assert len(ready.prepared.lesson['slides']) == len(ready.clips) == 16
+    assert ready.prepared.lesson['slides'][15]['publication_script'] == 'Original body. Fun fact: Separate fact.'
+    assert importer.save_import(ready)['created'] is True
+    assert storage.sql.execute('SELECT active,approved_for_publish FROM published_lessons').fetchall() == [(0, 0)]
+    assert storage.sql.execute('SELECT slide_index FROM published_lesson_audio ORDER BY slide_index').fetchall() == [(i,) for i in range(16)]
+    before = list(storage.sql.iterdump())
+    assert importer.save_import(ready)['created'] is False
+    assert list(storage.sql.iterdump()) == before
+
+
+@pytest.mark.parametrize('defect', ['other_slug', 'wrong_sort', 'four_slides', 'missing_slide', 'missing_clip',
+                                  'extra_clip', 'last_index', 'last_script', 'active', 'approved'])
+def test_sixteen_slide_exception_is_cube_only_and_complete(importer, monkeypatch, storage, defect):
+    value = cube_packet()
+    if defect == 'other_slug': value['entry']['slug'] = 'arbitrary-sixteen-slides'
+    elif defect == 'wrong_sort': value['entry']['sort_order'] = 29
+    elif defect == 'four_slides':
+        value['entry']['lesson']['slides'] = value['entry']['lesson']['slides'][:4]
+        value['clips'] = value['clips'][:4]
+    elif defect == 'missing_slide': value['entry']['lesson']['slides'].pop()
+    elif defect == 'missing_clip': value['clips'].pop()
+    elif defect == 'extra_clip': value['clips'].append(copy.deepcopy(value['clips'][-1]))
+    elif defect == 'last_index': value['clips'][-1]['slide_index'] = 14
+    elif defect == 'last_script': value['clips'][-1]['script'] = 'Wrong last-slide words'
+    else: value['entry'][defect if defect == 'active' else 'approved_for_publish'] = True
+    with pytest.raises(ValueError): prepare(importer, monkeypatch, value)
+    assert storage.sql.execute('SELECT COUNT(*) FROM published_lessons').fetchone() == (0,)
+
+
+def test_cube_last_clip_failure_rolls_back_all_sixteen(importer, monkeypatch, storage):
+    ready = prepare(importer, monkeypatch, cube_packet())
+    storage.fail_audio = True
+    storage.fail_audio_index = 15
+    with pytest.raises(RuntimeError, match='simulated'): importer.save_import(ready)
+    assert storage.sql.execute('SELECT COUNT(*) FROM published_lessons').fetchone() == (0,)
+    assert storage.sql.execute('SELECT COUNT(*) FROM published_lesson_audio').fetchone() == (0,)
 
 
 @pytest.mark.parametrize("defect", ["count", "slides", "index", "source", "audiohash", "voice", "speed", "rate", "flags", "svg", "empty", "sort", "audio_size", "rank"])
@@ -102,7 +150,7 @@ class SQLiteCursor:
     def execute(self, sql, params=()):
         if "pg_advisory_xact_lock" in sql:
             return self.cur.execute("SELECT NULL")
-        if self.db.fail_audio and "INSERT INTO published_lesson_audio" in sql and params[1] == 2:
+        if self.db.fail_audio and "INSERT INTO published_lesson_audio" in sql and params[1] == getattr(self.db, 'fail_audio_index', 2):
             raise RuntimeError("simulated second-stage storage failure")
         args = [json.dumps(v.obj) if hasattr(v, "obj") else v for v in params]
         self.cur.execute(sql.replace("%s", "?").replace(" FOR UPDATE", ""), args)

@@ -61,6 +61,7 @@ from lesson_platform import library
 from lesson_platform import library_audio
 from lesson_platform import library_import
 from lesson_platform.private_api import register_private_api
+from lesson_platform.cube_lesson import private_cube_animation
 
 load_dotenv()
 
@@ -1225,7 +1226,8 @@ def admin_publication_preview(slug: str):
     return render_template("share.html", lesson=library.with_publication_scripts(publication["lesson"]),
                            question=publication["summary"], slug=slug,
                            published=True, publication=publication,
-                           editorial_preview=True, audio_urls=audio_urls)
+                           editorial_preview=True, audio_urls=audio_urls,
+                           cube_animation_data=private_cube_animation(slug, publication['lesson']))
 
 
 @app.post("/admin/published-lessons")

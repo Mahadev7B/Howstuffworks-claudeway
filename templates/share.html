@@ -11,6 +11,7 @@
   <meta property="og:image" content="{{ url_for('admin_publication_thumbnail_preview', slug=slug, _external=True) if editorial_preview|default(false) else (url_for('explore_thumbnail', slug=slug, _external=True) if published else url_for('static', filename='favicon.svg', _external=True)) }}">
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  {% if cube_animation_data|default(none) %}<link rel="stylesheet" href="{{ url_for('static', filename='cube-player.css') }}">{% endif %}
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     body { font-family: 'Fredoka', sans-serif; background: #FFF8F0; }
@@ -99,10 +100,27 @@
           </div>
 
           <div class="illustration">
+            {% if cube_animation_data|default(none) %}
+            <div class="cube-motion">
+              <canvas class="cube-canvas" width="900" height="620" hidden role="img" aria-label="Animated cube demonstration: {{ slide.title }}"></canvas>
+              {% if slide.image_data_url %}<img src="{{ slide.image_data_url }}" alt="{{ slide.title }}" class="slide-image cube-poster">{% endif %}
+              <strong class="cube-move-label" aria-live="polite">Ready to watch</strong>
+              <span class="cube-move-count"></span>
+              <div class="cube-toolbar">
+                <button type="button" data-cube-action="play">Play animation</button>
+                <button type="button" data-cube-action="replay">Replay moves</button>
+                <button type="button" data-cube-action="prev">Previous move</button>
+                <button type="button" data-cube-action="next">Next move</button>
+              </div>
+              <p class="cube-caption">{{ cube_animation_data.scenes[loop.index0].caption }}</p>
+            </div>
+            <p class="cube-hint">Watch the highlighted layer. Clockwise is judged looking straight at the named face. You can pause after every move.</p>
+            {% else %}
             {% if slide.image_data_url %}
               <img src="{{ slide.image_data_url }}" alt="{{ slide.title }}" class="slide-image">
             {% else %}
               <div class="slide-image-missing">Illustration unavailable</div>
+            {% endif %}
             {% endif %}
           </div>
 
@@ -157,6 +175,10 @@
     </footer>
   </main>
 
+  {% if cube_animation_data|default(none) %}
+  <script id="cube-animation-data" type="application/json">{{ cube_animation_data|tojson }}</script>
+  <script src="{{ url_for('static', filename='cube-player.js') }}"></script>
+  {% endif %}
   <script>
     (function () {
       const slides = Array.from(document.querySelectorAll('.slide'));
@@ -171,10 +193,14 @@
       const speedInput = document.getElementById('speed');
       const speedVal = document.getElementById('speedVal');
       const tapPrompt = document.getElementById('tapPrompt');
+      const cubeDataEl = document.getElementById('cube-animation-data');
+      const cubePlayer = cubeDataEl && window.CubeMotion ? window.CubeMotion.mount(document, JSON.parse(cubeDataEl.textContent)) : null;
+      if (cubePlayer) document.querySelector('main').classList.add('cube-animated-lesson');
 
       let current = 0;
       let rate = 0.9;
       let autoMode = false;
+      let speechRun = 0;
 
       function updateProgress() {
         progressEl.style.width = ((current + 1) / total * 100) + '%';
@@ -187,6 +213,7 @@
         slides[current].classList.add('active');
         dots[current].classList.add('on');
         updateProgress();
+        if (cubePlayer) cubePlayer.show(current);
       }
 
       const audioCache = new Map();
@@ -251,33 +278,48 @@
       }
 
       function stopAllAudio() {
+        speechRun += 1;
         try { audioEl.pause(); audioEl.currentTime = 0; } catch (e) {}
+        if (cubePlayer) cubePlayer.stop();
         if ('speechSynthesis' in window) speechSynthesis.cancel();
       }
 
       async function speakCurrent(onDone) {
         stopAllAudio();
+        const run = speechRun, spokenIndex = current;
         statusEl.textContent = 'Loading voice for slide ' + (current + 1) + '…';
         readBtn.textContent = '⏹ Stop';
         try {
-          const url = await getAudioUrl(current);
+          const url = await getAudioUrl(spokenIndex);
+          if (cubePlayer && (run !== speechRun || spokenIndex !== current)) return;
           audioEl.pause();
           audioEl.src = url;
           audioEl.load();
           audioEl.playbackRate = rate;
           audioEl.onplay = () => {
+            if (cubePlayer && (run !== speechRun || spokenIndex !== current)) return;
+            if (cubePlayer) cubePlayer.begin(spokenIndex);
             statusEl.textContent = 'Reading slide ' + (current + 1) + ' of ' + total + '…';
           };
-          audioEl.onended = () => {
+          audioEl.onended = async () => {
+            if (cubePlayer && (run !== speechRun || spokenIndex !== current)) return;
+            if (cubePlayer) {
+              statusEl.textContent = 'Watch the moves, or pause and practise.';
+              const completed = await cubePlayer.finish(spokenIndex);
+              if (!completed || run !== speechRun || spokenIndex !== current) return;
+            }
             readBtn.textContent = '🔊 Read this slide';
             if (onDone) onDone();
           };
           audioEl.onerror = () => {
+            if (cubePlayer && (run !== speechRun || spokenIndex !== current)) return;
+            if (cubePlayer) { cubePlayer.stop(); setAuto(false); }
             readBtn.textContent = '🔊 Read this slide';
             statusEl.textContent = 'Audio error. Tap ▶ Play to try again.';
           };
           await audioEl.play();
         } catch (err) {
+          if (cubePlayer && (run !== speechRun || spokenIndex !== current)) return;
           console.warn('TTS failed:', err);
           readBtn.textContent = '🔊 Read this slide';
           statusEl.textContent = 'Voice unavailable. Tap ▶ Play to retry.';
@@ -300,8 +342,10 @@
       function autoAdvance() {
         if (!autoMode) return;
         if (current < total - 1) {
+          const expectedRun = speechRun, expectedIndex = current;
           setTimeout(() => {
             if (!autoMode) return;
+            if (cubePlayer && (expectedRun !== speechRun || expectedIndex !== current)) return;
             show(current + 1);
             speakCurrent(autoAdvance);
           }, 700);
@@ -339,7 +383,7 @@
       });
 
       function manualNav(delta) {
-        if (autoMode) { setAuto(false); stopAllAudio(); }
+        if (autoMode || cubePlayer) { setAuto(false); stopAllAudio(); }
         show(current + delta);
         statusEl.textContent = 'Slide ' + (current + 1) + ' of ' + total + '.';
       }
@@ -347,12 +391,13 @@
       prevBtn.addEventListener('click', () => manualNav(-1));
       nextBtn.addEventListener('click', () => manualNav(1));
       dots.forEach(d => d.addEventListener('click', () => {
-        if (autoMode) { setAuto(false); stopAllAudio(); }
+        if (autoMode || cubePlayer) { setAuto(false); stopAllAudio(); }
         show(parseInt(d.dataset.goto, 10));
       }));
 
       speedInput.addEventListener('input', () => {
         rate = parseFloat(speedInput.value);
+        if (cubePlayer) cubePlayer.setRate(rate);
         speedVal.textContent = rate.toFixed(1) + '×';
         if (!audioEl.paused) {
           audioEl.playbackRate = rate;
@@ -364,6 +409,7 @@
 
       document.addEventListener('keydown', (e) => {
         const t = e.target;
+        if (cubePlayer && t && t.closest('.cube-motion')) return;
         if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
         if (e.key === 'ArrowRight') manualNav(1);
         else if (e.key === 'ArrowLeft') manualNav(-1);
