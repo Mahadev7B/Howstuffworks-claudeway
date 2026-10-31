@@ -1,0 +1,19 @@
+.cube-motion { overflow:hidden; border-radius:16px; border:1px solid #bed9df; background:#f2f8f7; }
+.cube-canvas { display:block; width:100%; height:auto; }
+.cube-canvas[hidden],.cube-poster[hidden] { display:none; }
+.cube-toolbar { display:flex; flex-wrap:wrap; gap:.45rem; padding:.8rem; border-top:1px solid #bed9df; }
+.cube-toolbar button { font:inherit; font-size:.9rem; border:1px solid #b4ccc9; border-radius:9px; padding:.55rem .7rem; color:#204d4c; background:#fff; cursor:pointer; }
+.cube-toolbar button:first-child { color:#fff; background:#256d68; border-color:#256d68; }
+.cube-toolbar button:focus-visible { outline:3px solid #efaf34; outline-offset:2px; }
+.cube-move-label { display:block; font-size:1.12rem; font-weight:700; color:#174d49; padding:.8rem .9rem .2rem; }
+.cube-move-count { display:block; font-size:.85rem; color:#48646a; padding:0 .9rem .45rem; }
+.cube-caption { margin:0; padding:.2rem .9rem .9rem; color:#355a60; font-size:.95rem; line-height:1.5; }
+.cube-hint { margin:.25rem 0 .8rem; color:#577278; font-size:.86rem; }
+.cube-animated-lesson .dots { flex-wrap:wrap; justify-content:center; max-width:70%; }
+.cube-animated-lesson .dot { min-width:12px; min-height:12px; }
+@media(max-width:700px) {
+  .cube-toolbar { gap:.4rem; padding:.6rem; }
+  .cube-toolbar button { flex:1 1 40%; min-height:44px; }
+  .cube-move-label { font-size:1.05rem; }
+  .cube-animated-lesson .deck-nav { align-items:center; gap:.6rem; }
+}
