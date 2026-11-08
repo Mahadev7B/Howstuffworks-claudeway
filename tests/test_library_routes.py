@@ -147,3 +147,8 @@ def test_lesson_and_explore_headers_use_the_approved_logo(site):
         html = site.get(path).get_data(as_text=True)
         assert "brand/wordmark.png" in html and "brand/owl-cutout.png" in html
         assert 'alt="AskLilOwl"' in html
+
+
+def test_published_lesson_loads_phone_and_tv_layout_after_page_styles(site):
+    html = site.get("/explore/sky-blue").get_data(as_text=True)
+    assert html.index("</style>") < html.index("lesson-cast.css") < html.index("</head>")

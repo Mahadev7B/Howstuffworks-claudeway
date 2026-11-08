@@ -55,6 +55,7 @@
     .published-lesson .controls button:disabled { opacity: .45; cursor: not-allowed; filter: grayscale(.4); }
     @media (max-width: 700px) { .published-lesson .deck { padding: 0.9rem; } }
   </style>
+  <link rel="stylesheet" href="{{ url_for('static', filename='lesson-cast.css') }}">
 </head>
 <body class="{% if published %}published-lesson{% endif %}">
   <main class="lesson">

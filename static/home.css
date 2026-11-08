@@ -78,3 +78,27 @@ body.cinema-home { margin: 0; background: #141414; color: #F1EFE8; font-family: 
   .owl-toggle, .owl-toggle img { width: 72px; height: 74px; }
   .owl-bubble { display: none; }
 }
+@media (orientation: landscape) and (max-height: 500px) {
+  .cine-header { padding: 6px 24px; gap: 16px; flex-wrap: nowrap; }
+  .cine-logo-owl { width: 38px; height: 39px; }
+  .cine-wordmark { padding: 5px 9px; border-radius: 9px; }
+  .cine-wordmark img { width: 96px; height: 20px; }
+  .cine-nav { font-size: 14px; gap: 16px; }
+  .cine-hero { margin: 0 24px; height: 210px; height: min(210px, 56svh); }
+  .cine-hero-copy { left: 24px; bottom: 14px; gap: 5px; width: min(420px, calc(100% - 48px)); }
+  .cine-hero h1 { font-size: 30px; }
+  .cine-hero p.cine-summary { display: none; }
+  .cinema-home a.cine-play { margin-top: 2px; padding: 6px 20px; font-size: 16px; }
+  .cine-rows { gap: 16px; padding: 12px 0 96px; }
+  .cine-row-head { margin: 0 24px 2px; }
+  .cine-row h2 { font-size: 20px; }
+  .cine-arrows { display: none; }
+  .cine-rail { padding: 6px 24px; scroll-padding-left: 24px; }
+  .cine-tile { flex-basis: 168px; }
+  .cine-tile img { width: 168px; height: 105px; }
+  .owl-ask { right: 12px; bottom: 8px; gap: 6px; }
+  .owl-toggle, .owl-toggle img { width: 60px; height: 61px; }
+  .owl-bubble, .owl-chips { display: none; }
+  .owl-panel { padding: 12px; max-height: calc(100vh - 84px); max-height: calc(100svh - 84px); overflow-y: auto; }
+  .owl-panel label { margin-bottom: 6px; font-size: 18px; }
+}
