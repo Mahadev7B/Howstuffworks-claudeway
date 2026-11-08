@@ -227,3 +227,66 @@ def test_admin_page_offers_publish_all_without_held_lesson(admin_site, monkeypat
     html = client.get("/admin/published-lessons").get_data(as_text=True)
     assert "Publish all 1 approved" in html
     assert "/admin/published-lessons/unpublish-all" in html
+
+
+def _clip_upload(*names):
+    from io import BytesIO
+    return {"csrf_token": "good-token", "clips": [(BytesIO(b"mp3-" + name.encode()), name) for name in names]}
+
+
+def test_replace_audio_requires_admin_and_csrf(admin_site, monkeypatch):
+    module, client = admin_site
+    monkeypatch.setattr(module.library_import, "replace_private_audio", lambda *a: pytest.fail("unauthorized write"))
+    assert client.post("/admin/published-lessons/sky/replace-audio", data={},
+                       content_type="multipart/form-data").status_code == 403
+    with client.session_transaction() as session:
+        session["admin"] = True
+        session["library_csrf"] = "good-token"
+    assert client.post("/admin/published-lessons/sky/replace-audio", data={"csrf_token": "bad"},
+                       content_type="multipart/form-data").status_code == 403
+
+
+def test_replace_audio_maps_files_to_slides_by_name(admin_site, monkeypatch):
+    module, client = admin_site
+    _admin_session(client)
+    saved = {}
+    monkeypatch.setattr(module.library_import, "replace_private_audio", lambda slug, clips: saved.update(slug=slug, clips=clips))
+    names = [f"slide-0{i}-kokoro-af-heart-v1.mp3" for i in (2, 1, 4, 3)]
+    response = client.post("/admin/published-lessons/sky/replace-audio", data=_clip_upload(*names),
+                           content_type="multipart/form-data")
+    assert response.status_code == 302 and "error" not in response.headers["Location"]
+    assert saved["slug"] == "sky" and sorted(saved["clips"]) == [0, 1, 2, 3]
+    assert saved["clips"][1] == b"mp3-slide-02-kokoro-af-heart-v1.mp3"
+
+
+@pytest.mark.parametrize("names", [["voice.mp3"], ["slide-01.wav"], ["slide-01.mp3", "slide-01-copy.mp3"], ["slide-00.mp3"]])
+def test_replace_audio_rejects_unclear_files(admin_site, monkeypatch, names):
+    module, client = admin_site
+    _admin_session(client)
+    monkeypatch.setattr(module.library_import, "replace_private_audio", lambda *a: pytest.fail("bad files saved"))
+    response = client.post("/admin/published-lessons/sky/replace-audio", data=_clip_upload(*names),
+                           content_type="multipart/form-data")
+    assert response.status_code == 302 and "error=" in response.headers["Location"]
+
+
+def test_replace_audio_reports_live_lesson_refusal(admin_site, monkeypatch):
+    module, client = admin_site
+    _admin_session(client)
+    def refuse(slug, clips):
+        raise ValueError("Only a private draft's audio can be changed")
+    monkeypatch.setattr(module.library_import, "replace_private_audio", refuse)
+    response = client.post("/admin/published-lessons/sky/replace-audio", data=_clip_upload("slide-01.mp3"),
+                           content_type="multipart/form-data")
+    assert response.status_code == 302 and "error=" in response.headers["Location"]
+
+
+def test_admin_page_offers_clip_replacement_only_for_private_lessons(admin_site, monkeypatch):
+    module, client = admin_site
+    _admin_session(client)
+    row = {"title": "T", "approved_for_publish": True, "slide_count": 4, "clip_count": 4,
+           "cover_slide_index": 0, "fun_facts": ["a", "b", "c", "d"]}
+    monkeypatch.setattr(module.library, "list_editorial_publications", lambda: [
+        {**row, "slug": "private-one", "active": False}, {**row, "slug": "live-one", "active": True}])
+    html = client.get("/admin/published-lessons").get_data(as_text=True)
+    assert "/admin/published-lessons/private-one/replace-audio" in html
+    assert "/admin/published-lessons/live-one/replace-audio" not in html

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 
@@ -16,6 +17,9 @@ MAX_REQUEST_BYTES = MAX_PACKET_BYTES + 64 * 1024
 MAX_AUDIO_BYTES = 1024 * 1024
 MODEL = "Kokoro-82M ONNX v1.0"
 VOICE = "af_heart"
+
+
+_CLIP_NAME = re.compile(r"slide-(\d{2})(?:\D.*)?\.mp3", re.IGNORECASE)
 
 
 class ImportConflict(ValueError):
@@ -68,6 +72,29 @@ def _validate_mp3(audio: bytes, index: int, *, ffmpeg_path=None) -> None:
     seconds = len(result.stdout) / (24000 * 2)
     if result.returncode or not 0.25 <= seconds <= 90:
         raise ValueError(f"Slide {index + 1} needs a decodable MP3 between 0.25 and 90 seconds")
+
+
+def clips_from_uploads(uploads) -> dict[int, bytes]:
+    """Map uploaded files to slides using their slide-NN file names."""
+    clips = {}
+    for uploaded in uploads:
+        match = _CLIP_NAME.fullmatch(uploaded.filename or "")
+        index = int(match.group(1)) - 1 if match else -1
+        if index < 0 or index in clips:
+            raise ValueError("Name the clips slide-01.mp3, slide-02.mp3 and so on, one for each slide")
+        clips[index] = uploaded.read(MAX_AUDIO_BYTES + 1)
+    if not clips:
+        raise ValueError("Choose the replacement MP3 clips")
+    return clips
+
+
+def replace_private_audio(slug: str, clips: dict[int, bytes]) -> None:
+    """Validate every replacement clip before any saved audio changes."""
+    for index in sorted(clips):
+        if len(clips[index]) > MAX_AUDIO_BYTES:
+            raise ValueError(f"Slide {index + 1} clip is too large")
+        _validate_mp3(clips[index], index)
+    library.replace_publication_audio(slug, clips)
 
 
 def prepare_import(raw: bytes, *, ffmpeg_path=None) -> PreparedImport:

@@ -1323,6 +1323,23 @@ def admin_generate_publication_audio(slug: str):
     return redirect(url_for("admin_publications"))
 
 
+@app.post("/admin/published-lessons/<slug>/replace-audio")
+def admin_replace_publication_audio(slug: str):
+    if not _admin_authed():
+        abort(403)
+    if request.content_length is None or request.content_length > library_import.MAX_REQUEST_BYTES:
+        abort(413)
+    if not _library_write_allowed():
+        abort(403)
+    if not db_enabled:
+        abort(503)
+    try:
+        library_import.replace_private_audio(slug, library_import.clips_from_uploads(request.files.getlist("clips")))
+    except (ValueError, RuntimeError) as exc:
+        return redirect(url_for("admin_publications", error=str(exc)))
+    return redirect(url_for("admin_publications"))
+
+
 @app.post("/admin/published-lessons/<slug>/visibility")
 def admin_publication_visibility(slug: str):
     if not _library_write_allowed():

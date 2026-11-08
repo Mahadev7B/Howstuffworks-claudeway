@@ -387,6 +387,28 @@ def save_publication_audio(slug: str, slide_index: int, mp3: bytes,
             (slug, slide_index, mp3, model, voice, source_text_hash))
 
 
+def replace_publication_audio(slug: str, clips: dict[int, bytes]) -> None:
+    """Swap every clip of a private lesson at once; its script and approval stay unchanged."""
+    with _connect() as conn, conn.transaction(), conn.cursor() as cur:
+        cur.execute("SELECT lesson, active FROM published_lessons WHERE slug = %s FOR UPDATE", (slug,))
+        row = cur.fetchone()
+        if row is None:
+            raise ValueError("Publication was not found")
+        if row[1]:
+            raise ValueError("Only a private draft's audio can be changed")
+        slides = row[0].get("slides", [])
+        if sorted(clips) != list(range(len(slides))):
+            raise ValueError(f"Upload exactly one clip for each of the {len(slides)} slides")
+        for index, slide in enumerate(slides):
+            text_hash = hashlib.sha256(publication_audio_text(slide).encode("utf-8")).hexdigest()
+            cur.execute(
+                """UPDATE published_lesson_audio SET mp3 = %s, source_text_hash = %s
+                   WHERE slug = %s AND slide_index = %s RETURNING slide_index""",
+                (clips[index], text_hash, slug, index))
+            if cur.fetchone() is None:
+                raise ValueError(f"Slide {index + 1} has no saved clip to replace")
+
+
 def list_editorial_publications() -> list[dict]:
     """Admin metadata only; no lesson artwork or audio blobs in the dashboard."""
     with _connect() as conn, conn.cursor() as cur:

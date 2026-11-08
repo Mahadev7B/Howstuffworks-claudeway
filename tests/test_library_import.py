@@ -310,3 +310,19 @@ def test_validation_only_upload_cannot_write_a_lesson(site, importer, monkeypatc
         "validate_only": "1", "package": (io.BytesIO(json.dumps(packet()).encode()), "lesson.json")})
     assert response.status_code == 200 and response.json["saved"] is False
     assert storage.sql.execute("SELECT COUNT(*) FROM published_lessons").fetchone() == (0,)
+
+
+def test_replace_private_audio_validates_every_clip_before_saving(monkeypatch):
+    from lesson_platform import library_import as importer
+    checked, saved = [], {}
+    monkeypatch.setattr(importer, "_validate_mp3", lambda audio, index: checked.append(index))
+    monkeypatch.setattr(importer.library, "replace_publication_audio", lambda slug, clips: saved.update(slug=slug, clips=clips))
+    importer.replace_private_audio("sky", {1: b"b", 0: b"a"})
+    assert checked == [0, 1] and saved == {"slug": "sky", "clips": {0: b"a", 1: b"b"}}
+
+
+def test_replace_private_audio_rejects_oversized_clip_before_saving(monkeypatch):
+    from lesson_platform import library_import as importer
+    monkeypatch.setattr(importer.library, "replace_publication_audio", lambda *a: pytest.fail("oversized clip saved"))
+    with pytest.raises(ValueError):
+        importer.replace_private_audio("sky", {0: b"x" * (importer.MAX_AUDIO_BYTES + 1)})

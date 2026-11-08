@@ -321,3 +321,31 @@ def test_unpublish_all_only_touches_live_lessons(monkeypatch):
     monkeypatch.setattr(lib, "set_publication_active", lambda slug, active: calls.append((slug, active)) or True)
     assert lib.unpublish_all() == ["sky"]
     assert calls == [("sky", False)]
+
+
+def _two_slide_lesson():
+    lesson = _lesson()
+    lesson["slides"] = [dict(lesson["slides"][0]), dict(lesson["slides"][0])]
+    return lesson
+
+
+def test_replace_audio_swaps_all_clips_in_one_transaction(monkeypatch):
+    conn, cur = _fake_db(monkeypatch, [(_two_slide_lesson(), False), (0,), (1,)])
+    library.replace_publication_audio("sky", {0: b"a", 1: b"b"})
+    updates = [call for call in cur.execute.call_args_list if "UPDATE published_lesson_audio" in call.args[0]]
+    assert [call.args[1][0] for call in updates] == [b"a", b"b"]
+    assert conn.transaction.called
+
+
+def test_replace_audio_refuses_live_lessons(monkeypatch):
+    _, cur = _fake_db(monkeypatch, [(_two_slide_lesson(), True)])
+    with pytest.raises(ValueError, match="private"):
+        library.replace_publication_audio("sky", {0: b"a", 1: b"b"})
+    assert not any("UPDATE published_lesson_audio" in call.args[0] for call in cur.execute.call_args_list)
+
+
+def test_replace_audio_requires_one_clip_per_slide(monkeypatch):
+    _, cur = _fake_db(monkeypatch, [(_two_slide_lesson(), False)])
+    with pytest.raises(ValueError, match="exactly one clip"):
+        library.replace_publication_audio("sky", {0: b"a"})
+    assert not any("UPDATE published_lesson_audio" in call.args[0] for call in cur.execute.call_args_list)
