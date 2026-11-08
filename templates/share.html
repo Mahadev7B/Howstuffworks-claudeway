@@ -17,7 +17,9 @@
     body { font-family: 'Fredoka', sans-serif; background: #FFF8F0; }
     .lesson-header { background: #fff; border-radius: 20px; padding: 1.25rem 1.5rem; box-shadow: 0 4px 20px rgba(255,107,53,0.1); margin-bottom: 1.5rem; border: 2px solid rgba(255,107,53,0.15); }
     .lesson-brand { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
-    .lesson-owl { font-size: 1.6rem; }
+    .lesson-logo { display: flex; align-items: center; gap: 0.5rem; text-decoration: none; }
+    .lesson-logo-owl { width: 44px; height: 45px; display: block; }
+    .lesson-logo-word { width: 122px; height: 25px; display: block; }
     .lesson-brand-name { font-size: 1rem; font-weight: 700; color: #FF6B35; }
     .lesson-titles .question { color: #6A4C93; font-weight: 500; font-size: 0.95rem; }
     .lesson-titles h1 { font-family: 'Fredoka', sans-serif; font-weight: 700; color: #2D3142; font-size: 2rem; }
@@ -59,8 +61,10 @@
 
     <header class="lesson-header">
       <div class="lesson-brand">
-        <span class="lesson-owl">🦉</span>
-        <span class="lesson-brand-name">Ask Lil Owl</span>
+        <a class="lesson-logo" href="{{ url_for('home') }}">
+          <img class="lesson-logo-owl" src="{{ url_for('static', filename='brand/owl-cutout.png') }}" alt="">
+          <img class="lesson-logo-word" src="{{ url_for('static', filename='brand/wordmark.png') }}" alt="AskLilOwl">
+        </a>
       </div>
       <div class="lesson-titles">
         <p class="question">{{ question }}</p>

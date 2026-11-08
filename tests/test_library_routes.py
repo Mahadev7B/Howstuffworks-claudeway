@@ -140,3 +140,10 @@ def test_home_opens_question_box_for_prefilled_question(site):
     panel = html.split('id="askPanel"', 1)[1].split(">", 1)[0]
     assert "hidden" not in panel
     assert 'value="How do bees fly"' in html
+
+
+def test_lesson_and_explore_headers_use_the_approved_logo(site):
+    for path in ("/explore", "/explore/sky-blue"):
+        html = site.get(path).get_data(as_text=True)
+        assert "brand/wordmark.png" in html and "brand/owl-cutout.png" in html
+        assert 'alt="AskLilOwl"' in html

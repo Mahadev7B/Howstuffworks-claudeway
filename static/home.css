@@ -1,3 +1,4 @@
+html:has(body.cinema-home) { background: #141414; }
 body.cinema-home { margin: 0; background: #141414; color: #F1EFE8; font-family: Nunito, system-ui, sans-serif; overflow-x: hidden; }
 .cinema-home a { color: inherit; }
 .cine-header { display: flex; align-items: center; gap: 28px; padding: 16px 48px; flex-wrap: wrap; }

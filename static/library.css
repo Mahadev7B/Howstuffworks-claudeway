@@ -29,7 +29,8 @@
 .library-top { min-height: 76px; display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
 .library-top a { text-decoration: none; }
 .library-logo { display: inline-flex; align-items: center; gap: .65rem; font-size: 1.2rem; font-weight: 700; letter-spacing: -.02em; }
-.library-logo-owl { display: grid; place-items: center; width: 40px; height: 40px; background: #fff1dc; border-radius: 13px; font-size: 1.4rem; box-shadow: 0 3px 16px #ff9a5840; }
+.library-logo-owl { width: 46px; height: 47px; display: block; }
+.library-logo-word { width: 132px; height: 27px; display: block; background: #fff; border-radius: 10px; padding: 7px 11px; }
 .library-top-links { display: flex; gap: 1.8rem; align-items: center; font-size: .95rem; font-weight: 600; }
 .library-top-links [aria-current="page"] { color: #ffc456; }
 .library-ask-link { border: 1px solid #ffffff52; padding: .55rem .9rem; border-radius: 999px; }
@@ -92,7 +93,8 @@
   .library-top { min-height: 64px; }
   .library-top-links { gap: .7rem; font-size: .82rem; }
   .library-logo { font-size: 1rem; }
-  .library-logo-owl { width: 34px; height: 34px; }
+  .library-logo-owl { width: 38px; height: 39px; }
+  .library-logo-word { width: 108px; height: 22px; }
   .library-page .library-spotlight { min-height: 540px; align-items: end; margin-top: .8rem; border-radius: 22px; }
   .spotlight-art { inset: 0 0 auto; width: 100%; height: 60%; }
   .library-spotlight::after { background: linear-gradient(0deg, #241335 12%, #241335e6 32%, #24133550 67%, transparent 100%); }
