@@ -537,17 +537,43 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
     return data, None
 
 
+HOME_SPOTLIGHT_SLUG = "jupiter-the-biggest-planet"
+HOME_ROWS = (
+    ("animals", "Amazing animals", "Animals"),
+    ("technology", "How things work", "Technology"),
+    ("earth", "Our wonderful Earth", "Earth & Nature"),
+    ("world", "People and places", "World & Culture"),
+)
+
+
+def _home_rows(cards: list[dict]) -> list[dict]:
+    known = {category for _, _, category in HOME_ROWS}
+    rows = [{"id": row_id, "title": title, "cards": [card for card in cards if card["category"] == category]}
+            for row_id, title, category in HOME_ROWS]
+    rows.append({"id": "more", "title": "More to explore",
+                 "cards": [card for card in cards if card["category"] not in known]})
+    return [row for row in rows if row["cards"]]
+
+
+def _home_spotlight(cards: list[dict]) -> dict | None:
+    chosen = next((card for card in cards if card["slug"] == HOME_SPOTLIGHT_SLUG), None)
+    if chosen:
+        return chosen
+    featured = sorted((card for card in cards if card.get("featured_rank") is not None),
+                      key=lambda card: card["featured_rank"])
+    return featured[0] if featured else (cards[0] if cards else None)
+
+
 @app.route("/", methods=["GET"])
 def home():
     prefill = (request.args.get("q") or "").strip()[:200]
     try:
-        featured = sorted((card for card in library.list_published_cards()
-                           if card.get("featured_rank") is not None),
-                          key=lambda card: card["featured_rank"])[:6]
+        cards = library.list_published_cards()
     except RuntimeError:
-        featured = []
-    return render_template("index.html", examples=EXAMPLE_QUESTIONS, prefill=prefill,
-                           featured_lessons=featured)
+        cards = []
+    return render_template("index.html", examples=EXAMPLE_QUESTIONS, prefill=prefill, cards=cards,
+                           rows=_home_rows(cards), spotlight=_home_spotlight(cards),
+                           ask_open=bool(prefill or not cards))
 
 
 @app.get("/explore")
@@ -1195,6 +1221,9 @@ def _library_write_allowed() -> bool:
                 secrets.compare_digest(expected, supplied))
 
 
+app.jinja_env.globals["publish_all_hold"] = library.PUBLISH_ALL_HOLD
+
+
 @app.get("/admin/published-lessons")
 def admin_publications():
     if not _admin_authed():
@@ -1310,6 +1339,30 @@ def admin_publication_visibility(slug: str):
             abort(404)
     except ValueError as exc:
         return redirect(url_for("admin_publications", error=str(exc)))
+    return redirect(url_for("admin_publications"))
+
+
+@app.post("/admin/published-lessons/publish-all")
+def admin_publish_all():
+    if not _library_write_allowed():
+        abort(403)
+    if not db_enabled:
+        abort(503)
+    if request.form.get("reviewed_approved") != "1":
+        abort(400)
+    failed = library.publish_all_approved()["failed"]
+    if failed:
+        return redirect(url_for("admin_publications", error="Could not publish: " + ", ".join(failed)))
+    return redirect(url_for("admin_publications"))
+
+
+@app.post("/admin/published-lessons/unpublish-all")
+def admin_unpublish_all():
+    if not _library_write_allowed():
+        abort(403)
+    if not db_enabled:
+        abort(503)
+    library.unpublish_all()
     return redirect(url_for("admin_publications"))
 
 

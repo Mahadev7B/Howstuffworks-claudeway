@@ -181,3 +181,49 @@ def test_admin_can_preview_and_update_draft_cover(admin_site, monkeypatch):
                            data={"csrf_token": "good-token", "cover_slide_number": "2"})
     assert response.status_code == 302
     assert chosen == [1]
+
+
+def _admin_session(client):
+    with client.session_transaction() as session:
+        session["admin"] = True
+        session["library_csrf"] = "good-token"
+
+
+def test_publish_all_requires_csrf_and_review_confirmation(admin_site, monkeypatch):
+    module, client = admin_site
+    monkeypatch.setattr(module.library, "publish_all_approved", lambda: pytest.fail("unconfirmed publish"))
+    assert client.post("/admin/published-lessons/publish-all", data={"reviewed_approved": "1"}).status_code == 403
+    _admin_session(client)
+    assert client.post("/admin/published-lessons/publish-all", data={"csrf_token": "good-token"}).status_code == 400
+
+
+def test_publish_all_reports_lessons_that_could_not_go_live(admin_site, monkeypatch):
+    module, client = admin_site
+    _admin_session(client)
+    monkeypatch.setattr(module.library, "publish_all_approved", lambda: {"published": ["sky"], "failed": ["rain"]})
+    response = client.post("/admin/published-lessons/publish-all",
+                           data={"csrf_token": "good-token", "reviewed_approved": "1"})
+    assert response.status_code == 302
+    assert "rain" in response.headers["Location"]
+
+
+def test_unpublish_all_requires_csrf_and_takes_lessons_down(admin_site, monkeypatch):
+    module, client = admin_site
+    called = []
+    monkeypatch.setattr(module.library, "unpublish_all", lambda: called.append(True) or ["sky"])
+    assert client.post("/admin/published-lessons/unpublish-all", data={}).status_code == 403
+    _admin_session(client)
+    assert client.post("/admin/published-lessons/unpublish-all", data={"csrf_token": "good-token"}).status_code == 302
+    assert called == [True]
+
+
+def test_admin_page_offers_publish_all_without_held_lesson(admin_site, monkeypatch):
+    module, client = admin_site
+    _admin_session(client)
+    row = {"title": "T", "active": False, "approved_for_publish": True, "slide_count": 4, "clip_count": 4,
+           "cover_slide_index": 0, "fun_facts": ["a", "b", "c", "d"]}
+    monkeypatch.setattr(module.library, "list_editorial_publications", lambda: [
+        {**row, "slug": "sky"}, {**row, "slug": "solve-a-2x2-rubiks-cube"}, {**row, "slug": "rain", "active": True}])
+    html = client.get("/admin/published-lessons").get_data(as_text=True)
+    assert "Publish all 1 approved" in html
+    assert "/admin/published-lessons/unpublish-all" in html

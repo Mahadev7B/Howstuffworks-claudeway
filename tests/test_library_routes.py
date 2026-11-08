@@ -105,3 +105,38 @@ def test_saved_media_and_sitemap(site):
     assert "no-store" in voice.headers["Cache-Control"]
     assert b"/explore/sky-blue" in sitemap.data
     assert b"/explore/hidden" not in sitemap.data
+
+
+def test_home_shows_every_lesson_in_topic_rows_behind_the_owl(site, monkeypatch):
+    app_module = importlib.import_module("app")
+    monkeypatch.setattr(app_module.library, "list_published_cards", lambda: [
+        {"slug": "bats", "title": "Bats", "summary": "Night", "category": "Animals", "sort_order": 1, "featured_rank": None},
+        {"slug": "wifi", "title": "Wifi", "summary": "Radio", "category": "Technology", "sort_order": 2, "featured_rank": None},
+        {"slug": "jupiter-the-biggest-planet", "title": "Jupiter", "summary": "Big", "category": "Space", "sort_order": 3, "featured_rank": None},
+    ])
+    html = site.get("/").get_data(as_text=True)
+    assert 'id="animals"' in html and 'id="technology"' in html and 'id="more"' in html
+    for slug in ("bats", "wifi", "jupiter-the-biggest-planet"):
+        assert f"/explore/{slug}/thumbnail.webp" in html
+    assert 'id="owlToggle"' in html
+    panel = html.split('id="askPanel"', 1)[1].split(">", 1)[0]
+    assert "hidden" in panel
+    assert html.index('id="askForm"') > html.index('id="askPanel"')
+    assert "Jupiter</h1>" in html
+    assert "fetch('/api" not in html.split('<div class="loading"')[0]
+
+
+def test_home_opens_question_box_when_no_lessons_are_live(site, monkeypatch):
+    app_module = importlib.import_module("app")
+    monkeypatch.setattr(app_module.library, "list_published_cards", lambda: [])
+    html = site.get("/").get_data(as_text=True)
+    panel = html.split('id="askPanel"', 1)[1].split(">", 1)[0]
+    assert "hidden" not in panel
+    assert 'id="askForm"' in html
+
+
+def test_home_opens_question_box_for_prefilled_question(site):
+    html = site.get("/?q=How+do+bees+fly").get_data(as_text=True)
+    panel = html.split('id="askPanel"', 1)[1].split(">", 1)[0]
+    assert "hidden" not in panel
+    assert 'value="How do bees fly"' in html

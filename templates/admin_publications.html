@@ -12,6 +12,25 @@
   <p>Stage a complete, illustrated cached lesson as a private draft. Generate its voice clips, listen to every one, then publish it.</p>
   {% if unsafe_session_key %}<p class="alert alert-warning">Publishing is disabled until a private FLASK_SECRET_KEY is configured.</p>{% endif %}
   {% if error %}<p class="alert alert-danger" role="alert">{{ error }}</p>{% endif %}
+  {% set publish_ready = rows|selectattr('approved_for_publish')|rejectattr('active')|rejectattr('slug', 'in', publish_all_hold)|list %}
+  {% set live_lessons = rows|selectattr('active')|list %}
+  <section class="card p-3 my-4">
+    <h2 class="h4">Publish lessons together</h2>
+    <p>{{ publish_ready|length }} approved lessons are private and ready. {{ live_lessons|length }} lessons are live. Lessons on hold are left out.</p>
+    {% if publish_ready %}
+    <form method="post" action="{{ url_for('admin_publish_all') }}" class="mb-2">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label class="me-2"><input type="checkbox" name="reviewed_approved" value="1" required> I reviewed these approved lessons</label>
+      <button class="btn btn-success" type="submit">Publish all {{ publish_ready|length }} approved</button>
+    </form>
+    {% endif %}
+    {% if live_lessons %}
+    <form method="post" action="{{ url_for('admin_unpublish_all') }}" onsubmit="return confirm('Take every live lesson off the public site? Nothing is deleted.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="btn btn-outline-danger" type="submit">Unpublish all {{ live_lessons|length }} live</button>
+    </form>
+    {% endif %}
+  </section>
   <section class="card p-3 my-4">
     <h2 class="h4">Import private lesson</h2>
     <p>Upload one prepared JSON package with its exact four slides, illustrations and four saved Kokoro Heart clips. No generation calls are made. New imports remain private and awaiting review; existing lessons are never overwritten.</p>

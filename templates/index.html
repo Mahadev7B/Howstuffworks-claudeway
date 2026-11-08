@@ -7,6 +7,8 @@
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='library.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='home.css') }}">
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
@@ -286,94 +288,87 @@
     }
   </style>
 </head>
-<body>
-  <!-- Animated starfield background -->
-  <div class="bg-pattern" id="starfield"></div>
+<body class="cinema-home">
+  <header class="cine-header">
+    <a class="cine-logo" href="{{ url_for('home') }}">
+      <img class="cine-logo-owl" src="{{ url_for('static', filename='brand/owl-cutout.png') }}" alt="">
+      <span class="cine-wordmark"><img src="{{ url_for('static', filename='brand/wordmark.png') }}" alt="AskLilOwl"></span>
+    </a>
+    <nav class="cine-nav" aria-label="Lesson topics">
+      <a href="{{ url_for('home') }}" aria-current="page">Home</a>
+      {% for row in rows %}<a href="#{{ row.id }}">{{ row.title }}</a>{% endfor %}
+    </nav>
+    {% if cards %}<span class="cine-count">{{ cards|length }} lessons</span>{% endif %}
+  </header>
 
-  <!-- Hero / Search -->
-  <section class="hero">
-    <div class="hero-content">
-      <div class="owl-mascot">🦉</div>
-      <h1>Ask Lil Owl</h1>
-      <p class="tagline">Ask anything. See how it works. Hear it explained! ✨</p>
-
-      <div class="search-container">
-        <label class="search-label" for="question">What are you curious about?</label>
-        <form class="search-box ask-form" id="askForm" action="{{ url_for('lesson') }}" method="post">
-          <input
-            type="text"
-            name="question"
-            id="question"
-            placeholder="How do rockets fly?"
-            required
-            autofocus
-            autocomplete="off"
-            value="{{ prefill or '' }}"
-          />
-          <button type="button" id="micBtn" class="mic-btn-new" aria-label="Search by voice" hidden>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="9" y="2" width="6" height="12" rx="3"/>
-              <path d="M5 10a7 7 0 0 0 14 0"/>
-              <line x1="12" y1="19" x2="12" y2="22"/>
-              <line x1="9" y1="22" x2="15" y2="22"/>
-            </svg>
-          </button>
-          <button type="submit" class="ask-button">Ask! 🚀</button>
-        </form>
+  <main>
+    {% if spotlight %}
+    <section class="cine-hero" aria-label="Featured lesson">
+      <img src="{{ url_for('explore_thumbnail', slug=spotlight.slug) }}" alt="">
+      <div class="cine-hero-copy">
+        <p class="cine-kicker">Featured lesson · {{ spotlight.category }}</p>
+        <h1>{{ spotlight.title }}</h1>
+        <p class="cine-summary">{{ spotlight.summary }}</p>
+        <a class="cine-play" href="{{ url_for('explore_lesson', slug=spotlight.slug) }}"><span aria-hidden="true">▶</span> Play</a>
       </div>
-
-      <div class="examples-new">
-        <div class="examples-label-new">Try asking about:</div>
-        <div class="example-chips">
-          {% for q in examples %}
-            <button type="button" class="chip-new" data-idx="{{ loop.index0 }}">{{ q }}</button>
+    </section>
+    <div class="cine-rows">
+      {% for row in rows %}
+      <section class="cine-row" id="{{ row.id }}" aria-labelledby="{{ row.id }}-title">
+        <div class="cine-row-head">
+          <h2 id="{{ row.id }}-title">{{ row.title }}</h2>
+          <div class="cine-arrows">
+            <button type="button" data-rail-scroll="-1" aria-label="Scroll {{ row.title }} left">←</button>
+            <button type="button" data-rail-scroll="1" aria-label="Scroll {{ row.title }} right">→</button>
+          </div>
+        </div>
+        <div class="cine-rail">
+          {% for card in row.cards %}
+          <a class="cine-tile" href="{{ url_for('explore_lesson', slug=card.slug) }}">
+            <img src="{{ url_for('explore_thumbnail', slug=card.slug) }}" alt="" loading="lazy">
+            <span>{{ card.title }}</span>
+          </a>
           {% endfor %}
         </div>
-      </div>
-    </div>
-  </section>
-
-  {% if featured_lessons %}
-  <section class="library-preview" aria-label="Featured lessons">
-    <p class="library-preview-kicker">✦ Handpicked for curious minds</p>
-    <div class="library-preview-head"><h2>Watch a lesson, spark a question</h2><a href="{{ url_for('explore') }}">Explore all lessons →</a></div>
-    <div class="library-row">
-      {% for card in featured_lessons %}
-      <a class="library-card" href="{{ url_for('explore_lesson', slug=card.slug) }}">
-        <img src="{{ url_for('explore_thumbnail', slug=card.slug) }}" alt="Illustration for {{ card.title }}" loading="lazy">
-        <span class="library-card-copy"><strong>{{ card.title }}</strong><span>{{ card.summary }}</span></span>
-      </a>
+      </section>
       {% endfor %}
     </div>
-  </section>
-  {% else %}
-  <div class="library-preview library-preview-empty"><a href="{{ url_for('explore') }}">Explore lessons →</a></div>
-  {% endif %}
+    {% else %}
+    <section class="cine-empty">
+      <h1>New lessons are on the way</h1>
+      <p>Ask Lil Owl anything and get your own picture lesson.</p>
+    </section>
+    {% endif %}
+  </main>
 
-  <!-- Feature cards -->
-  <section class="features">
-    <div class="features-grid">
-      <div class="feature-card">
-        <div class="feature-icon">🎨</div>
-        <h3 class="feature-title">Beautiful Illustrations</h3>
-        <p class="feature-desc">Every lesson comes with custom AI-generated images that make learning visual and fun!</p>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon">🎧</div>
-        <h3 class="feature-title">Listen &amp; Learn</h3>
-        <p class="feature-desc">Can't read yet? No problem! Every lesson is narrated with a friendly voice.</p>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon">🧠</div>
-        <h3 class="feature-title">Smart Explanations</h3>
-        <p class="feature-desc">Get answers to ANY question, explained in a way that's easy to understand!</p>
+  <div class="owl-ask">
+    <div class="owl-panel" id="askPanel"{% if not ask_open %} hidden{% endif %}>
+      <label for="question">What do you wonder about?</label>
+      <form class="ask-form" id="askForm" action="{{ url_for('lesson') }}" method="post">
+        <input type="text" name="question" id="question" placeholder="How do rockets fly?" required autocomplete="off" value="{{ prefill or '' }}">
+        <button type="button" id="micBtn" class="mic-btn-new" aria-label="Search by voice" hidden>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="2" width="6" height="12" rx="3"/>
+            <path d="M5 10a7 7 0 0 0 14 0"/>
+            <line x1="12" y1="19" x2="12" y2="22"/>
+            <line x1="9" y1="22" x2="15" y2="22"/>
+          </svg>
+        </button>
+        <button type="submit" class="ask-button">Make my lesson</button>
+      </form>
+      <div class="owl-chips">
+        {% for q in examples[:3] %}
+          <button type="button" class="chip-new" data-idx="{{ loop.index0 }}">{{ q }}</button>
+        {% endfor %}
       </div>
     </div>
-  </section>
-
-  <footer class="hero-footer">
-    <p>Powered by AI ✨ Made with curiosity for curious minds 🦉</p>
-  </footer>
+    <div class="owl-row">
+      <span class="owl-bubble">Ask me anything!</span>
+      <button type="button" class="owl-toggle" id="owlToggle" aria-label="Ask Lil Owl a question" aria-controls="askPanel" aria-expanded="{{ 'true' if ask_open else 'false' }}">
+        <img src="{{ url_for('static', filename='brand/owl-cutout.png') }}" alt="">
+      </button>
+    </div>
+  </div>
 
   <div class="loading" id="loading" hidden>
     <div class="loading-inner">
@@ -991,5 +986,6 @@
       ensureGameRunning();
     });
   </script>
+  <script src="{{ url_for('static', filename='home.js') }}"></script>
 </body>
 </html>

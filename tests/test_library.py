@@ -291,3 +291,33 @@ def test_active_lesson_rejects_audio_writes(monkeypatch):
         library.save_publication_audio("sky", 0, b"mp3", "model", "voice", "hash")
     assert not any("INSERT INTO published_lesson_audio" in call.args[0]
                    for call in cur.execute.call_args_list)
+
+
+def _publication_row(slug, active=False, approved=True):
+    return {"slug": slug, "title": slug, "active": active, "approved_for_publish": approved}
+
+
+def test_publish_all_goes_through_normal_gates_and_skips_held_lessons(monkeypatch):
+    from lesson_platform import library as lib
+    monkeypatch.setattr(lib, "list_editorial_publications", lambda: [
+        _publication_row("sky"), _publication_row("rain"), _publication_row("live", active=True),
+        _publication_row("unapproved", approved=False), _publication_row("solve-a-2x2-rubiks-cube")])
+    calls = []
+    def activate(slug, active):
+        calls.append((slug, active))
+        if slug == "rain":
+            raise ValueError("Every slide needs saved audio before activation")
+        return True
+    monkeypatch.setattr(lib, "set_publication_active", activate)
+    assert lib.publish_all_approved() == {"published": ["sky"], "failed": ["rain"]}
+    assert calls == [("sky", True), ("rain", True)]
+
+
+def test_unpublish_all_only_touches_live_lessons(monkeypatch):
+    from lesson_platform import library as lib
+    monkeypatch.setattr(lib, "list_editorial_publications", lambda: [
+        _publication_row("sky", active=True), _publication_row("rain")])
+    calls = []
+    monkeypatch.setattr(lib, "set_publication_active", lambda slug, active: calls.append((slug, active)) or True)
+    assert lib.unpublish_all() == ["sky"]
+    assert calls == [("sky", False)]

@@ -25,6 +25,10 @@ class PreparedPublication:
     thumbnail_mime: str
 
 
+# Approved lessons deliberately left out of the "Publish all" admin action.
+PUBLISH_ALL_HOLD = frozenset({"solve-a-2x2-rubiks-cube"})
+
+
 def publication_audio_text(slide: dict) -> str:
     """Return the complete spoken copy for one curated slide."""
     narration = slide["narration"].strip()
@@ -260,6 +264,28 @@ def set_publication_active(slug: str, active: bool) -> bool:
                SET active = %s, published_at = CASE WHEN %s THEN COALESCE(published_at, NOW()) ELSE published_at END
                WHERE slug = %s RETURNING slug""", (active, active, slug))
         return cur.fetchone() is not None
+
+
+def publish_all_approved() -> dict[str, list[str]]:
+    """Publish approved private lessons one by one through the normal activation gates."""
+    result = {"published": [], "failed": []}
+    for row in list_editorial_publications():
+        if row["active"] or not row["approved_for_publish"] or row["slug"] in PUBLISH_ALL_HOLD:
+            continue
+        try:
+            published = set_publication_active(row["slug"], True)
+        except ValueError:
+            published = False
+        result["published" if published else "failed"].append(row["slug"])
+    return result
+
+
+def unpublish_all() -> list[str]:
+    """Return every live lesson to private; lesson content, audio and approval are kept."""
+    live = [row["slug"] for row in list_editorial_publications() if row["active"]]
+    for slug in live:
+        set_publication_active(slug, False)
+    return live
 
 
 def set_publication_approved(slug: str, approved: bool) -> bool:
