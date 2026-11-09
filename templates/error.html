@@ -6,8 +6,10 @@
   <title>Oops — HowStuffWorks</title>
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='cinema-theme.css') }}">
 </head>
-<body>
+<body class="cinema-page">
   <main class="error-page">
     <h1>Uh oh — something went wrong</h1>
     {% if question %}<p class="question">You asked: <em>"{{ question }}"</em></p>{% endif %}

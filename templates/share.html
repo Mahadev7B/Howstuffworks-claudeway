@@ -12,7 +12,7 @@
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   {% if cube_animation_data|default(none) %}<link rel="stylesheet" href="{{ url_for('static', filename='cube-player.css') }}">{% endif %}
-  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
     body { font-family: 'Fredoka', sans-serif; background: #FFF8F0; }
     .lesson-header { background: #fff; border-radius: 20px; padding: 1.25rem 1.5rem; box-shadow: 0 4px 20px rgba(255,107,53,0.1); margin-bottom: 1.5rem; border: 2px solid rgba(255,107,53,0.15); }
@@ -56,8 +56,9 @@
     @media (max-width: 700px) { .published-lesson .deck { padding: 0.9rem; } }
   </style>
   <link rel="stylesheet" href="{{ url_for('static', filename='lesson-cast.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='cinema-theme.css') }}">
 </head>
-<body class="{% if published %}published-lesson{% endif %}">
+<body class="cinema-page{% if published %} published-lesson{% endif %}">
   <main class="lesson">
 
     <header class="lesson-header">
@@ -172,11 +173,11 @@
     </nav>
 
     <section class="next-question">
-      <a href="{{ url_for('home') }}" style="color:#FF6B35;font-weight:600;">← Ask your own question</a>
+      <a href="{{ url_for('home') }}" class="new-question-link">← Ask your own question</a>
     </section>
 
     <footer class="lesson-footer">
-      <p>Made with curiosity for curious minds 🦉 — <a href="{{ url_for('home') }}" style="color:#FF6B35;">Ask Lil Owl</a></p>
+      <p>Made with curiosity for curious minds 🦉 — <a href="{{ url_for('home') }}">Ask Lil Owl</a></p>
     </footer>
   </main>
 

@@ -9,11 +9,9 @@
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='library.css') }}">
-  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
 </head>
 <body class="library-page">
-  <div class="library-orbit library-orbit-one" aria-hidden="true"></div>
-  <div class="library-orbit library-orbit-two" aria-hidden="true"></div>
   <header class="library-site-header">
     <nav class="library-top library-shell" aria-label="Main navigation">
       <a class="library-logo" href="{{ url_for('home') }}"><img class="library-logo-owl" src="{{ url_for('static', filename='brand/owl-cutout.png') }}" alt=""><img class="library-logo-word" src="{{ url_for('static', filename='brand/wordmark.png') }}" alt="AskLilOwl"></a>

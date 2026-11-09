@@ -59,6 +59,18 @@ body.cinema-home { margin: 0; background: #141414; color: #F1EFE8; font-family: 
 .owl-toggle img { width: 96px; height: 98px; display: block; }
 .owl-toggle:focus-visible { outline: 3px solid #FAC775; outline-offset: 2px; border-radius: 12px; }
 @keyframes owlDrift { 0%, 100% { transform: translate(0, 0) rotate(-5deg); } 50% { transform: translate(-14px, -10px) rotate(5deg); } }
+.cinema-home .loading { background: rgba(20,20,20,.97); font-family: Nunito, system-ui, sans-serif; color: #F1EFE8; }
+.cinema-home .loading-inner p { color: #F1EFE8; }
+.cinema-home .loading-inner p.muted { color: #B4B2A9; }
+.cinema-home #loadingMsg { font-family: 'Baloo 2', sans-serif; color: #FAC775; }
+.cinema-home .loading-inner #game { border-color: #5F5E5A; border-radius: 14px; }
+.cinema-home .loading-inner #game:focus { box-shadow: 0 0 0 3px #FAC775; }
+.cinema-home .loading .secondary { color: #F1EFE8; border-color: #5F5E5A; }
+.cinema-home .loading .secondary:hover { background: #5F5E5A; color: #F1EFE8; }
+.cinema-home .loading .big-btn { background: #F1EFE8; border-color: #F1EFE8; color: #2C2C2A; }
+.cinema-home .dpad-btn { background: #2C2C2A; border-color: #5F5E5A; color: #F1EFE8; box-shadow: none; }
+.cinema-home .dpad-btn:active, .cinema-home .dpad-btn.pressed { background: #5F5E5A; border-color: #FAC775; color: #FAC775; }
+.cinema-home .spinner { border-color: #5F5E5A; border-top-color: #FAC775; }
 @media (prefers-reduced-motion: reduce) { .owl-toggle { animation: none; } .cine-tile { transition: none; } }
 @media (hover: none) { .cine-arrows { display: none; } }
 @media (max-width: 720px) {

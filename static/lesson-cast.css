@@ -5,7 +5,7 @@
   main.lesson > .lesson-header { order: 1; }
   main.lesson > .progress { order: 2; margin: 0 0 0.35rem; }
   main.lesson > .deck { order: 3; }
-  main.lesson > .controls { order: 4; position: sticky; bottom: 0; z-index: 5; margin: 0.35rem 0 0; background: #fff; }
+  main.lesson > .controls { order: 4; position: sticky; bottom: 0; z-index: 5; margin: 0.35rem 0 0; background: #2C2C2A; }
   main.lesson > .tap-to-play { order: 5; margin: 0.6rem 0 0; padding: 0.5rem; }
   main.lesson > .share-banner { order: 6; margin: 0.6rem 0 0; }
   main.lesson > .voice-disclosure { order: 7; margin: 0.6rem 0 0; }

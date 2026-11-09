@@ -1,0 +1,93 @@
+/* Carries the home page's Cinema night look onto lesson and error pages. Link it after page styles. */
+html:has(body.cinema-page) { background: #141414; }
+body.cinema-page {
+  --bg: #141414;
+  --surface: #2C2C2A;
+  --ink: #F1EFE8;
+  --ink-muted: #D3D1C7;
+  --ink-soft: #B4B2A9;
+  --line: rgba(241, 239, 232, 0.14);
+  --line-strong: #5F5E5A;
+  --accent: #FAC775;
+  --accent-soft: rgba(239, 159, 39, 0.16);
+  --warm: #EF9F27;
+  --success: #C0DD97;
+  --shadow: none;
+  --font-display: 'Baloo 2', sans-serif;
+  --font-body: Nunito, system-ui, sans-serif;
+  background: #141414;
+  color: #F1EFE8;
+  font-family: Nunito, system-ui, sans-serif;
+}
+.cinema-page a { color: #FAC775; }
+.cinema-page a:focus-visible, .cinema-page button:focus-visible, .cinema-page input:focus-visible, .cinema-page textarea:focus-visible { outline: 3px solid #FAC775; outline-offset: 2px; }
+
+.cinema-page .lesson-header { background: none; border: 0; box-shadow: none; padding-left: 0; padding-right: 0; }
+.cinema-page .lesson-logo-word { box-sizing: content-box; background: #fff; border-radius: 10px; padding: 6px 10px; }
+.cinema-page .back, .cinema-page .new-question-link { color: #FAC775; font-weight: 700; }
+.cinema-page .back:hover, .cinema-page .new-question-link:hover { color: #F1EFE8; }
+.cinema-page .lesson-titles .question { color: #FAC775; font-weight: 700; }
+.cinema-page .lesson-titles h1 { font-family: 'Baloo 2', sans-serif; color: #F1EFE8; line-height: 1.1; }
+
+.cinema-page .progress-fill { background: #EF9F27; }
+.cinema-page .deck { background: #2C2C2A; border: 0; border-radius: 14px; }
+.cinema-page .slide-num { color: #FAC775; font-weight: 700; }
+.cinema-page .slide h2 { font-family: 'Baloo 2', sans-serif; color: #F1EFE8; line-height: 1.15; }
+.cinema-page .fun-fact { background: #141414; border-left-color: #EF9F27; }
+.cinema-page .fun-fact strong { color: #FAC775; font-weight: 700; }
+
+.cinema-page .controls { background: #2C2C2A; border: 0; border-radius: 14px; }
+.cinema-page .controls button { background: #141414; color: #F1EFE8; border: 1px solid #5F5E5A; font-weight: 700; }
+.cinema-page .controls button:hover { background: #5F5E5A; border-color: #5F5E5A; color: #F1EFE8; }
+.cinema-page .controls button.primary { background: #F1EFE8; border-color: #F1EFE8; color: #2C2C2A; }
+.cinema-page .controls button.primary:hover { background: #fff; border-color: #fff; color: #2C2C2A; }
+.cinema-page .controls button.playing, .cinema-page .controls button.playing:hover { background: #EF9F27; border-color: #EF9F27; color: #412402; }
+.cinema-page .controls .speed input { accent-color: #EF9F27; }
+.cinema-page .deck-nav button { color: #F1EFE8; }
+.cinema-page .deck-nav button:hover { color: #F1EFE8; background: #2C2C2A; border-color: #5F5E5A; }
+.cinema-page .dot { background: #5F5E5A; }
+.cinema-page .dot.on, .cinema-page .dot:hover { background: #EF9F27; }
+
+.cinema-page .share-banner { background: #2C2C2A; border-radius: 14px; }
+.cinema-page .share-banner p { color: #F1EFE8; font-weight: 700; }
+.cinema-page .share-copy-btn { background: #141414; border: 1px solid #5F5E5A; border-radius: 8px; color: #F1EFE8; font-family: inherit; font-weight: 700; }
+.cinema-page .share-copy-btn:hover { background: #5F5E5A; color: #F1EFE8; }
+.cinema-page .share-ask-link { color: #FAC775; font-weight: 700; }
+.cinema-page .tap-to-play { background: rgba(239, 159, 39, 0.16); color: #FAC775; font-weight: 700; }
+.cinema-page .voice-disclosure { color: #B4B2A9; font-size: 0.9rem; }
+.cinema-page .lesson-footer { color: #B4B2A9; }
+.cinema-page .lesson-action { background: #F1EFE8; color: #2C2C2A; border: 0; border-radius: 8px; padding: 0.55rem 1.25rem; min-height: 44px; font-family: inherit; font-size: 1rem; font-weight: 700; cursor: pointer; }
+.cinema-page .lesson-action:hover { background: #fff; }
+.cinema-page .lesson-action[hidden] { display: none; }
+.cinema-page #shareStatus { color: #B4B2A9; font-size: 0.9rem; }
+
+.cinema-page .feedback { border: 0; }
+.cinema-page .feedback h3, .cinema-page .quiz-title { font-family: 'Baloo 2', sans-serif; color: #F1EFE8; }
+.cinema-page .fb-btn { background: #141414; color: #F1EFE8; border-color: #5F5E5A; }
+.cinema-page .fb-btn.selected { background: rgba(239, 159, 39, 0.16); border-color: #EF9F27; color: #FAC775; }
+.cinema-page .feedback textarea { background: #141414; color: #F1EFE8; border-color: #5F5E5A; }
+.cinema-page .feedback textarea::placeholder { color: #B4B2A9; }
+.cinema-page #fb-submit:not(:disabled), .cinema-page #fb-submit:hover:not(:disabled) { background: #EF9F27; color: #412402; }
+.cinema-page #fb-submit:disabled { background: #141414; color: #B4B2A9; }
+
+.cinema-page .quiz-section .primary { background: #F1EFE8; color: #2C2C2A; border-radius: 8px; font-family: inherit; }
+.cinema-page .quiz-opt { background: #141414; color: #F1EFE8; }
+.cinema-page .quiz-opt:hover:not(:disabled) { background: #141414; border-color: #EF9F27; }
+.cinema-page .quiz-opt.correct { background: #173404; border-color: #97C459; color: #EAF3DE; }
+.cinema-page .quiz-opt.wrong { background: #501313; border-color: #F09595; color: #FCEBEB; }
+.cinema-page .quiz-error { color: #F09595; }
+
+.cinema-page .cube-motion { background: #141414; border-color: #5F5E5A; }
+.cinema-page .cube-toolbar { border-top-color: #5F5E5A; }
+.cinema-page .cube-toolbar button { background: #2C2C2A; border-color: #5F5E5A; color: #F1EFE8; }
+.cinema-page .cube-toolbar button:first-child { background: #F1EFE8; border-color: #F1EFE8; color: #2C2C2A; }
+.cinema-page .cube-move-label { color: #F1EFE8; }
+.cinema-page .cube-move-count, .cinema-page .cube-caption, .cinema-page .cube-hint { color: #D3D1C7; }
+
+.cinema-page .error-page h1 { font-family: 'Baloo 2', sans-serif; }
+.cinema-page a.btn { background: #F1EFE8; color: #2C2C2A; font-weight: 700; }
+.cinema-page a.btn:hover { background: #fff; }
+
+@media (orientation: landscape) and (max-height: 500px), (orientation: portrait) and (max-width: 600px) {
+  .cinema-page .lesson-logo-word { padding: 4px 7px; border-radius: 8px; }
+}
