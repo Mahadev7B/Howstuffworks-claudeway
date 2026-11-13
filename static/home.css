@@ -62,9 +62,20 @@ body.cinema-home { margin: 0; background: #141414; color: #F1EFE8; font-family: 
 .owl-panel .asker-consent { display: flex; gap: 8px; align-items: flex-start; font-family: Nunito, system-ui, sans-serif; font-size: 13px; font-weight: 600; line-height: 1.4; margin: 2px 0 0; color: #F1EFE8; cursor: pointer; }
 .owl-panel .ask-form .asker-consent input { flex: 0 0 18px; width: 18px; height: 18px; min-width: 0; margin: 1px 0 0; padding: 0; border-radius: 4px; accent-color: #EF9F27; }
 .owl-panel .asker-consent a { color: #FAC775; }
-.cine-footer { display: flex; flex-wrap: wrap; gap: 8px 22px; padding: 8px 48px 140px; font-size: 14px; color: #B4B2A9; }
+.cine-notice { margin: 0 48px 12px; padding: 12px 16px; border-radius: 12px; background: #2C2C2A; color: #F1EFE8; font-size: 15px; }
+@media (max-width: 720px) { .cine-notice { margin: 0 16px 12px; } }
+.cine-footer { flex-wrap: wrap; gap: 8px 22px; padding: 8px 48px 140px; font-size: 14px; color: #B4B2A9; }
 .cinema-home .cine-footer a { color: #D3D1C7; }
 @media (max-width: 720px) { .cine-footer { padding: 0 16px 110px; } }
+.owl-panel .asker-verify { flex: 1 1 100%; display: flex; flex-direction: column; gap: 8px; margin: 0 0 6px; padding: 12px; border-radius: 12px; background: #141414; border: 1px solid #5F5E5A; }
+.owl-panel .asker-verify[hidden] { display: none; }
+.owl-panel .asker-verify p { margin: 0; font-size: 13px; line-height: 1.4; color: #D3D1C7; overflow-wrap: anywhere; }
+.owl-panel .asker-verify-row { display: flex; gap: 8px; }
+.owl-panel .ask-form .asker-verify-row input { flex: 1 1 auto; min-width: 0; font-size: 20px; letter-spacing: 0.3em; text-align: center; padding: 8px 10px; }
+.owl-panel .asker-verify-row button { flex: 0 0 auto; min-height: 44px; padding: 0 16px; border: 0; border-radius: 10px; background: #EF9F27; color: #412402; font: inherit; font-weight: 700; cursor: pointer; }
+.owl-panel .asker-verify-row button:disabled { opacity: .6; cursor: wait; }
+.owl-panel .asker-verify-status { color: #FAC775 !important; min-height: 1em; }
+.owl-panel .asker-link { align-self: flex-start; background: none; border: 0; padding: 4px 0; color: #FAC775; font: inherit; font-size: 13px; text-decoration: underline; cursor: pointer; }
 .owl-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .owl-row { display: flex; align-items: center; gap: 12px; }
 .owl-bubble { background: #F1EFE8; color: #2C2C2A; font-size: 14px; font-weight: 700; padding: 8px 14px; border-radius: 14px; }

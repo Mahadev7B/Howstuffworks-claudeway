@@ -68,7 +68,7 @@
         <div class="card card-stat p-3">
           <div class="label">Saved copies reused today</div>
           <div class="value">{{ ov.saved_copies_today }}</div>
-          <div class="small text-muted">{{ ov.saved_copies_all_time }} all time, no cost</div>
+          <div class="small text-muted">{{ ov.saved_copies_all_time }} all time, no new writing cost</div>
         </div>
       </div>
       <div class="col-6 col-lg-3">
@@ -127,7 +127,7 @@
     <div class="row g-3 mb-3">
       <div class="col-6 col-lg-3"><div class="card card-stat p-3"><div class="label">Unique emails</div><div class="value">{{ ak.total }}</div><div class="small text-muted">{{ ak.new_today }} new today · {{ ak.new_7d }} this week</div></div></div>
       <div class="col-6 col-lg-3"><div class="card card-stat p-3"><div class="label">Questions from emails</div><div class="value">{{ ak.questions }}</div><div class="small text-muted">different questions, all time</div></div></div>
-      <div class="col-6 col-lg-3"><div class="card card-stat p-3"><div class="label">Used all free questions</div><div class="value">{{ ak.at_limit }}</div><div class="small text-muted">now seeing the $4.99 message</div></div></div>
+      <div class="col-6 col-lg-3"><div class="card card-stat p-3"><div class="label">On the free month</div><div class="value">{{ ak.on_free_month }}</div><div class="small text-muted">{{ ak.at_limit }} have used their {{ free_questions }} free questions</div></div></div>
       <div class="col-6 col-lg-3"><div class="card card-stat p-3"><div class="label">Subscribers</div><div class="value">{{ ak.subscribed }}</div><div class="small text-muted">paying $4.99 a month</div></div></div>
     </div>
     {% if asker_result == 'deleted' %}

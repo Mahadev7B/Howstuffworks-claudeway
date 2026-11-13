@@ -217,6 +217,25 @@ CREATE TABLE IF NOT EXISTS askers (
 );
 ALTER TABLE askers ADD COLUMN IF NOT EXISTS consented_at TIMESTAMPTZ;
 ALTER TABLE feedback ALTER COLUMN rating DROP NOT NULL;
+ALTER TABLE askers ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT;
+ALTER TABLE askers ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ;
+ALTER TABLE askers ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMPTZ;
+ALTER TABLE asker_questions ADD COLUMN IF NOT EXISTS generated BOOLEAN NOT NULL DEFAULT true;
+CREATE TABLE IF NOT EXISTS tts_audio (
+  text_hash  TEXT PRIMARY KEY,
+  audio      BYTEA NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS email_codes (
+  email        TEXT PRIMARY KEY,
+  code_hash    TEXT NOT NULL,
+  expires_at   TIMESTAMPTZ NOT NULL,
+  attempts     INTEGER NOT NULL DEFAULT 0,
+  sends        INTEGER NOT NULL DEFAULT 1,
+  window_start TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE askers ADD COLUMN IF NOT EXISTS stripe_subscription_id TEXT;
+ALTER TABLE askers ADD COLUMN IF NOT EXISTS subscription_updated_at TIMESTAMPTZ;
 ALTER TABLE feedback ADD COLUMN IF NOT EXISTS client_id TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS feedback_client_id_idx ON feedback (client_id);
 CREATE TABLE IF NOT EXISTS asker_questions (
@@ -589,6 +608,58 @@ def _do_save_cached_lesson(qhash: str, question: str, lesson: dict[str, Any]) ->
             pass
 
 
+def cached_lesson_exists(question: str) -> bool:
+    """Cheap check: is there already a saved lesson for this question? False when unsure."""
+    if _pool is None:
+        return False
+    try:
+        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM cached_lessons WHERE question_hash = %s", (question_hash(question),))
+            return cur.fetchone() is not None
+    except Exception:
+        logger.exception("Saved-lesson check failed")
+        return False
+
+
+def get_saved_tts(text_hash: str) -> bytes | None:
+    """A previously made narration clip, so replays never pay for voice again."""
+    if _pool is None:
+        return None
+    try:
+        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+            cur.execute("SELECT audio FROM tts_audio WHERE text_hash = %s", (text_hash,))
+            row = cur.fetchone()
+            return bytes(row[0]) if row else None
+    except Exception:
+        logger.exception("Saved voice lookup failed")
+        return None
+
+
+def _do_save_tts(text_hash: str, audio: bytes) -> None:
+    conn = _direct_connect()
+    if conn is None:
+        return
+    try:
+        with conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO tts_audio (text_hash, audio) VALUES (%s, %s) ON CONFLICT (text_hash) DO NOTHING",
+                        (text_hash, audio))
+        _record_write_success("save_tts")
+    except Exception as exc:
+        logger.exception("Saving voice failed — skipping")
+        _record_write_failure("save_tts", exc)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def save_tts(text_hash: str, audio: bytes) -> None:
+    if _pool is None:
+        return
+    _bg(_do_save_tts, text_hash, audio)
+
+
 def save_cached_lesson(question: str, lesson: dict[str, Any]) -> None:
     """Insert a lesson into the cache. Fire-and-forget so the request thread is not delayed."""
     if _pool is None:
@@ -871,7 +942,7 @@ _ADMIN_DEFAULTS = {
     "lessons_by_country": [],
     "lessons_by_region": [],
     "feedback": {"total": 0, "up": 0, "down": 0, "comments": 0, "last_30d": 0, "rows": [], "available": False},
-    "askers": {"total": 0, "new_today": 0, "new_7d": 0, "subscribed": 0, "at_limit": 0,
+    "askers": {"total": 0, "new_today": 0, "new_7d": 0, "subscribed": 0, "on_free_month": 0, "at_limit": 0,
                "questions": 0, "rows": [], "available": False},
 }
 
@@ -901,6 +972,11 @@ def _admin_askers(cur, today_start: datetime, limit: int) -> dict[str, Any]:
         FROM askers
     """, (today_start, _ACTIVE_SUBSCRIPTIONS))
     total, new_today, new_7d, subscribed = (int(v or 0) for v in cur.fetchone())
+    cur.execute("""
+        SELECT COUNT(*) FROM askers
+        WHERE trial_started_at > NOW() - INTERVAL '30 days' AND NOT (subscription_status = ANY(%s))
+    """, (_ACTIVE_SUBSCRIPTIONS,))
+    on_free_month = int(cur.fetchone()[0] or 0)
     cur.execute(f"""
         SELECT a.email,
                to_char(a.created_at AT TIME ZONE '{ADMIN_TZ}', 'YYYY-MM-DD HH24:MI'),
@@ -923,7 +999,7 @@ def _admin_askers(cur, today_start: datetime, limit: int) -> dict[str, Any]:
                      "questions": asked, "status": status,
                      "free_left": None if is_subscribed else max(ASKER_FREE_QUESTIONS - asked, 0)})
     return {"total": total, "new_today": new_today, "new_7d": new_7d, "subscribed": subscribed,
-            "at_limit": at_limit, "questions": questions, "rows": rows[:limit],
+            "on_free_month": on_free_month, "at_limit": at_limit, "questions": questions, "rows": rows[:limit],
             "available": True}
 
 

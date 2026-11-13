@@ -19,6 +19,7 @@ import secrets
 
 from dotenv import load_dotenv
 from flask import (
+    g,
     Flask,
     Response,
     abort,
@@ -56,8 +57,11 @@ from lesson_platform import (
     synthesize,
     today_spend_usd,
 )
-from lesson_platform.db import get_pool_stats, get_write_stats
+from lesson_platform.db import cached_lesson_exists, get_pool_stats, get_saved_tts, get_write_stats, save_tts
 from lesson_platform import askers
+from lesson_platform import billing
+from lesson_platform import mailer
+from lesson_platform import verification
 from lesson_platform import ratelimit
 from lesson_platform import library
 from lesson_platform import library_audio
@@ -129,7 +133,11 @@ def _tts_cache_get(text: str) -> bytes | None:
     key = _tts_cache_key(text)
     entry = _TTS_CACHE.get(key)
     if entry is None:
-        return None
+        saved = get_saved_tts(key) if db_enabled else None
+        if saved is not None:
+            _TTS_CACHE[key] = (time.time(), saved)
+            _TTS_CACHE.move_to_end(key)
+        return saved
     ts, audio = entry
     if time.time() - ts > _TTS_CACHE_TTL_S:
         _TTS_CACHE.pop(key, None)
@@ -140,6 +148,8 @@ def _tts_cache_get(text: str) -> bytes | None:
 
 def _tts_cache_put(text: str, audio: bytes) -> None:
     key = _tts_cache_key(text)
+    if db_enabled:
+        save_tts(key, audio)  # Kept for good, so replaying a lesson never pays for its voice again.
     _TTS_CACHE[key] = (time.time(), audio)
     _TTS_CACHE.move_to_end(key)
     if len(_TTS_CACHE) > _TTS_CACHE_MAX:
@@ -445,6 +455,14 @@ def _guardrail_check(endpoint: str, ctx: dict) -> str | None:
     return None
 
 
+def _keep_redrawn_pictures(question: str, lesson: dict, had_images: bool) -> None:
+    """Older saved lessons lacked pictures; save them once redrawn so they're never paid for twice."""
+    slides = lesson.get("slides", [])
+    if db_enabled and not had_images and slides and all(s.get("image_data_url") for s in slides):
+        save_cached_lesson(question, lesson)
+        logger.info("Saved redrawn pictures for an older lesson: %s", question[:80])
+
+
 def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None, str | None]:
     """Serve from cache if possible; otherwise generate, record, and cache."""
     recent = _recent_get(question)
@@ -461,6 +479,7 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
         had_images = bool(slides_before) and all(s.get("image_data_url") for s in slides_before)
         # Cache may or may not have rendered images embedded; ensure they exist.
         _attach_slide_images(cached, ctx)
+        _keep_redrawn_pictures(question, cached, had_images)
         # If every slide is still missing an image the cached spec is broken — bust it.
         slides = cached.get("slides", [])
         if slides and not any(s.get("image_data_url") for s in slides):
@@ -469,8 +488,6 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
             cached = None
         else:
             # Refresh the in-memory recent cache so back/refresh stays instant.
-            # (Images are never stored in DB — auto-heal runs Flux on every DB
-            # cache hit, and _recent_put keeps images alive for the process lifetime.)
             _recent_put(question, cached)
             record_api_call(
                 endpoint=endpoint,
@@ -488,6 +505,7 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
         return None, blocked
 
     started = time.time()
+    g.lesson_generated = True  # A new lesson is being made (counts toward the free month's daily limit).
     try:
         data = generate_lesson(question, settings)
     except Exception as exc:  # noqa: BLE001
@@ -574,7 +592,9 @@ def home():
     except RuntimeError:
         cards = []
     return render_template("index.html", examples=EXAMPLE_QUESTIONS, prefill=prefill, cards=cards,
-                           free_questions=askers.FREE_QUESTIONS,
+                           free_questions=askers.FREE_QUESTIONS, billing_test_mode=billing.test_mode(),
+                           email_verification=verification.required(),
+                           subscribe_result=request.args.get("subscribed") or request.args.get("subscribe"),
                            rows=_home_rows(cards), spotlight=_home_spotlight(cards),
                            ask_open=bool(prefill or not cards))
 
@@ -653,9 +673,20 @@ def robots():
 PRIVACY_CONTACT_EMAIL = "Asklilowl@gmail.com"
 PRIVACY_UPDATED = "November 12, 2026"
 app.jinja_env.globals["privacy_contact_email"] = PRIVACY_CONTACT_EMAIL
+app.jinja_env.globals["billing_portal_url"] = billing.portal_url
 
 EMAIL_REQUIRED_MESSAGE = "Please enter a grown-up's email to ask your own question."
 CONSENT_REQUIRED_MESSAGE = "A parent or guardian needs to agree to the privacy policy first."
+VERIFY_REQUIRED_MESSAGE = "Please confirm the grown-up's email with the code we send to it."
+TRIAL_AVAILABLE_MESSAGE = (
+    "You've used your {free} free questions. Start a free month: up to {daily} new questions every 24 hours "
+    "for 30 days, no card needed."
+)
+DAILY_LIMIT_MESSAGE = (
+    "That's {daily} new questions in the last 24 hours! You can ask a new one again in about {hours}. "
+    "Questions other families already asked still work."
+)
+TRIAL_ENDED_MESSAGE = "Your free month has ended. Subscriptions are coming soon."
 SUBSCRIPTION_MESSAGE = (
     "You've used your {free} free questions. A $4.99 monthly subscription "
     "unlocks more questions."
@@ -667,21 +698,44 @@ def _consent_given(value) -> bool:
     return value is True or str(value).strip().lower() in ("yes", "true", "on", "1")
 
 
-def _asker_gate(raw_email: str | None, question: str, consent=None) -> tuple[str | None, dict | None, tuple[str, str, int] | None]:
+def _email_refusal(email: str | None, consent, token) -> tuple[str, str, int] | None:
+    """Email present, parent agreed, and (when email is set up) the email was confirmed with a code."""
+    if email is None:
+        return ("email_required", EMAIL_REQUIRED_MESSAGE, 400)
+    if not _consent_given(consent):
+        return ("consent_required", CONSENT_REQUIRED_MESSAGE, 400)
+    if verification.required() and not verification.token_valid(email, token):
+        return ("verify_required", VERIFY_REQUIRED_MESSAGE, 401)
+    return None
+
+
+def _asker_gate(raw_email: str | None, question: str, consent=None, token=None) -> tuple[str | None, dict | None, tuple[str, str, int] | None]:
     """Return (email, allowance, refusal). Refusal is (code, message, HTTP status)."""
     email = askers.normalize_email(raw_email)
-    if email is None:
-        return None, None, ("email_required", EMAIL_REQUIRED_MESSAGE, 400)
-    if not _consent_given(consent):
-        return email, None, ("consent_required", CONSENT_REQUIRED_MESSAGE, 400)
+    refusal = _email_refusal(email, consent, token)
+    if refusal is not None:
+        return email, None, refusal
     try:
-        allowance = askers.allowance(email, question)
+        allowance = askers.allowance(email, question, is_saved=lambda: _question_is_saved(question))
     except askers.AskerUnavailable:
         return email, None, ("asker_unavailable", ASKER_UNAVAILABLE_MESSAGE, 503)
-    if not allowance["allowed"]:
-        message = SUBSCRIPTION_MESSAGE.format(free=askers.FREE_QUESTIONS)
+    reason = allowance["reason"]
+    if reason == "trial_available":
+        message = TRIAL_AVAILABLE_MESSAGE.format(free=askers.FREE_QUESTIONS, daily=askers.TRIAL_DAILY_NEW)
+        return email, allowance, ("trial_available", message, 402)
+    if reason == "daily_limit":
+        hours = allowance.get("next_slot_hours") or 24
+        when = "1 hour" if hours == 1 else f"{hours} hours"
+        return email, allowance, ("daily_limit", DAILY_LIMIT_MESSAGE.format(daily=askers.TRIAL_DAILY_NEW, hours=when), 429)
+    if reason == "subscription_required":
+        message = SUBSCRIPTION_MESSAGE.format(free=askers.FREE_QUESTIONS) if billing.enabled() else TRIAL_ENDED_MESSAGE
         return email, allowance, ("subscription_required", message, 402)
     return email, allowance, None
+
+
+def _question_is_saved(question: str) -> bool:
+    """A saved lesson already exists, so answering costs nothing new."""
+    return _recent_get(question) is not None or (db_enabled and cached_lesson_exists(question))
 
 
 def _lookup_only(question: str, ctx: dict) -> dict | None:
@@ -698,7 +752,10 @@ def _lookup_only(question: str, ctx: dict) -> dict | None:
     if cached is None:
         return None
     cached.setdefault("meta", {})["from_cache"] = True
+    slides_before = cached.get("slides", [])
+    had_images = bool(slides_before) and all(s.get("image_data_url") for s in slides_before)
     _attach_slide_images(cached, ctx)
+    _keep_redrawn_pictures(question, cached, had_images)
     slides = cached.get("slides", [])
     if slides and not any(s.get("image_data_url") for s in slides):
         logger.warning("Cached lesson has no renderable images — busting cache: %s", question)
@@ -742,6 +799,9 @@ def lesson():
         return resp
 
     # POST = explicit form submission (no-JS fallback). Generate if needed.
+    if verification.required():
+        return render_template("error.html", question=question,
+                               error="Please turn on JavaScript so we can confirm the grown-up's email."), 400
     email, _, refusal = _asker_gate(request.form.get("email"), question, request.form.get("parent_consent"))
     if refusal is not None:
         return render_template("error.html", question=question, error=refusal[1]), refusal[2]
@@ -751,7 +811,7 @@ def lesson():
             friendly = "Too many questions. Please try again later."
             return render_template("error.html", question=question, error=friendly), 429
         return render_template("error.html", question=question, error=err), 500
-    askers.record_question(email, question)
+    askers.record_question(email, question, generated=bool(getattr(g, "lesson_generated", False)))
     resp = app.make_response(render_template("lesson.html", question=question, lesson=data))
     resp.headers["Cache-Control"] = "private, max-age=600"
     return resp
@@ -771,12 +831,14 @@ def api_lesson():
     if blocked:
         return jsonify({"ok": False, "error": blocked}), 400
 
-    email, allowance, refusal = _asker_gate(payload.get("email"), question, payload.get("parent_consent"))
+    email, allowance, refusal = _asker_gate(payload.get("email"), question, payload.get("parent_consent"),
+                                            payload.get("email_token"))
     if refusal is not None:
         code, message, status = refusal
         body = {"ok": False, "error": message, "code": code}
         if allowance is not None:
-            body.update(free_left=allowance["free_left"], free_limit=askers.FREE_QUESTIONS)
+            body.update(free_left=allowance["free_left"], free_limit=askers.FREE_QUESTIONS,
+                        subscribe_available=billing.enabled() and code == "subscription_required")
         return jsonify(body), status
 
     ctx = _client_context()
@@ -789,10 +851,108 @@ def api_lesson():
                 "message": "Too many questions. Please try again later.",
             }), 429
         return jsonify({"ok": False, "error": err}), 500
-    askers.record_question(email, question)
-    used_now = allowance["used"] + (0 if allowance["repeat"] else 1)
-    free_left = max(askers.FREE_QUESTIONS - used_now, 0)
-    return jsonify({"ok": True, "lesson": data, "free_left": free_left, "subscribed": allowance["subscribed"]})
+    generated = bool(getattr(g, "lesson_generated", False))
+    askers.record_question(email, question, generated=generated)
+    reply = {"ok": True, "lesson": data, "subscribed": allowance["subscribed"], "free_left": None, "new_left_today": None}
+    if allowance["subscribed"]:
+        pass
+    elif allowance["trial"] == "active":
+        reply["new_left_today"] = max(allowance["new_left_today"] - (1 if generated and not allowance["repeat"] else 0), 0)
+    else:
+        reply["free_left"] = max(askers.FREE_QUESTIONS - allowance["used"] - (0 if allowance["repeat"] else 1), 0)
+    return jsonify(reply)
+
+
+@app.post("/api/trial/start")
+def api_trial_start():
+    """Start a family's one free month (no card needed)."""
+    payload = request.get_json(silent=True) or {}
+    email = askers.normalize_email(payload.get("email"))
+    refusal = _email_refusal(email, payload.get("parent_consent"), payload.get("email_token"))
+    if refusal is not None:
+        return jsonify({"ok": False, "code": refusal[0], "error": refusal[1]}), refusal[2]
+    try:
+        started, ends = askers.start_trial(email)
+    except Exception:
+        logger.exception("Could not start a free month")
+        return jsonify({"ok": False, "error": ASKER_UNAVAILABLE_MESSAGE}), 503
+    if not started:
+        return jsonify({"ok": False, "code": "trial_used", "trial_ends": ends,
+                        "error": "This email has already had its free month."}), 409
+    return jsonify({"ok": True, "trial_ends": ends, "daily": askers.TRIAL_DAILY_NEW})
+
+
+@app.post("/api/subscribe")
+def api_subscribe():
+    """Send a parent to Stripe Checkout for the $4.99 monthly subscription."""
+    payload = request.get_json(silent=True) or {}
+    email = askers.normalize_email(payload.get("email"))
+    refusal = _email_refusal(email, payload.get("parent_consent"), payload.get("email_token"))
+    if refusal is not None:
+        return jsonify({"ok": False, "code": refusal[0], "error": refusal[1]}), refusal[2]
+    if not ratelimit.allow("subscribe", _client_ip(), 10):
+        return jsonify({"ok": False, "error": "Too many tries. Please wait a little and try again."}), 429
+    try:
+        url = billing.create_checkout_url(email)
+    except billing.BillingUnavailable as exc:
+        return jsonify({"ok": False, "code": "billing_unavailable", "error": str(exc)}), 503
+    return jsonify({"ok": True, "url": url})
+
+
+@app.post("/api/email/start")
+def api_email_start():
+    """Email a 6-digit code so a grown-up can confirm they own the address."""
+    payload = request.get_json(silent=True) or {}
+    email = askers.normalize_email(payload.get("email"))
+    if email is None:
+        return jsonify({"ok": False, "code": "email_required", "error": EMAIL_REQUIRED_MESSAGE}), 400
+    if not _consent_given(payload.get("parent_consent")):
+        return jsonify({"ok": False, "code": "consent_required", "error": CONSENT_REQUIRED_MESSAGE}), 400
+    if not verification.required():
+        return jsonify({"ok": True, "required": False})
+    if not ratelimit.allow("email-code", _client_ip(), 10):
+        return jsonify({"ok": False, "error": "Too many codes asked for. Please wait a while and try again."}), 429
+    try:
+        verification.start(email)
+    except verification.TooManyCodes:
+        return jsonify({"ok": False, "error": "Too many codes asked for. Please wait a while and try again."}), 429
+    except mailer.MailUnavailable as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 503
+    return jsonify({"ok": True, "required": True})
+
+
+@app.post("/api/email/verify")
+def api_email_verify():
+    """Swap a correct code for a token this device keeps."""
+    payload = request.get_json(silent=True) or {}
+    email = askers.normalize_email(payload.get("email"))
+    if email is None:
+        return jsonify({"ok": False, "code": "email_required", "error": EMAIL_REQUIRED_MESSAGE}), 400
+    if not ratelimit.allow("email-verify", _client_ip(), 30):
+        return jsonify({"ok": False, "error": "Too many tries. Please wait a while and try again."}), 429
+    token = verification.check(email, payload.get("code"))
+    if not token:
+        return jsonify({"ok": False, "error": "That code didn't work. Check it, or send a new one."}), 400
+    return jsonify({"ok": True, "token": token})
+
+
+@app.post("/stripe/webhook")
+def stripe_webhook():
+    """Stripe tells us when a subscription starts, changes or ends. Signed, so it can't be faked."""
+    try:
+        change = billing.subscription_change(request.get_data(), request.headers.get("Stripe-Signature", ""))
+    except billing.BillingUnavailable:
+        return jsonify({"ok": False}), 503
+    except ValueError:
+        return jsonify({"ok": False, "error": "invalid signature"}), 400
+    if change is not None:
+        try:
+            askers.set_subscription(change["email"], change["status"], change["customer_id"], change["subscription_id"])
+        except Exception:
+            logger.exception("Could not save a Stripe subscription change")
+            return jsonify({"ok": False}), 500  # Stripe retries failed deliveries.
+        logger.info("Stripe subscription is now %s", change["status"])
+    return jsonify({"ok": True})
 
 
 @app.route("/api/quiz", methods=["POST"])

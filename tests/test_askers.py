@@ -39,7 +39,7 @@ def test_question_without_valid_email_is_refused_before_generation(site, email):
     assert site.generated == []
 
 
-def test_three_free_questions_then_subscription_required(site):
+def test_three_free_questions_then_free_month_offer(site):
     for number, left in ((1, 2), (2, 1), (3, 0)):
         response = ask(site, f"Question number {number}?")
         assert response.status_code == 200
@@ -47,8 +47,8 @@ def test_three_free_questions_then_subscription_required(site):
     blocked = ask(site, "Question number 4?")
     assert blocked.status_code == 402
     body = blocked.get_json()
-    assert body["code"] == "subscription_required"
-    assert "$4.99" in body["error"]
+    assert body["code"] == "trial_available"
+    assert "free month" in body["error"]
     assert body["free_left"] == 0
     assert len(site.generated) == 3
 
@@ -78,7 +78,7 @@ def test_failed_generation_does_not_use_a_free_question(site, monkeypatch):
 def test_database_trouble_refuses_instead_of_generating(site, monkeypatch):
     app_module = importlib.import_module("app")
 
-    def broken(email, question):
+    def broken(email, question, **kwargs):
         raise app_module.askers.AskerUnavailable("down")
 
     monkeypatch.setattr(app_module.askers, "allowance", broken)
@@ -100,7 +100,7 @@ def test_home_form_asks_for_email_without_password(site, monkeypatch):
     monkeypatch.setattr(app_module.library, "list_published_cards", lambda: [])
     page = site.get("/").data
     assert b'type="email" name="email"' in page
-    assert b"$4.99 a month" in page
+    assert b"free month" in page
     assert b'type="password"' not in page
 
 
@@ -135,7 +135,7 @@ def test_privacy_page_names_contact_services_and_rights(site):
     assert response.status_code == 200
     page = response.data
     for text in (b"Asklilowl@gmail.com", b"Children under 13", b"A parent must always be present", b"Parents' rights", b"Anthropic",
-                 b"fal.ai", b"OpenAI", b"ipwho.is", b"Render", b"Neon", b"Google Fonts"):
+                 b"fal.ai", b"OpenAI", b"ipwho.is", b"Render", b"Google Fonts"):
         assert text in page
     assert b"/privacy" in site.get("/sitemap.xml").data
 

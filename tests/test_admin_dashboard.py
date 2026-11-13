@@ -100,6 +100,7 @@ def test_asker_summary_counts_limits_and_subscribers():
     db = importlib.import_module("lesson_platform.db")
     cursor = FakeCursor([
         (3, 1, 2, 1),
+        (0,),
         [("a@example.com", "d1", "d2", "none", 3),
          ("b@example.com", "d1", "d2", "none", 1),
          ("c@example.com", "d1", "d2", "active", 7)],

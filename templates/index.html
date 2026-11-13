@@ -339,24 +339,41 @@
       <p>Ask Lil Owl anything and get your own picture lesson.</p>
     </section>
     {% endif %}
+    {% if subscribe_result == '1' %}
+    <p class="cine-notice" role="status">Thank you for subscribing! It can take a minute to switch on. Then ask Lil Owl as many questions as you like.</p>
+    {% elif subscribe_result == 'cancelled' %}
+    <p class="cine-notice" role="status">No payment was taken. You can subscribe any time from the question box.</p>
+    {% endif %}
+    {% if billing_test_mode %}<p class="cine-notice" role="note">Payments are in Stripe test mode. No real money is charged.</p>{% endif %}
     <footer class="cine-footer">
       <a href="{{ url_for('privacy') }}">Privacy policy</a>
+      {% if billing_portal_url() %}<a href="{{ billing_portal_url() }}" rel="noopener">Manage subscription</a>{% endif %}
       <a href="mailto:{{ privacy_contact_email }}">Contact</a>
       <span>Made for curious minds</span>
     </footer>
   </main>
 
   <div class="owl-ask">
-    <div class="owl-panel" id="askPanel"{% if not ask_open %} hidden{% endif %}>
+    <div class="owl-panel" id="askPanel" data-verify="{{ 1 if email_verification else 0 }}"{% if not ask_open %} hidden{% endif %}>
       <label for="question">What do you wonder about?</label>
       <form class="ask-form" id="askForm" action="{{ url_for('lesson') }}" method="post">
         <div class="asker-email" id="askerEmailRow">
           <label for="askerEmail">Grown-up's email</label>
           <input type="email" name="email" id="askerEmail" placeholder="parent@example.com" required autocomplete="email" maxlength="254">
-          <p class="asker-note">No password needed. We remember it on this device. {{ free_questions }} free questions, then $4.99 a month.</p>
+          <p class="asker-note">No password needed.{% if email_verification %} We'll email a 6-digit code to confirm it.{% endif %} We remember it on this device. {{ free_questions }} free questions, then a free month with up to 5 new questions every 24 hours.</p>
           <label class="asker-consent"><input type="checkbox" name="parent_consent" value="yes" id="askerConsent" required> <span>I'm a parent or guardian, I'll stay with my child while they use AskLilOwl, and I agree to the <a href="{{ url_for('privacy') }}" target="_blank" rel="noopener">privacy policy</a>.</span></label>
         </div>
         <p class="asker-saved" id="askerSaved" hidden>Asking as <strong id="askerSavedEmail"></strong> · <button type="button" id="askerChange">Change</button></p>
+        <div class="asker-verify" id="askerVerify" hidden>
+          <p>We emailed a 6-digit code to <strong id="askerVerifyEmail"></strong>. It can take a minute, so check spam too.</p>
+          <div class="asker-verify-row">
+            <label class="visually-hidden" for="askerCode">6-digit code</label>
+            <input type="text" id="askerCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456">
+            <button type="button" id="askerCodeConfirm">Confirm</button>
+          </div>
+          <p class="asker-verify-status" id="askerVerifyStatus" role="status"></p>
+          <button type="button" class="asker-link" id="askerCodeResend">Send a new code</button>
+        </div>
         <input type="text" name="question" id="question" placeholder="How do rockets fly?" required autocomplete="off" value="{{ prefill or '' }}">
         <button type="button" id="micBtn" class="mic-btn-new" aria-label="Search by voice" hidden>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -387,6 +404,8 @@
       <p id="loadingMsg">Drawing your lesson…</p>
       <div class="loading-actions">
         <button type="button" id="openLessonBtn" class="primary big-btn" hidden>Open Lesson →</button>
+        <button type="button" id="trialBtn" class="primary big-btn" hidden>Start my free month</button>
+        <button type="button" id="subscribeBtn" class="primary big-btn" hidden>Subscribe for $4.99 a month</button>
         <button type="button" id="cancelBtn" class="secondary">Stop</button>
       </div>
       <p class="muted">While you wait — munch the dots! <span id="elapsed">0s</span></p>
@@ -497,6 +516,54 @@
 
     const openLessonBtn = document.getElementById('openLessonBtn');
     const cancelBtn = document.getElementById('cancelBtn');
+    const subscribeBtn = document.getElementById('subscribeBtn');
+    const trialBtn = document.getElementById('trialBtn');
+    let lastQuestion = '';
+    // One free month per family: up to 5 new lessons a day, no card.
+    trialBtn.addEventListener('click', async () => {
+      const asker = window.AskerEmail ? await window.AskerEmail.confirm() : null;
+      if (!asker) { loading.hidden = true; return; }
+      trialBtn.disabled = true;
+      try {
+        const res = await fetch('/api/trial/start', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: asker.email, parent_consent: true, email_token: asker.token }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (data.code === 'verify_required' && window.AskerEmail) window.AskerEmail.forgetToken();
+        if (data.ok || data.code === 'trial_used') {
+          trialBtn.hidden = true;
+          if (data.ok && lastQuestion) { userInitiated = true; askQuestion(lastQuestion); return; }
+        }
+        loadingMsg.textContent = data.ok ? 'Your free month has started!' : (data.error || 'Please try again.');
+      } catch (e) {
+        loadingMsg.textContent = 'Network error. Please try again.';
+      } finally {
+        trialBtn.disabled = false;
+      }
+    });
+    // A grown-up's subscription is paid on Stripe's own page; card details never reach this site.
+    subscribeBtn.addEventListener('click', async () => {
+      const asker = window.AskerEmail ? await window.AskerEmail.confirm() : null;
+      if (!asker) { loading.hidden = true; return; }
+      const email = asker.email;
+      subscribeBtn.disabled = true;
+      subscribeBtn.textContent = 'Opening secure checkout…';
+      try {
+        const res = await fetch('/api/subscribe', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, parent_consent: true, email_token: asker.token }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (data.code === 'verify_required' && window.AskerEmail) window.AskerEmail.forgetToken();
+        if (data.ok && data.url) { window.location.href = data.url; return; }
+        loadingMsg.textContent = data.error || 'Payments are unavailable right now. Please try again.';
+      } catch (e) {
+        loadingMsg.textContent = 'Network error. Please try again.';
+      }
+      subscribeBtn.disabled = false;
+      subscribeBtn.textContent = 'Subscribe for $4.99 a month';
+    });
     let activeAbort = null;
     let activeTimer = null;
     let cancelled = false;
@@ -583,7 +650,7 @@
       });
     }
 
-    function askQuestion(question) {
+    async function askQuestion(question) {
       if (!question || !question.trim()) return;
       // Guard: only run if the user actually triggered this in-page. Defends
       // against synthetic submits that browsers may fire when restoring a
@@ -592,13 +659,17 @@
       userInitiated = false;
       question = question.trim();
       if (question.length > 200) question = question.slice(0, 200);
-      const email = window.AskerEmail ? window.AskerEmail.require() : '';
-      if (!email) return;
+      const asker = window.AskerEmail ? await window.AskerEmail.confirm() : null;
+      if (!asker) return;
+      const email = asker.email;
 
       // Reset state for a fresh request
       cancelled = false;
       slide1AudioBytes = null;
+      lastQuestion = question;
       openLessonBtn.hidden = true;
+      subscribeBtn.hidden = true;
+      trialBtn.hidden = true;
       cancelBtn.hidden = false;
       cancelBtn.textContent = 'Stop';
       loadingMsg.textContent = 'Drawing your lesson…';
@@ -623,7 +694,7 @@
       fetch('/api/lesson', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, email, parent_consent: true }),
+        body: JSON.stringify({ question, email, parent_consent: true, email_token: asker.token }),
         signal: activeAbort.signal,
       })
       .then(res => res.json())
@@ -632,12 +703,15 @@
         clearInterval(activeTimer);
         activeTimer = null;
         if (data.ok && window.AskerEmail) window.AskerEmail.update(data);
-        if (!data.ok && (data.code === 'subscription_required' || data.code === 'email_required' || data.code === 'consent_required' || data.code === 'asker_unavailable')) {
+        if (!data.ok && (data.code === 'subscription_required' || data.code === 'email_required' || data.code === 'consent_required' || data.code === 'verify_required' || data.code === 'trial_available' || data.code === 'daily_limit' || data.code === 'asker_unavailable')) {
           loadingMsg.textContent = data.error;
           elapsed.textContent = '';
           openLessonBtn.hidden = true;
+          subscribeBtn.hidden = !(data.code === 'subscription_required' && data.subscribe_available);
+          trialBtn.hidden = data.code !== 'trial_available';
           cancelBtn.textContent = 'Back';
           if ((data.code === 'email_required' || data.code === 'consent_required') && window.AskerEmail) window.AskerEmail.forget();
+          if (data.code === 'verify_required' && window.AskerEmail) window.AskerEmail.forgetToken();
           return;
         }
         if (data.ok) {
