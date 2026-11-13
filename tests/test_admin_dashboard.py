@@ -18,6 +18,10 @@ def fake_data(db):
                            "last_question": "2026-11-12 10:00", "questions": 1, "free_left": 2, "status": "none"},
                       ]}
     data["top_questions"] = [{"question": "<img src=x onerror=alert(1)>", "count": 3}]
+    data["feedback"] = {"total": 2, "up": 1, "down": 1, "comments": 1, "last_30d": 2, "available": True, "rows": [
+        {"created_at": "2026-11-12 09:00", "rating": "down", "question": "Why?", "comment": "<b>too long</b>", "place": "Texas, United States"},
+        {"created_at": "2026-11-12 08:00", "rating": "up", "question": "How?", "comment": None, "place": "—"},
+    ]}
     return data
 
 
@@ -123,3 +127,12 @@ def test_admin_delete_needs_csrf_and_removes_email(admin, monkeypatch):
     assert response.status_code == 302
     assert "asker=deleted" in response.headers["Location"]
     assert removed == ["mum@example.com"]
+
+
+def test_dashboard_shows_feedback_comments_escaped(admin):
+    client, _ = admin
+    page = client.get("/admin").data
+    assert b'id="feedback"' in page
+    assert b"Written comments" in page
+    assert b"&lt;b&gt;too long&lt;/b&gt;" in page
+    assert b"<b>too long</b>" not in page

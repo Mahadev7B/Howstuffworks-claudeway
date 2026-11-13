@@ -216,6 +216,9 @@ CREATE TABLE IF NOT EXISTS askers (
   last_question_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ALTER TABLE askers ADD COLUMN IF NOT EXISTS consented_at TIMESTAMPTZ;
+ALTER TABLE feedback ALTER COLUMN rating DROP NOT NULL;
+ALTER TABLE feedback ADD COLUMN IF NOT EXISTS client_id TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS feedback_client_id_idx ON feedback (client_id);
 CREATE TABLE IF NOT EXISTS asker_questions (
   email         TEXT NOT NULL REFERENCES askers(email) ON DELETE CASCADE,
   question_hash TEXT NOT NULL,
@@ -272,10 +275,14 @@ def enabled() -> bool:
 
 
 def _do_save_feedback(params: tuple) -> None:
+    # One entry per lesson visit: a thumb and a later comment update the same row.
     sql = """
         INSERT INTO feedback
-          (question, rating, comment, ip_address, city, region, country, user_agent)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+          (question, rating, comment, ip_address, city, region, country, user_agent, client_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (client_id) DO UPDATE SET
+          rating  = COALESCE(EXCLUDED.rating, feedback.rating),
+          comment = COALESCE(EXCLUDED.comment, feedback.comment)
     """
     conn = _direct_connect()
     if conn is None:
@@ -296,9 +303,10 @@ def _do_save_feedback(params: tuple) -> None:
 
 def save_feedback(
     question: str,
-    rating: str,
+    rating: str | None,
     comment: str | None,
     *,
+    client_id: str | None = None,
     ip_address: str | None = None,
     city: str | None = None,
     region: str | None = None,
@@ -307,8 +315,10 @@ def save_feedback(
 ) -> None:
     if _pool is None:
         raise RuntimeError("DB not configured")
-    if rating not in ("up", "down"):
-        raise ValueError("rating must be 'up' or 'down'")
+    if rating not in ("up", "down", None):
+        raise ValueError("rating must be 'up', 'down' or None")
+    if rating is None and not comment:
+        raise ValueError("a rating or a comment is required")
     params = (
         question[:500],
         rating,
@@ -318,6 +328,7 @@ def save_feedback(
         (region or "")[:128] or None,
         (country or "")[:128] or None,
         (user_agent or "")[:500] or None,
+        client_id,
     )
     _bg(_do_save_feedback, params)
 
@@ -859,6 +870,7 @@ _ADMIN_DEFAULTS = {
     "recent_errors": [],
     "lessons_by_country": [],
     "lessons_by_region": [],
+    "feedback": {"total": 0, "up": 0, "down": 0, "comments": 0, "last_30d": 0, "rows": [], "available": False},
     "askers": {"total": 0, "new_today": 0, "new_7d": 0, "subscribed": 0, "at_limit": 0,
                "questions": 0, "rows": [], "available": False},
 }
@@ -913,6 +925,31 @@ def _admin_askers(cur, today_start: datetime, limit: int) -> dict[str, Any]:
     return {"total": total, "new_today": new_today, "new_7d": new_7d, "subscribed": subscribed,
             "at_limit": at_limit, "questions": questions, "rows": rows[:limit],
             "available": True}
+
+
+def _admin_feedback(cur, limit: int) -> dict[str, Any]:
+    xip_sql, xip_params = _exclude_admin_ip_sql()
+    where = f"WHERE {xip_sql[4:]}" if xip_sql else ""
+    cur.execute(f"""
+        SELECT COUNT(*),
+               COUNT(*) FILTER (WHERE rating = 'up'),
+               COUNT(*) FILTER (WHERE rating = 'down'),
+               COUNT(comment),
+               COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '30 days')
+        FROM feedback {where}
+    """, (*xip_params,))
+    total, up, down, comments, last_30d = (int(v or 0) for v in cur.fetchone())
+    cur.execute(f"""
+        SELECT to_char(created_at AT TIME ZONE '{ADMIN_TZ}', 'YYYY-MM-DD HH24:MI'),
+               rating, question, comment, region, country
+        FROM feedback {where}
+        ORDER BY created_at DESC
+        LIMIT %s
+    """, (*xip_params, limit))
+    rows = [{"created_at": r[0], "rating": r[1], "question": r[2], "comment": r[3],
+             "place": ", ".join(part for part in (r[4], r[5]) if part) or "—"} for r in cur.fetchall()]
+    return {"total": total, "up": up, "down": down, "comments": comments, "last_30d": last_30d,
+            "rows": rows, "available": True}
 
 
 def admin_askers_export() -> list[dict[str, Any]]:
@@ -1217,12 +1254,19 @@ def admin_load_all(
                              for r in cur.fetchall()]
 
         try:
+            feedback_summary = _admin_feedback(cur, 100)
+        except Exception:
+            logger.exception("Admin feedback query failed")
+            feedback_summary = copy.deepcopy(_ADMIN_DEFAULTS["feedback"])
+
+        try:
             asker_summary = _admin_askers(cur, today_start, limit_askers)
         except Exception:
             logger.exception("Admin askers query failed")
             asker_summary = copy.deepcopy(_ADMIN_DEFAULTS["askers"])
 
         return {
+            "feedback": feedback_summary,
             "askers": asker_summary,
             "overview": overview,
             "lessons_by_day": lessons_by_day,

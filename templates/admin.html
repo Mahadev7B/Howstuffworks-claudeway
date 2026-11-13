@@ -171,6 +171,39 @@
       </div>
     </div>
 
+    {% set fb = data.feedback %}
+    <h2 class="h5 mt-5 mb-1" id="feedback">Feedback</h2>
+    <p class="section-note mb-3">From the "Did this lesson help?" box under lessons made from a question. A thumb and a comment from the same visit are one entry.</p>
+    {% if not fb.available %}
+      <div class="alert alert-warning">Feedback couldn't be loaded just now. Reload the page to try again.</div>
+    {% endif %}
+    <div class="row g-3 mb-3">
+      <div class="col-6 col-lg-3"><div class="card card-stat p-3"><div class="label">Feedback entries</div><div class="value">{{ fb.total }}</div><div class="small text-muted">{{ fb.last_30d }} in the last 30 days</div></div></div>
+      <div class="col-6 col-lg-3"><div class="card card-stat p-3"><div class="label">👍 Helpful</div><div class="value">{{ fb.up }}</div><div class="small text-muted">{% if fb.up + fb.down %}{{ (100 * fb.up / (fb.up + fb.down))|round|int }}% of thumbs{% else %}no thumbs yet{% endif %}</div></div></div>
+      <div class="col-6 col-lg-3"><div class="card card-stat p-3 {{ 'warn' if fb.down else '' }}"><div class="label">👎 Not really</div><div class="value">{{ fb.down }}</div><div class="small text-muted">worth reading the comments</div></div></div>
+      <div class="col-6 col-lg-3"><div class="card card-stat p-3"><div class="label">Written comments</div><div class="value">{{ fb.comments }}</div><div class="small text-muted">entries with text</div></div></div>
+    </div>
+    <div class="card p-0">
+      <div class="table-responsive scroll-table">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light"><tr><th>When</th><th>Rating</th><th>Lesson question</th><th>Comment</th><th>Where</th></tr></thead>
+          <tbody>
+            {% for f in fb.rows %}
+              <tr>
+                <td class="nowrap">{{ f.created_at or '—' }}</td>
+                <td class="nowrap">{% if f.rating == 'up' %}👍{% elif f.rating == 'down' %}👎{% else %}—{% endif %}</td>
+                <td class="truncate" title="{{ f.question }}">{{ f.question }}</td>
+                <td style="min-width:240px;">{{ f.comment or '' }}</td>
+                <td class="nowrap small">{{ f.place }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="5" class="text-muted">No feedback yet</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <h2 class="h5 mt-5 mb-3">Usage</h2>
     <div class="row g-3">
       <div class="col-lg-6"><div class="card p-3"><h6>New lessons per day (last 14 days)</h6><canvas id="chartLessonsByDay" height="150"></canvas></div></div>

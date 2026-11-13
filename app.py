@@ -816,16 +816,18 @@ def api_feedback():
         return jsonify({"ok": False, "error": "feedback storage not configured"}), 503
     payload = request.get_json(silent=True) or {}
     question = (payload.get("question") or "").strip()
-    rating = (payload.get("rating") or "").strip()
-    comment = (payload.get("comment") or "").strip() or None
-    if not question or rating not in ("up", "down"):
-        return jsonify({"ok": False, "error": "question and rating ('up'|'down') are required"}), 400
+    rating = (payload.get("rating") or "").strip() or None
+    comment = (payload.get("comment") or "").strip()[:2000] or None
+    client_id = str(payload.get("client_id") or "").strip()
+    client_id = client_id if 8 <= len(client_id) <= 64 and all(c.isalnum() or c == "-" for c in client_id) else None
+    if not question or rating not in ("up", "down", None) or (rating is None and not comment):
+        return jsonify({"ok": False, "error": "Choose a thumb or write a comment."}), 400
 
     ctx = _client_context()
     if not ratelimit.allow("feedback", _client_ip(), FEEDBACK_HOURLY_LIMIT):
         return jsonify({"ok": False, "error": "Too many feedback submissions. Try again later."}), 429
 
-    save_feedback(question, rating, comment, **ctx)
+    save_feedback(question, rating, comment, client_id=client_id, **ctx)
 
     if rating == "up" and db_enabled:
         # Lesson is already saved to cached_lessons on generation — just pin it.

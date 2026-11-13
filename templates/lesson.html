@@ -130,7 +130,7 @@
         <button type="button" class="fb-btn" data-rating="down">👎 Not really</button>
       </div>
       <textarea id="fb-comment" placeholder="Optional: what would make it better?" rows="2" maxlength="2000"></textarea>
-      <button type="button" id="fb-submit" class="primary" disabled>Send feedback</button>
+      <button type="button" id="fb-submit" class="primary" disabled>Send comment</button>
       <p class="fb-status" id="fb-status" role="status"></p>
     </section>
 
@@ -597,48 +597,54 @@
       const fbSubmit = document.getElementById('fb-submit');
       const fbStatus = document.getElementById('fb-status');
       let fbRating = null;
+      // One id per lesson visit, so the thumb and a later comment update the same feedback entry.
+      const fbId = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+        : 'fb-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
 
-      async function submitFeedback() {
-        if (!fbRating) return;
-        fbSubmit.disabled = true;
-        fbButtons.forEach(b => b.disabled = true);
+      async function sendFeedback(includeComment) {
+        const comment = includeComment ? fbComment.value.trim() : '';
+        if (!fbRating && !comment) return false;
+        fbStatus.classList.remove('success');
         fbStatus.textContent = 'Sending…';
         try {
           const res = await fetch('/api/feedback', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              question: fbSection.dataset.question,
-              rating: fbRating,
-              comment: fbComment.value.trim(),
-            }),
+            body: JSON.stringify({ question: fbSection.dataset.question, rating: fbRating, comment, client_id: fbId }),
           });
           const data = await res.json().catch(() => ({}));
-          if (res.ok && data.ok) {
-            fbStatus.textContent = '✓ Thanks — feedback saved!';
-            fbStatus.classList.add('success');
-            fbComment.disabled = true;
-            fbSubmit.textContent = 'Sent';
-          } else {
+          if (!(res.ok && data.ok)) {
             fbStatus.textContent = 'Could not send feedback: ' + (data.error || res.statusText);
-            fbButtons.forEach(b => b.disabled = false);
-            fbSubmit.disabled = false;
+            return false;
           }
+          fbStatus.classList.add('success');
+          return true;
         } catch (err) {
           fbStatus.textContent = 'Network error. Try again.';
-          fbButtons.forEach(b => b.disabled = false);
-          fbSubmit.disabled = false;
+          return false;
         }
       }
 
-      fbButtons.forEach(btn => btn.addEventListener('click', () => {
+      fbButtons.forEach(btn => btn.addEventListener('click', async () => {
         fbRating = btn.dataset.rating;
         fbButtons.forEach(b => b.classList.toggle('selected', b === btn));
-        fbSubmit.disabled = false;
-        submitFeedback();
+        if (await sendFeedback(false)) {
+          fbStatus.textContent = fbComment.disabled ? '✓ Thanks — updated!' : '✓ Thanks! You can add a comment too.';
+        }
       }));
 
-      fbSubmit.addEventListener('click', submitFeedback);
+      fbComment.addEventListener('input', () => { fbSubmit.disabled = !fbComment.value.trim(); });
+
+      fbSubmit.addEventListener('click', async () => {
+        fbSubmit.disabled = true;
+        if (await sendFeedback(true)) {
+          fbStatus.textContent = '✓ Thanks — your comment was saved!';
+          fbComment.disabled = true;
+          fbSubmit.textContent = 'Sent';
+        } else {
+          fbSubmit.disabled = false;
+        }
+      });
 
       // ── Download reel ─────────────────────────────────────────────────────
       const downloadBtn = document.getElementById('downloadBtn');
