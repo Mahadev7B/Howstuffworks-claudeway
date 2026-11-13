@@ -345,6 +345,12 @@
     <div class="owl-panel" id="askPanel"{% if not ask_open %} hidden{% endif %}>
       <label for="question">What do you wonder about?</label>
       <form class="ask-form" id="askForm" action="{{ url_for('lesson') }}" method="post">
+        <div class="asker-email" id="askerEmailRow">
+          <label for="askerEmail">Grown-up's email</label>
+          <input type="email" name="email" id="askerEmail" placeholder="parent@example.com" required autocomplete="email" maxlength="254">
+          <p class="asker-note">No password needed. We remember it on this device. {{ free_questions }} free questions, then $4.99 a month.</p>
+        </div>
+        <p class="asker-saved" id="askerSaved" hidden>Asking as <strong id="askerSavedEmail"></strong> · <button type="button" id="askerChange">Change</button></p>
         <input type="text" name="question" id="question" placeholder="How do rockets fly?" required autocomplete="off" value="{{ prefill or '' }}">
         <button type="button" id="micBtn" class="mic-btn-new" aria-label="Search by voice" hidden>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -580,6 +586,8 @@
       userInitiated = false;
       question = question.trim();
       if (question.length > 200) question = question.slice(0, 200);
+      const email = window.AskerEmail ? window.AskerEmail.require() : '';
+      if (!email) return;
 
       // Reset state for a fresh request
       cancelled = false;
@@ -609,7 +617,7 @@
       fetch('/api/lesson', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({ question, email }),
         signal: activeAbort.signal,
       })
       .then(res => res.json())
@@ -617,6 +625,15 @@
         if (cancelled) return;
         clearInterval(activeTimer);
         activeTimer = null;
+        if (data.ok && window.AskerEmail) window.AskerEmail.update(data);
+        if (!data.ok && (data.code === 'subscription_required' || data.code === 'email_required' || data.code === 'asker_unavailable')) {
+          loadingMsg.textContent = data.error;
+          elapsed.textContent = '';
+          openLessonBtn.hidden = true;
+          cancelBtn.textContent = 'Back';
+          if (data.code === 'email_required' && window.AskerEmail) window.AskerEmail.forget();
+          return;
+        }
         if (data.ok) {
           openLessonBtn.dataset.question = question;
           if (data.lesson && data.lesson.slides && data.lesson.slides.length) {

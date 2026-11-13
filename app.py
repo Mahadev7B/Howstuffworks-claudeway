@@ -57,6 +57,7 @@ from lesson_platform import (
     today_spend_usd,
 )
 from lesson_platform.db import get_pool_stats, get_write_stats
+from lesson_platform import askers
 from lesson_platform import library
 from lesson_platform import library_audio
 from lesson_platform import library_import
@@ -572,6 +573,7 @@ def home():
     except RuntimeError:
         cards = []
     return render_template("index.html", examples=EXAMPLE_QUESTIONS, prefill=prefill, cards=cards,
+                           free_questions=askers.FREE_QUESTIONS,
                            rows=_home_rows(cards), spotlight=_home_spotlight(cards),
                            ask_open=bool(prefill or not cards))
 
@@ -641,6 +643,29 @@ def robots():
                     mimetype="text/plain")
 
 
+EMAIL_REQUIRED_MESSAGE = "Please enter a grown-up's email to ask your own question."
+SUBSCRIPTION_MESSAGE = (
+    "You've used your {free} free questions. A $4.99 monthly subscription "
+    "unlocks more questions."
+)
+ASKER_UNAVAILABLE_MESSAGE = "We couldn't check your free questions just now. Please try again."
+
+
+def _asker_gate(raw_email: str | None, question: str) -> tuple[str | None, dict | None, tuple[str, str, int] | None]:
+    """Return (email, allowance, refusal). Refusal is (code, message, HTTP status)."""
+    email = askers.normalize_email(raw_email)
+    if email is None:
+        return None, None, ("email_required", EMAIL_REQUIRED_MESSAGE, 400)
+    try:
+        allowance = askers.allowance(email, question)
+    except askers.AskerUnavailable:
+        return email, None, ("asker_unavailable", ASKER_UNAVAILABLE_MESSAGE, 503)
+    if not allowance["allowed"]:
+        message = SUBSCRIPTION_MESSAGE.format(free=askers.FREE_QUESTIONS)
+        return email, allowance, ("subscription_required", message, 402)
+    return email, allowance, None
+
+
 def _lookup_only(question: str, ctx: dict) -> dict | None:
     """Return a cached lesson without ever calling Claude/Flux.
 
@@ -699,12 +724,16 @@ def lesson():
         return resp
 
     # POST = explicit form submission (no-JS fallback). Generate if needed.
+    email, _, refusal = _asker_gate(request.form.get("email"), question)
+    if refusal is not None:
+        return render_template("error.html", question=question, error=refusal[1]), refusal[2]
     data, err = _track_lesson("/lesson", question, ctx)
     if err is not None:
         if err == RATE_LIMIT_ERROR:
             friendly = "Too many questions. Please try again later."
             return render_template("error.html", question=question, error=friendly), 429
         return render_template("error.html", question=question, error=err), 500
+    askers.record_question(email, question)
     resp = app.make_response(render_template("lesson.html", question=question, lesson=data))
     resp.headers["Cache-Control"] = "private, max-age=600"
     return resp
@@ -724,6 +753,14 @@ def api_lesson():
     if blocked:
         return jsonify({"ok": False, "error": blocked}), 400
 
+    email, allowance, refusal = _asker_gate(payload.get("email"), question)
+    if refusal is not None:
+        code, message, status = refusal
+        body = {"ok": False, "error": message, "code": code}
+        if allowance is not None:
+            body.update(free_left=allowance["free_left"], free_limit=askers.FREE_QUESTIONS)
+        return jsonify(body), status
+
     ctx = _client_context()
     data, err = _track_lesson("/api/lesson", question, ctx)
     if err is not None:
@@ -734,7 +771,10 @@ def api_lesson():
                 "message": "Too many questions. Please try again later.",
             }), 429
         return jsonify({"ok": False, "error": err}), 500
-    return jsonify({"ok": True, "lesson": data})
+    askers.record_question(email, question)
+    used_now = allowance["used"] + (0 if allowance["repeat"] else 1)
+    free_left = max(askers.FREE_QUESTIONS - used_now, 0)
+    return jsonify({"ok": True, "lesson": data, "free_left": free_left, "subscribed": allowance["subscribed"]})
 
 
 @app.route("/api/quiz", methods=["POST"])

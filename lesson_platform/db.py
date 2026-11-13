@@ -209,6 +209,19 @@ CREATE TABLE IF NOT EXISTS published_lesson_audio (
   source_text_hash TEXT NOT NULL,
   PRIMARY KEY (slug, slide_index)
 );
+CREATE TABLE IF NOT EXISTS askers (
+  email               TEXT PRIMARY KEY,
+  subscription_status TEXT NOT NULL DEFAULT 'none',
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_question_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS asker_questions (
+  email         TEXT NOT NULL REFERENCES askers(email) ON DELETE CASCADE,
+  question_hash TEXT NOT NULL,
+  question      TEXT NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (email, question_hash)
+);
 """
 
 
