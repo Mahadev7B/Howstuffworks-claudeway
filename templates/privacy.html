@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy policy — AskLilOwl</title>
+  <meta name="description" content="How AskLilOwl handles information, including children's privacy and parents' rights.">
+  <link rel="canonical" href="https://www.asklilowl.com/privacy">
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='cinema-theme.css') }}">
+  <style>
+    .policy { max-width: 760px; margin: 0 auto; padding: 1.5rem 1.25rem 4rem; line-height: 1.65; }
+    .policy-brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; margin-bottom: 1.5rem; }
+    .policy-brand img:first-child { width: 44px; height: 45px; }
+    .policy-brand img:last-child { width: 122px; height: 25px; box-sizing: content-box; background: #fff; border-radius: 10px; padding: 6px 10px; }
+    .policy h1 { font-family: 'Baloo 2', sans-serif; font-size: 2.4rem; line-height: 1.1; margin: 0 0 0.25rem; }
+    .policy h2 { font-family: 'Baloo 2', sans-serif; font-size: 1.45rem; margin: 2.2rem 0 0.5rem; color: #FAC775; }
+    .policy p, .policy li { color: #D3D1C7; }
+    .policy strong { color: #F1EFE8; }
+    .policy ul { padding-left: 1.3rem; }
+    .policy li { margin-bottom: 0.35rem; }
+    .policy .updated { color: #B4B2A9; margin-bottom: 1.5rem; }
+    .policy .summary { background: #2C2C2A; border-radius: 14px; padding: 1rem 1.25rem; }
+    .policy .summary p { margin: 0; color: #F1EFE8; }
+  </style>
+</head>
+<body class="cinema-page">
+  <main class="policy">
+    <a class="policy-brand" href="{{ url_for('home') }}">
+      <img src="{{ url_for('static', filename='brand/owl-cutout.png') }}" alt="">
+      <img src="{{ url_for('static', filename='brand/wordmark.png') }}" alt="AskLilOwl home">
+    </a>
+    <h1>Privacy policy</h1>
+    <p class="updated">Last updated {{ updated }}</p>
+
+    <div class="summary">
+      <p><strong>In short:</strong> AskLilOwl is made for children to use with a parent or guardian, never on their own. We collect as little as we can. Watching lessons needs no sign-up. To ask your own question, a parent or guardian gives their email. Parents can ask us at any time what we hold and to delete it by writing to <a href="mailto:{{ contact_email }}">{{ contact_email }}</a>.</p>
+    </div>
+
+    <h2>Who we are</h2>
+    <p>AskLilOwl runs asklilowl.com, a website of illustrated, narrated lessons for curious kids. You can reach us about privacy at <a href="mailto:{{ contact_email }}">{{ contact_email }}</a>.</p>
+
+    <h2>Information we collect</h2>
+    <p><strong>When anyone watches a lesson</strong>, we don't ask for any personal information and we don't use advertising or tracking cookies.</p>
+    <p><strong>When someone asks their own question</strong>, we collect:</p>
+    <ul>
+      <li><strong>A parent's or guardian's email address</strong>, given with their agreement to this policy. We use it to count the {{ free_questions }} free questions and, later, to manage a subscription.</li>
+      <li><strong>The question</strong> that was typed or spoken, so we can make the lesson and show it again later.</li>
+      <li><strong>Approximate location and device type</strong>: the city, region and country, and the kind of device and browser. We use these to keep the site running and understand how it is used.</li>
+    </ul>
+    <p><strong>We don't store internet (IP) addresses.</strong> Every browser sends one when it visits. We use it only for a moment to work out the approximate location and to limit how many questions one device can ask in an hour, and then we discard it.</p>
+    <p><strong>If someone uses the feedback buttons</strong>, we keep the rating, any comment typed, and the same approximate location and device type.</p>
+    <p><strong>On your device</strong>, the website remembers the parent's email in the browser's storage so it doesn't have to be typed again. Pressing "Change" in the question box, or clearing the browser's data, removes it.</p>
+    <p><strong>The microphone button</strong> uses your browser's own speech recognition. AskLilOwl doesn't record or keep voices, but your browser or device maker (for example Apple or Google) may process the audio under their own privacy policy.</p>
+    <p>Please don't type names, addresses, schools or other personal details into questions or feedback.</p>
+
+    <h2>A parent must always be present</h2>
+    <p>AskLilOwl is meant to be used by a child together with a parent or guardian. Children should not use the site on their own, and a parent or guardian should be present the whole time a child is watching lessons or asking questions. The parent, not the child, gives the email, agrees to this policy, and is responsible for how the site is used.</p>
+
+    <h2>Children under 13</h2>
+    <p>Children can watch lessons without giving any personal information. Asking a new question needs a parent or guardian to give their email and agree to this policy first. We don't knowingly ask a child for their own name, email, address or phone number. If you believe a child has given us personal information without a parent's agreement, write to <a href="mailto:{{ contact_email }}">{{ contact_email }}</a> and we will delete it.</p>
+
+    <h2>Services that help run AskLilOwl</h2>
+    <p>We don't sell personal information or share it for advertising. These services process information only so the site can work:</p>
+    <ul>
+      <li><strong>Anthropic</strong> receives the question to write the lesson.</li>
+      <li><strong>fal.ai</strong> receives picture descriptions written from the lesson to draw its illustrations.</li>
+      <li><strong>OpenAI</strong> receives lesson text to read new lessons aloud.</li>
+      <li><strong>ipwho.is</strong> receives the internet address for a moment to work out the approximate location; we don't keep the address.</li>
+      <li><strong>Render</strong> hosts the website, and <strong>Neon</strong> hosts our database.</li>
+      <li><strong>Google Fonts</strong> supplies the lettering, so browsers download fonts from Google.</li>
+    </ul>
+
+    <h2>How long we keep information</h2>
+    <p>We keep emails, questions, approximate locations and device types for as long as they're needed to run the service, and we delete a family's email and the questions linked to it when a parent asks. Lessons made from questions may be kept and shown again to anyone who asks the same question, without any information about who asked.</p>
+
+    <h2>Parents' rights</h2>
+    <p>A parent or guardian can, at any time:</p>
+    <ul>
+      <li>ask to see the information we hold about their family,</li>
+      <li>ask us to delete it, and</li>
+      <li>tell us to stop collecting it, by no longer using the question box.</li>
+    </ul>
+    <p>Write to <a href="mailto:{{ contact_email }}">{{ contact_email }}</a> from the email address you used. We may ask a question to make sure the request really comes from you.</p>
+
+    <h2>Keeping information safe</h2>
+    <p>Information is sent over encrypted connections, stored with the providers listed above, and on our side only AskLilOwl's administrator can see it.</p>
+
+    <h2>Changes to this policy</h2>
+    <p>If we change how we use information, we'll update this page and the date at the top. For important changes affecting children's information, we'll ask parents for agreement again.</p>
+
+    <p class="mt-4"><a href="{{ url_for('home') }}">← Back to AskLilOwl</a></p>
+  </main>
+</body>
+</html>

@@ -106,3 +106,20 @@ def test_asker_summary_counts_limits_and_subscribers():
     assert summary["questions"] == 11
     assert [r["free_left"] for r in summary["rows"]] == [0, 2]
     assert len(summary["rows"]) == 2
+
+
+def test_admin_delete_needs_csrf_and_removes_email(admin, monkeypatch):
+    client, app_module = admin
+    monkeypatch.setattr(app_module.app, "secret_key", "test-secret-not-dev")
+    with client.session_transaction() as session:  # A new key invalidates the earlier sign-in.
+        session["admin"] = True
+    removed = []
+    monkeypatch.setattr(app_module.askers, "delete_asker", lambda email: removed.append(email) or True)
+    assert client.post("/admin/askers/delete", data={"email": "mum@example.com"}).status_code == 403
+    assert removed == []
+    page = client.get("/admin").data.decode()
+    token = page.split('name="csrf_token" value="', 1)[1].split('"', 1)[0]
+    response = client.post("/admin/askers/delete", data={"email": " Mum@Example.com ", "csrf_token": token})
+    assert response.status_code == 302
+    assert "asker=deleted" in response.headers["Location"]
+    assert removed == ["mum@example.com"]

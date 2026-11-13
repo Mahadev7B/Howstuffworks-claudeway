@@ -85,7 +85,7 @@
       {% endif %}
     </div>
   </main>
-  <footer class="library-footer library-shell"><span>Made for curious minds 🦉</span><a href="{{ url_for('home') }}">Ask Lil Owl</a></footer>
+  <footer class="library-footer library-shell"><span>Made for curious minds 🦉</span><span><a href="{{ url_for('privacy') }}">Privacy policy</a> · <a href="mailto:{{ privacy_contact_email }}">Contact</a> · <a href="{{ url_for('home') }}">Ask Lil Owl</a></span></footer>
   <script>
     const search = document.getElementById('lessonSearch');
     const cards = [...document.querySelectorAll('[data-library-card]')];

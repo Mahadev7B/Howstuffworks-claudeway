@@ -215,6 +215,7 @@ CREATE TABLE IF NOT EXISTS askers (
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_question_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE askers ADD COLUMN IF NOT EXISTS consented_at TIMESTAMPTZ;
 CREATE TABLE IF NOT EXISTS asker_questions (
   email         TEXT NOT NULL REFERENCES askers(email) ON DELETE CASCADE,
   question_hash TEXT NOT NULL,
@@ -312,7 +313,7 @@ def save_feedback(
         question[:500],
         rating,
         (comment or "")[:2000] or None,
-        (ip_address or "")[:64] or None,
+        None,  # IP addresses are never stored.
         (city or "")[:128] or None,
         (region or "")[:128] or None,
         (country or "")[:128] or None,
@@ -396,7 +397,7 @@ def record_api_call(
         duration_ms,
         success,
         (error or "")[:1000] or None,
-        (ip_address or "")[:64] or None,
+        None,  # IP addresses are never stored.
         (city or "")[:128] or None,
         (region or "")[:128] or None,
         (country or "")[:128] or None,
@@ -783,14 +784,6 @@ def _exclude_admin_ip_sql() -> tuple[str, list]:
     clauses: list[str] = []
     params: list = []
 
-    if ADMIN_IPS:
-        clauses.append("ip_address != ALL(%s)")
-        params.append(ADMIN_IPS)
-
-    for prefix in ADMIN_IP_PREFIXES:
-        clauses.append("ip_address NOT LIKE %s")
-        params.append(prefix + "%")
-
     if ADMIN_EXCLUDE_CITIES:
         clauses.append("(city IS NULL OR city != ALL(%s))")
         params.append(ADMIN_EXCLUDE_CITIES)
@@ -966,11 +959,8 @@ def admin_load_all(
         """, (endpoints, today_start, *xip_params))
         lessons_today = int(cur.fetchone()[0] or 0)
 
-        cur.execute(f"""
-            SELECT COUNT(DISTINCT ip_address) FROM api_calls
-            WHERE ip_address IS NOT NULL AND created_at >= %s {xip_sql}
-        """, (today_start, *xip_params))
-        unique_ips_today = int(cur.fetchone()[0] or 0)
+        cur.execute("SELECT COUNT(*) FROM askers WHERE last_question_at >= %s", (today_start,))
+        unique_ips_today = int(cur.fetchone()[0] or 0)  # Emails that asked today; no IPs are kept.
 
         cur.execute(f"""
             SELECT COALESCE(SUM(cost_usd), 0) FROM api_calls
@@ -1032,7 +1022,7 @@ def admin_load_all(
             "errors_today": lesson_errors_today,
             "errors_today_total": all_errors_today,
             "today_start_iso": today_start.isoformat(),
-            "admin_ips_excluded": len(ADMIN_IPS) + len(ADMIN_IP_PREFIXES) + len(ADMIN_EXCLUDE_CITIES),
+            "admin_ips_excluded": len(ADMIN_EXCLUDE_CITIES),
         }
 
         # ── Lessons by day ────────────────────────────────────────────────────
@@ -1191,7 +1181,7 @@ def admin_load_all(
         # ── Recent errors (last 24 hours only) ────────────────────────────────
         cur.execute(f"""
             SELECT to_char(created_at AT TIME ZONE '{ADMIN_TZ}', 'YYYY-MM-DD HH24:MI'),
-                   endpoint, question, error, ip_address
+                   endpoint, question, error
             FROM api_calls
             WHERE success = false
               AND created_at > NOW() - INTERVAL '1 day'
@@ -1200,7 +1190,7 @@ def admin_load_all(
             LIMIT %s
         """, (*xip_params, limit_errors))
         recent_errors = [{"created_at": r[0], "endpoint": r[1], "question": r[2],
-                          "error": r[3], "ip": r[4]}
+                          "error": r[3]}
                          for r in cur.fetchall()]
 
         # ── Lessons by country (all time) ─────────────────────────────────────

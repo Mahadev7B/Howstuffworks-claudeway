@@ -58,6 +58,7 @@ from lesson_platform import (
 )
 from lesson_platform.db import get_pool_stats, get_write_stats
 from lesson_platform import askers
+from lesson_platform import ratelimit
 from lesson_platform import library
 from lesson_platform import library_audio
 from lesson_platform import library_import
@@ -159,7 +160,7 @@ EXAMPLE_QUESTIONS = [
 # be counted toward the hourly lesson limit.
 LESSON_ENDPOINTS = ("/api/lesson",)
 LESSON_RATE_LIMIT_ENDPOINTS = LESSON_ENDPOINTS
-FEEDBACK_HOURLY_LIMIT = 10  # per IP
+FEEDBACK_HOURLY_LIMIT = 10  # per device, counted in memory only
 
 # Sentinel returned by _guardrail_check when the rate limit is the reason
 RATE_LIMIT_ERROR = "rate_limit"
@@ -302,8 +303,7 @@ def _attach_slide_images(lesson: dict, ctx: dict | None = None) -> None:
     Flux slides are rendered in parallel for speed.
     """
     if ctx is None:
-        ctx = {"ip_address": None, "city": None, "region": None,
-               "country": None, "user_agent": None}
+        ctx = {"city": None, "region": None, "country": None, "user_agent": None}
     use_flux = settings.image_provider == "flux" and bool(settings.fal_api_key)
     subject = lesson.get("subject", "")
     for s in lesson.get("slides", []):
@@ -402,12 +402,19 @@ def _attach_slide_images(lesson: dict, ctx: dict | None = None) -> None:
     )
 
 
+def _client_ip() -> str | None:
+    """The visitor's IP address, used in memory only and never stored or logged."""
+    forwarded = request.headers.get("X-Forwarded-For") or ""
+    first = forwarded.split(",")[0].strip()
+    return first or request.remote_addr
+
+
 def _client_context() -> dict:
-    ip, city, region, country = extract_and_lookup(
+    """Approximate location and device details. The IP address is used for the lookup, then dropped."""
+    _, city, region, country = extract_and_lookup(
         request.headers.get("X-Forwarded-For"), request.remote_addr
     )
     return {
-        "ip_address": ip,
         "city": city,
         "region": region,
         "country": country,
@@ -432,14 +439,8 @@ def _guardrail_check(endpoint: str, ctx: dict) -> str | None:
     # trigger generation (POST /api/lesson). GET /lesson, /api/tts, static
     # files etc. are excluded.
     if endpoint in LESSON_RATE_LIMIT_ENDPOINTS:
-        hits = ip_calls_last_hour(ctx.get("ip_address"), LESSON_RATE_LIMIT_ENDPOINTS)
-        limit = settings.per_ip_hourly_limit
-        logger.info(
-            "Lesson rate-limit check route=%s ip=%s count=%d limit=%d",
-            endpoint, ctx.get("ip_address"), hits, limit,
-        )
-        if hits >= limit:
-            logger.warning("IP rate limit hit: %s (%d/%d)", ctx.get("ip_address"), hits, limit)
+        if not ratelimit.allow("lesson", _client_ip(), settings.per_ip_hourly_limit):
+            logger.warning("Hourly lesson limit reached for one device on %s", endpoint)
             return RATE_LIMIT_ERROR
     return None
 
@@ -630,11 +631,17 @@ def sitemap():
         cards = library.list_published_cards()
     except RuntimeError:
         cards = []
-    urls = ["https://www.asklilowl.com/", "https://www.asklilowl.com/explore"]
+    urls = ["https://www.asklilowl.com/", "https://www.asklilowl.com/explore", "https://www.asklilowl.com/privacy"]
     urls.extend("https://www.asklilowl.com/explore/" + card["slug"] for card in cards)
     body = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
     body += "".join("<url><loc>" + escape(url) + "</loc></url>" for url in urls) + "</urlset>"
     return Response(body, mimetype="application/xml")
+
+
+@app.get("/privacy")
+def privacy():
+    return render_template("privacy.html", contact_email=PRIVACY_CONTACT_EMAIL, updated=PRIVACY_UPDATED,
+                           free_questions=askers.FREE_QUESTIONS)
 
 
 @app.get("/robots.txt")
@@ -643,7 +650,12 @@ def robots():
                     mimetype="text/plain")
 
 
+PRIVACY_CONTACT_EMAIL = "Asklilowl@gmail.com"
+PRIVACY_UPDATED = "November 12, 2026"
+app.jinja_env.globals["privacy_contact_email"] = PRIVACY_CONTACT_EMAIL
+
 EMAIL_REQUIRED_MESSAGE = "Please enter a grown-up's email to ask your own question."
+CONSENT_REQUIRED_MESSAGE = "A parent or guardian needs to agree to the privacy policy first."
 SUBSCRIPTION_MESSAGE = (
     "You've used your {free} free questions. A $4.99 monthly subscription "
     "unlocks more questions."
@@ -651,11 +663,17 @@ SUBSCRIPTION_MESSAGE = (
 ASKER_UNAVAILABLE_MESSAGE = "We couldn't check your free questions just now. Please try again."
 
 
-def _asker_gate(raw_email: str | None, question: str) -> tuple[str | None, dict | None, tuple[str, str, int] | None]:
+def _consent_given(value) -> bool:
+    return value is True or str(value).strip().lower() in ("yes", "true", "on", "1")
+
+
+def _asker_gate(raw_email: str | None, question: str, consent=None) -> tuple[str | None, dict | None, tuple[str, str, int] | None]:
     """Return (email, allowance, refusal). Refusal is (code, message, HTTP status)."""
     email = askers.normalize_email(raw_email)
     if email is None:
         return None, None, ("email_required", EMAIL_REQUIRED_MESSAGE, 400)
+    if not _consent_given(consent):
+        return email, None, ("consent_required", CONSENT_REQUIRED_MESSAGE, 400)
     try:
         allowance = askers.allowance(email, question)
     except askers.AskerUnavailable:
@@ -724,7 +742,7 @@ def lesson():
         return resp
 
     # POST = explicit form submission (no-JS fallback). Generate if needed.
-    email, _, refusal = _asker_gate(request.form.get("email"), question)
+    email, _, refusal = _asker_gate(request.form.get("email"), question, request.form.get("parent_consent"))
     if refusal is not None:
         return render_template("error.html", question=question, error=refusal[1]), refusal[2]
     data, err = _track_lesson("/lesson", question, ctx)
@@ -753,7 +771,7 @@ def api_lesson():
     if blocked:
         return jsonify({"ok": False, "error": blocked}), 400
 
-    email, allowance, refusal = _asker_gate(payload.get("email"), question)
+    email, allowance, refusal = _asker_gate(payload.get("email"), question, payload.get("parent_consent"))
     if refusal is not None:
         code, message, status = refusal
         body = {"ok": False, "error": message, "code": code}
@@ -804,7 +822,7 @@ def api_feedback():
         return jsonify({"ok": False, "error": "question and rating ('up'|'down') are required"}), 400
 
     ctx = _client_context()
-    if ip_calls_last_hour(ctx.get("ip_address"), ("/api/feedback",)) >= FEEDBACK_HOURLY_LIMIT:
+    if not ratelimit.allow("feedback", _client_ip(), FEEDBACK_HOURLY_LIMIT):
         return jsonify({"ok": False, "error": "Too many feedback submissions. Try again later."}), 429
 
     save_feedback(question, rating, comment, **ctx)
@@ -1511,12 +1529,23 @@ def admin_dashboard():
         limit_questions=15, limit_recent=50,
         limit_slowest=10, limit_errors=30,
     )
-    from lesson_platform.db import ADMIN_EXCLUDE_CITIES, ADMIN_IP_PREFIXES, ADMIN_IPS, ADMIN_TZ
+    from lesson_platform.db import ADMIN_EXCLUDE_CITIES, ADMIN_TZ
     return render_template("admin.html", db_enabled=True, data=data,
                            daily_budget=settings.daily_budget_usd,
                            admin_tz=ADMIN_TZ, free_questions=askers.FREE_QUESTIONS,
                            excluded_cities=ADMIN_EXCLUDE_CITIES,
-                           excluded_ip_count=len(ADMIN_IPS) + len(ADMIN_IP_PREFIXES))
+                           csrf_token=_library_csrf_token(), asker_result=request.args.get("asker"),
+)
+
+
+@app.post("/admin/askers/delete")
+def admin_delete_asker():
+    """Delete one email and the questions linked to it, for a parent's deletion request."""
+    if not _library_write_allowed():
+        return "Forbidden", 403
+    email = askers.normalize_email(request.form.get("email"))
+    deleted = askers.delete_asker(email) if email else False
+    return redirect(url_for("admin_dashboard", asker="deleted" if deleted else "not-found") + "#emails")
 
 
 @app.get("/admin/askers.csv")

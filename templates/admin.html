@@ -31,13 +31,13 @@
         <img src="{{ url_for('static', filename='brand/owl-cutout.png') }}" alt="">AskLilOwl · Admin
       </span>
       <span class="badge bg-secondary">Times in {{ admin_tz }}</span>
-      {% if excluded_ip_count or excluded_cities %}
+      {% if excluded_cities %}
         <span class="badge bg-warning text-dark me-auto"
-              title="Left out of the figures below. Change with the ADMIN_IPS and ADMIN_EXCLUDE_CITIES settings on Render.">
-          Leaving out {{ excluded_ip_count }} admin IP{{ 's' if excluded_ip_count != 1 }}{% if excluded_cities %} and visitors from {{ excluded_cities|join(', ') }}{% endif %}
+              title="Left out of the figures below. Change with the ADMIN_EXCLUDE_CITIES setting on Render.">
+          Leaving out visitors from {{ excluded_cities|join(', ') }}
         </span>
       {% else %}
-        <span class="badge bg-danger me-auto" title="Set ADMIN_IPS on Render to leave out your own visits">Your own visits are counted</span>
+        <span class="me-auto"></span>
       {% endif %}
       <a href="/" class="btn btn-sm btn-outline-light">View site</a>
       <a href="{{ url_for('admin_publications') }}" class="btn btn-sm btn-outline-light">Lesson library</a>
@@ -112,9 +112,9 @@
       </div>
       <div class="col-6 col-lg-3">
         <div class="card card-stat p-3">
-          <div class="label">Devices asking today</div>
+          <div class="label">Emails asking today</div>
           <div class="value">{{ ov.unique_ips_today }}</div>
-          <div class="small text-muted">different internet addresses</div>
+          <div class="small text-muted">no internet addresses are kept</div>
         </div>
       </div>
     </div>
@@ -130,6 +130,12 @@
       <div class="col-6 col-lg-3"><div class="card card-stat p-3"><div class="label">Used all free questions</div><div class="value">{{ ak.at_limit }}</div><div class="small text-muted">now seeing the $4.99 message</div></div></div>
       <div class="col-6 col-lg-3"><div class="card card-stat p-3"><div class="label">Subscribers</div><div class="value">{{ ak.subscribed }}</div><div class="small text-muted">paying $4.99 a month</div></div></div>
     </div>
+    {% if asker_result == 'deleted' %}
+      <div class="alert alert-success py-2">Deleted that email and the questions linked to it.</div>
+    {% elif asker_result == 'not-found' %}
+      <div class="alert alert-warning py-2">That email wasn't found, so nothing was deleted.</div>
+    {% endif %}
+    <p class="section-note mb-2">When a parent writes to {{ privacy_contact_email }} asking for their data to be removed, press Delete next to their email. It removes the email and its question history and can't be undone.</p>
     <div class="card p-3">
       <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
         <label class="visually-hidden" for="emailSearch">Find an email</label>
@@ -139,7 +145,7 @@
       </div>
       <div class="table-responsive scroll-table">
         <table class="table table-sm table-hover mb-0">
-          <thead class="table-light"><tr><th>Email</th><th class="nowrap">First seen</th><th class="nowrap">Last question</th><th class="nowrap">Questions</th><th class="nowrap">Free left</th><th>Plan</th></tr></thead>
+          <thead class="table-light"><tr><th>Email</th><th class="nowrap">First seen</th><th class="nowrap">Last question</th><th class="nowrap">Questions</th><th class="nowrap">Free left</th><th>Plan</th><th><span class="visually-hidden">Delete</span></th></tr></thead>
           <tbody id="emailRows">
             {% for r in ak.rows %}
               <tr data-email="{{ r.email }}">
@@ -149,9 +155,16 @@
                 <td>{{ r.questions }}</td>
                 <td>{{ '—' if r.free_left is none else r.free_left }}</td>
                 <td>{% if r.free_left is none %}<span class="badge bg-success">Subscriber</span>{% elif r.free_left == 0 %}<span class="badge bg-warning text-dark">Free used up</span>{% else %}<span class="badge bg-light text-dark">Free</span>{% endif %}</td>
+                <td class="nowrap">
+                  <form method="post" action="{{ url_for('admin_delete_asker') }}" class="asker-delete">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="email" value="{{ r.email }}">
+                    <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
+                  </form>
+                </td>
               </tr>
             {% else %}
-              <tr><td colspan="6" class="text-muted">No emails yet.</td></tr>
+              <tr><td colspan="7" class="text-muted">No emails yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -271,7 +284,7 @@
     <div class="card p-0">
       <div class="table-responsive scroll-table">
         <table class="table table-sm mb-0">
-          <thead class="table-light"><tr><th>When</th><th>Where</th><th>Question</th><th>Error</th><th>IP</th></tr></thead>
+          <thead class="table-light"><tr><th>When</th><th>Where</th><th>Question</th><th>Error</th></tr></thead>
           <tbody>
             {% for e in data.recent_errors %}
               <tr>
@@ -279,10 +292,9 @@
                 <td class="nowrap"><code>{{ e.endpoint }}</code></td>
                 <td class="truncate" title="{{ e.question }}">{{ e.question }}</td>
                 <td><pre class="err text-danger">{{ e.error }}</pre></td>
-                <td class="nowrap small">{{ e.ip or '—' }}</td>
               </tr>
             {% else %}
-              <tr><td colspan="5" class="text-muted">No failures</td></tr>
+              <tr><td colspan="4" class="text-muted">No failures</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -366,6 +378,11 @@
       emailRows.forEach(row => { row.hidden = !row.dataset.email.includes(query); if (!row.hidden) shown++; });
       emailCount.textContent = query ? shown + ' matching' : emailCountText;
     });
+
+    document.querySelectorAll('form.asker-delete').forEach(form => form.addEventListener('submit', (event) => {
+      const email = form.querySelector('[name=email]').value;
+      if (!confirm('Delete ' + email + ' and its question history? This cannot be undone.')) event.preventDefault();
+    }));
 
     // ── Location filter ──────────────────────────────────────────────────────
     const allRegions = DATA.lessons_by_region || [];

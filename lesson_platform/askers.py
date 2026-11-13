@@ -74,7 +74,9 @@ def record_question(email: str, question: str) -> None:
     try:
         with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO askers (email) VALUES (%s) ON CONFLICT (email) DO UPDATE SET last_question_at = NOW()",
+                "INSERT INTO askers (email, consented_at) VALUES (%s, NOW()) "
+                "ON CONFLICT (email) DO UPDATE SET last_question_at = NOW(), "
+                "consented_at = COALESCE(askers.consented_at, NOW())",
                 (email,),
             )
             cur.execute(
@@ -84,6 +86,23 @@ def record_question(email: str, question: str) -> None:
             )
     except Exception:
         logger.exception("Failed to record asker question")
+
+
+def delete_asker(email: str) -> bool:
+    """Remove an email and its questions. Returns True when something was deleted."""
+    if db._pool is None:
+        with _memory_lock:
+            existed = email in _memory_asked or email in _memory_status
+            _memory_asked.pop(email, None)
+            _memory_status.pop(email, None)
+            return existed
+    try:
+        with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM askers WHERE email = %s", (email,))
+            return cur.rowcount > 0
+    except Exception:
+        logger.exception("Failed to delete asker")
+        return False
 
 
 def reset_memory() -> None:

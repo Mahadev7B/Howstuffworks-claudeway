@@ -35,14 +35,14 @@ def lookup(ip: str | None) -> tuple[Optional[str], Optional[str], Optional[str]]
     try:
         req = urllib.request.Request(
             f"https://ipwho.is/{ip}?fields=success,city,region,country",
-            headers={"User-Agent": "howstuffworks-claudeway/1.0"},
+            headers={"User-Agent": "asklilowl/1.0"},
         )
         with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         if data.get("success"):
             return (data.get("city"), data.get("region"), data.get("country"))
     except Exception:
-        logger.warning("Geo lookup failed for %s", ip, exc_info=False)
+        logger.warning("Geo lookup failed", exc_info=False)
     return (None, None, None)
 
 

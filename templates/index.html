@@ -339,6 +339,11 @@
       <p>Ask Lil Owl anything and get your own picture lesson.</p>
     </section>
     {% endif %}
+    <footer class="cine-footer">
+      <a href="{{ url_for('privacy') }}">Privacy policy</a>
+      <a href="mailto:{{ privacy_contact_email }}">Contact</a>
+      <span>Made for curious minds</span>
+    </footer>
   </main>
 
   <div class="owl-ask">
@@ -349,6 +354,7 @@
           <label for="askerEmail">Grown-up's email</label>
           <input type="email" name="email" id="askerEmail" placeholder="parent@example.com" required autocomplete="email" maxlength="254">
           <p class="asker-note">No password needed. We remember it on this device. {{ free_questions }} free questions, then $4.99 a month.</p>
+          <label class="asker-consent"><input type="checkbox" name="parent_consent" value="yes" id="askerConsent" required> <span>I'm a parent or guardian, I'll stay with my child while they use AskLilOwl, and I agree to the <a href="{{ url_for('privacy') }}" target="_blank" rel="noopener">privacy policy</a>.</span></label>
         </div>
         <p class="asker-saved" id="askerSaved" hidden>Asking as <strong id="askerSavedEmail"></strong> · <button type="button" id="askerChange">Change</button></p>
         <input type="text" name="question" id="question" placeholder="How do rockets fly?" required autocomplete="off" value="{{ prefill or '' }}">
@@ -617,7 +623,7 @@
       fetch('/api/lesson', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, email }),
+        body: JSON.stringify({ question, email, parent_consent: true }),
         signal: activeAbort.signal,
       })
       .then(res => res.json())
@@ -626,12 +632,12 @@
         clearInterval(activeTimer);
         activeTimer = null;
         if (data.ok && window.AskerEmail) window.AskerEmail.update(data);
-        if (!data.ok && (data.code === 'subscription_required' || data.code === 'email_required' || data.code === 'asker_unavailable')) {
+        if (!data.ok && (data.code === 'subscription_required' || data.code === 'email_required' || data.code === 'consent_required' || data.code === 'asker_unavailable')) {
           loadingMsg.textContent = data.error;
           elapsed.textContent = '';
           openLessonBtn.hidden = true;
           cancelBtn.textContent = 'Back';
-          if (data.code === 'email_required' && window.AskerEmail) window.AskerEmail.forget();
+          if ((data.code === 'email_required' || data.code === 'consent_required') && window.AskerEmail) window.AskerEmail.forget();
           return;
         }
         if (data.ok) {

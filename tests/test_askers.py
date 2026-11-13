@@ -27,8 +27,8 @@ def site(monkeypatch):
     app_module.askers.reset_memory()
 
 
-def ask(client, question, email="Parent@Example.com"):
-    return client.post("/api/lesson", json={"question": question, "email": email})
+def ask(client, question, email="Parent@Example.com", consent=True):
+    return client.post("/api/lesson", json={"question": question, "email": email, "parent_consent": consent})
 
 
 @pytest.mark.parametrize("email", [None, "", "not-an-email", "a@b", "x" * 250 + "@ex.com"])
@@ -102,3 +102,48 @@ def test_home_form_asks_for_email_without_password(site, monkeypatch):
     assert b'type="email" name="email"' in page
     assert b"$4.99 a month" in page
     assert b'type="password"' not in page
+
+
+@pytest.mark.parametrize("consent", [None, False, "", "no"])
+def test_question_without_parent_consent_is_refused(site, consent):
+    response = ask(site, "Why is the sky blue?", consent=consent)
+    assert response.status_code == 400
+    assert response.get_json()["code"] == "consent_required"
+    assert site.generated == []
+
+
+def test_form_post_needs_consent_too(site):
+    response = site.post("/lesson", data={"question": "Why?", "email": "mum@example.com"})
+    assert response.status_code == 400
+    assert site.generated == []
+    ok = site.post("/lesson", data={"question": "Why?", "email": "mum@example.com", "parent_consent": "yes"})
+    assert ok.status_code == 200
+    assert site.generated == ["Why?"]
+
+
+def test_home_form_has_consent_checkbox_and_privacy_links(site, monkeypatch):
+    app_module = importlib.import_module("app")
+    monkeypatch.setattr(app_module.library, "list_published_cards", lambda: [])
+    page = site.get("/").data
+    assert b'name="parent_consent"' in page
+    assert b'href="/privacy"' in page
+    assert b"mailto:Asklilowl@gmail.com" in page
+
+
+def test_privacy_page_names_contact_services_and_rights(site):
+    response = site.get("/privacy")
+    assert response.status_code == 200
+    page = response.data
+    for text in (b"Asklilowl@gmail.com", b"Children under 13", b"A parent must always be present", b"Parents' rights", b"Anthropic",
+                 b"fal.ai", b"OpenAI", b"ipwho.is", b"Render", b"Neon", b"Google Fonts"):
+        assert text in page
+    assert b"/privacy" in site.get("/sitemap.xml").data
+
+
+def test_deleting_an_asker_restores_free_questions(site):
+    app_module = importlib.import_module("app")
+    for number in range(3):
+        assert ask(site, f"Question {number}?").status_code == 200
+    assert app_module.askers.delete_asker("parent@example.com") is True
+    assert app_module.askers.delete_asker("parent@example.com") is False
+    assert ask(site, "Question 9?").status_code == 200

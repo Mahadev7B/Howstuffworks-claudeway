@@ -23,7 +23,7 @@ body.cinema-home { margin: 0; background: #141414; color: #F1EFE8; font-family: 
 .cinema-home a.cine-play { align-self: flex-start; display: flex; align-items: center; gap: 8px; min-height: 44px; box-sizing: border-box; margin-top: 6px; background: #F1EFE8; color: #2C2C2A; text-decoration: none; font-weight: 700; font-size: 17px; padding: 10px 26px; border-radius: 8px; }
 .cinema-home a.cine-play:hover, .cinema-home a.cine-play:focus-visible { background: #fff; }
 
-.cine-rows { display: flex; flex-direction: column; gap: 26px; padding: 30px 0 150px; }
+.cine-rows { display: flex; flex-direction: column; gap: 26px; padding: 30px 0 40px; }
 .cine-row { scroll-margin-top: 16px; }
 .cine-row-head { display: flex; align-items: center; justify-content: space-between; margin: 0 48px 6px; }
 .cine-row h2 { margin: 0; font-family: 'Baloo 2', sans-serif; font-size: 24px; font-weight: 700; color: #F1EFE8; }
@@ -59,6 +59,12 @@ body.cinema-home { margin: 0; background: #141414; color: #F1EFE8; font-family: 
 .owl-panel .asker-saved { flex: 1 1 100%; margin: 0 0 4px; font-size: 13px; color: #B4B2A9; overflow-wrap: anywhere; }
 .owl-panel .asker-saved strong { color: #F1EFE8; }
 .owl-panel .asker-saved button { font: inherit; font-weight: 700; color: #FAC775; background: none; border: 0; padding: 4px 2px; cursor: pointer; text-decoration: underline; }
+.owl-panel .asker-consent { display: flex; gap: 8px; align-items: flex-start; font-family: Nunito, system-ui, sans-serif; font-size: 13px; font-weight: 600; line-height: 1.4; margin: 2px 0 0; color: #F1EFE8; cursor: pointer; }
+.owl-panel .ask-form .asker-consent input { flex: 0 0 18px; width: 18px; height: 18px; min-width: 0; margin: 1px 0 0; padding: 0; border-radius: 4px; accent-color: #EF9F27; }
+.owl-panel .asker-consent a { color: #FAC775; }
+.cine-footer { display: flex; flex-wrap: wrap; gap: 8px 22px; padding: 8px 48px 140px; font-size: 14px; color: #B4B2A9; }
+.cinema-home .cine-footer a { color: #D3D1C7; }
+@media (max-width: 720px) { .cine-footer { padding: 0 16px 110px; } }
 .owl-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .owl-row { display: flex; align-items: center; gap: 12px; }
 .owl-bubble { background: #F1EFE8; color: #2C2C2A; font-size: 14px; font-weight: 700; padding: 8px 14px; border-radius: 14px; }
@@ -108,7 +114,8 @@ body.cinema-home { margin: 0; background: #141414; color: #F1EFE8; font-family: 
   .cine-hero h1 { font-size: 30px; }
   .cine-hero p.cine-summary { display: none; }
   .cinema-home a.cine-play { margin-top: 2px; padding: 6px 20px; font-size: 16px; }
-  .cine-rows { gap: 16px; padding: 12px 0 96px; }
+  .cine-rows { gap: 16px; padding: 12px 0 24px; }
+  .cine-footer { padding: 4px 24px 90px; }
   .cine-row-head { margin: 0 24px 2px; }
   .cine-row h2 { font-size: 20px; }
   .cine-arrows { display: none; }
