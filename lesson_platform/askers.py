@@ -11,7 +11,7 @@ from lesson_platform import db
 
 logger = logging.getLogger(__name__)
 
-FREE_QUESTIONS = 3
+FREE_QUESTIONS = db.ASKER_FREE_QUESTIONS
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _ACTIVE = ("active", "trialing")
 

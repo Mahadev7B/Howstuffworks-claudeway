@@ -3,154 +3,192 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Admin dashboard — HowStuffWorks</title>
+  <meta name="robots" content="noindex">
+  <title>Admin dashboard — AskLilOwl</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
   <style>
-    body { background: #FDF8F3; }
-    .card-stat { border-left: 4px solid #7F77DD; }
+    body { background: #F4F3EF; }
+    .navbar { background: #141414; }
+    .navbar-brand img { height: 30px; }
+    .card-stat { border-left: 4px solid #EF9F27; height: 100%; }
+    .card-stat.warn { border-left-color: #E24B4A; }
     .card-stat .value { font-size: 1.6rem; font-weight: 700; }
     .card-stat .label { font-size: 0.8rem; color: #6c757d; text-transform: uppercase; letter-spacing: 0.04em; }
     .table-sm td, .table-sm th { font-size: 0.85rem; }
     .nowrap { white-space: nowrap; }
     .truncate { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    pre.err { font-size: 0.75rem; max-height: 90px; overflow: auto; margin: 0; }
+    .email-cell { overflow-wrap: anywhere; }
+    pre.err { font-size: 0.75rem; max-height: 90px; overflow: auto; margin: 0; white-space: pre-wrap; }
+    .section-note { font-size: 0.85rem; color: #6c757d; }
+    .scroll-table { max-height: 420px; overflow: auto; }
   </style>
 </head>
 <body>
-  <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
-    <div class="container-fluid">
-      <span class="navbar-brand">HowStuffWorks · Admin</span>
-      <span class="badge bg-secondary me-2">All times in {{ admin_tz }}</span>
-      {% if data.overview and data.overview.admin_ips_excluded %}
-        <span class="badge bg-warning text-dark me-auto" title="Set ADMIN_IPS env var to control this">
-          {{ data.overview.admin_ips_excluded }} admin IP{{ 's' if data.overview.admin_ips_excluded != 1 }} excluded
+  <nav class="navbar navbar-dark">
+    <div class="container-fluid gap-2">
+      <span class="navbar-brand d-flex align-items-center gap-2 me-0">
+        <img src="{{ url_for('static', filename='brand/owl-cutout.png') }}" alt="">AskLilOwl · Admin
+      </span>
+      <span class="badge bg-secondary">Times in {{ admin_tz }}</span>
+      {% if excluded_ip_count or excluded_cities %}
+        <span class="badge bg-warning text-dark me-auto"
+              title="Left out of the figures below. Change with the ADMIN_IPS and ADMIN_EXCLUDE_CITIES settings on Render.">
+          Leaving out {{ excluded_ip_count }} admin IP{{ 's' if excluded_ip_count != 1 }}{% if excluded_cities %} and visitors from {{ excluded_cities|join(', ') }}{% endif %}
         </span>
       {% else %}
-        <span class="badge bg-danger me-auto" title="Set ADMIN_IPS=your.ip.address to exclude your own traffic">
-          Admin IPs not filtered
-        </span>
+        <span class="badge bg-danger me-auto" title="Set ADMIN_IPS on Render to leave out your own visits">Your own visits are counted</span>
       {% endif %}
-      <a href="/" class="btn btn-sm btn-outline-light me-2">View site</a>
-      <a href="{{ url_for('admin_publications') }}" class="btn btn-sm btn-outline-light me-2">Lesson library</a>
+      <a href="/" class="btn btn-sm btn-outline-light">View site</a>
+      <a href="{{ url_for('admin_publications') }}" class="btn btn-sm btn-outline-light">Lesson library</a>
       <form method="post" action="{{ url_for('admin_logout') }}" class="d-inline">
-        <button type="submit" class="btn btn-sm btn-outline-light">Logout</button>
+        <button type="submit" class="btn btn-sm btn-outline-light">Log out</button>
       </form>
     </div>
   </nav>
 
   <main class="container-fluid py-4">
     {% if not db_enabled %}
-      <div class="alert alert-warning">
-        Database is not enabled. Set <code>DATABASE_URL</code> to see analytics.
-      </div>
+      <div class="alert alert-warning">The database is not connected, so there is nothing to show yet.</div>
     {% else %}
+    {% set ov = data.overview %}
+    {% set ak = data.askers %}
 
-    <h2 class="h5 mb-3">Overview <small class="text-muted">(real lesson generations only — cache hits excluded)</small></h2>
+    <h2 class="h5 mb-1">Today</h2>
+    <p class="section-note mb-3">Since {{ ov.today_start_iso[:16].replace('T', ' ') }}. "New lessons" are lessons made from a question; asking a question that already has a lesson reuses the saved copy for free.</p>
     <div class="row g-3">
-      {% set ov = data.overview %}
-      <div class="col-6 col-md-3">
+      <div class="col-6 col-lg-3">
         <div class="card card-stat p-3">
-          <div class="label">Total lessons</div>
-          <div class="value">{{ ov.total_lessons }}</div>
-          <div class="small text-muted">all time, generated</div>
-        </div>
-      </div>
-      <div class="col-6 col-md-3">
-        <div class="card card-stat p-3">
-          <div class="label">Lessons today</div>
+          <div class="label">New lessons today</div>
           <div class="value">{{ ov.lessons_today }}</div>
-          <div class="small text-muted">since {{ ov.today_start_iso[:16].replace('T', ' ') }} {{ admin_tz }}</div>
+          <div class="small text-muted">{{ ov.total_lessons }} all time</div>
         </div>
       </div>
-      <div class="col-6 col-md-3">
+      <div class="col-6 col-lg-3">
         <div class="card card-stat p-3">
-          <div class="label">Unique visitors today</div>
-          <div class="value">{{ ov.unique_ips_today }}</div>
-          <div class="small text-muted">approx., distinct IPs</div>
+          <div class="label">Saved copies reused today</div>
+          <div class="value">{{ ov.saved_copies_today }}</div>
+          <div class="small text-muted">{{ ov.saved_copies_all_time }} all time, no cost</div>
         </div>
       </div>
-      <div class="col-6 col-md-3">
+      <div class="col-6 col-lg-3">
         <div class="card card-stat p-3">
-          <div class="label">Cost today</div>
-          <div class="value">${{ '%.4f'|format(ov.cost_today) }}</div>
-          <div class="small text-muted">budget ${{ '%.2f'|format(daily_budget) }} · all providers</div>
-        </div>
-      </div>
-      <div class="col-6 col-md-3">
-        <div class="card card-stat p-3">
-          <div class="label">Cost all-time</div>
-          <div class="value">${{ '%.4f'|format(ov.cost_all_time) }}</div>
-          <div class="small text-muted">Claude + Flux + TTS</div>
-        </div>
-      </div>
-      <div class="col-6 col-md-3">
-        <div class="card card-stat p-3">
-          <div class="label">Avg cost / lesson</div>
-          <div class="value">${{ '%.5f'|format(ov.avg_cost_per_lesson) }}</div>
-          <div class="small text-muted">total spend ÷ lessons</div>
-        </div>
-      </div>
-      <div class="col-6 col-md-3">
-        <div class="card card-stat p-3">
-          <div class="label">Avg generation time</div>
-          <div class="value">{{ (ov.avg_gen_ms/1000)|round(1) }}s</div>
-          <div class="small text-muted">
-            Claude {{ (ov.avg_claude_ms/1000)|round(1) }}s + Flux {{ (ov.avg_flux_ms/1000)|round(1) }}s
+          <div class="label">Spent today</div>
+          <div class="value">${{ '%.2f'|format(ov.cost_today) }}</div>
+          {% set pct = (100 * ov.cost_today / daily_budget) if daily_budget else 0 %}
+          <div class="progress my-1" role="progressbar" aria-label="Share of daily budget used" aria-valuenow="{{ pct|round|int }}" aria-valuemin="0" aria-valuemax="100" style="height:6px;">
+            <div class="progress-bar {{ 'bg-danger' if pct >= 80 else 'bg-warning' }}" style="width: {{ [pct, 100]|min }}%"></div>
           </div>
+          <div class="small text-muted">of ${{ '%.2f'|format(daily_budget) }} daily limit</div>
         </div>
       </div>
-      <div class="col-6 col-md-3">
-        <div class="card card-stat p-3" style="border-left-color:#E24B4A;">
-          <div class="label">Lesson errors today</div>
+      <div class="col-6 col-lg-3">
+        <div class="card card-stat p-3 {{ 'warn' if ov.errors_today else '' }}">
+          <div class="label">Failed lessons today</div>
           <div class="value">{{ ov.errors_today }}</div>
-          <div class="small text-muted">{{ ov.errors_today_total }} total errors (incl. TTS / Flux)</div>
+          <div class="small text-muted">{{ ov.errors_today_total }} failures of any kind</div>
         </div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="card card-stat p-3">
+          <div class="label">Spent all time</div>
+          <div class="value">${{ '%.2f'|format(ov.cost_all_time) }}</div>
+          <div class="small text-muted">Claude, pictures and voice</div>
+        </div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="card card-stat p-3">
+          <div class="label">Cost per new lesson</div>
+          <div class="value">${{ '%.3f'|format(ov.avg_cost_per_lesson) }}</div>
+          <div class="small text-muted">all spending ÷ new lessons</div>
+        </div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="card card-stat p-3">
+          <div class="label">Wait for a new lesson</div>
+          <div class="value">{{ (ov.avg_claude_ms/1000)|round(1) }}s</div>
+          <div class="small text-muted">writing, then about {{ (ov.avg_flux_ms/1000)|round(1) }}s per picture</div>
+        </div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="card card-stat p-3">
+          <div class="label">Devices asking today</div>
+          <div class="value">{{ ov.unique_ips_today }}</div>
+          <div class="small text-muted">different internet addresses</div>
+        </div>
+      </div>
+    </div>
+
+    <h2 class="h5 mt-5 mb-1" id="emails">Emails</h2>
+    <p class="section-note mb-3">Grown-ups' emails given before asking a question. Each email gets {{ free_questions }} free questions; asking the same question again doesn't count. Questions asked before emails were required aren't linked to anyone.</p>
+    {% if not ak.available %}
+      <div class="alert alert-warning">The email list couldn't be loaded just now. Reload the page to try again.</div>
+    {% endif %}
+    <div class="row g-3 mb-3">
+      <div class="col-6 col-lg-3"><div class="card card-stat p-3"><div class="label">Unique emails</div><div class="value">{{ ak.total }}</div><div class="small text-muted">{{ ak.new_today }} new today · {{ ak.new_7d }} this week</div></div></div>
+      <div class="col-6 col-lg-3"><div class="card card-stat p-3"><div class="label">Questions from emails</div><div class="value">{{ ak.questions }}</div><div class="small text-muted">different questions, all time</div></div></div>
+      <div class="col-6 col-lg-3"><div class="card card-stat p-3"><div class="label">Used all free questions</div><div class="value">{{ ak.at_limit }}</div><div class="small text-muted">now seeing the $4.99 message</div></div></div>
+      <div class="col-6 col-lg-3"><div class="card card-stat p-3"><div class="label">Subscribers</div><div class="value">{{ ak.subscribed }}</div><div class="small text-muted">paying $4.99 a month</div></div></div>
+    </div>
+    <div class="card p-3">
+      <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+        <label class="visually-hidden" for="emailSearch">Find an email</label>
+        <input id="emailSearch" type="search" class="form-control form-control-sm" style="max-width:280px;" placeholder="Find an email" autocomplete="off">
+        <span class="small text-muted" id="emailCount">{{ ak.rows|length }} shown{% if ak.total > ak.rows|length %} of {{ ak.total }} (most recent first){% endif %}</span>
+        <a class="btn btn-sm btn-outline-dark ms-auto" href="{{ url_for('admin_askers_csv') }}">Download all as CSV</a>
+      </div>
+      <div class="table-responsive scroll-table">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light"><tr><th>Email</th><th class="nowrap">First seen</th><th class="nowrap">Last question</th><th class="nowrap">Questions</th><th class="nowrap">Free left</th><th>Plan</th></tr></thead>
+          <tbody id="emailRows">
+            {% for r in ak.rows %}
+              <tr data-email="{{ r.email }}">
+                <td class="email-cell">{{ r.email }}</td>
+                <td class="nowrap">{{ r.first_seen or '—' }}</td>
+                <td class="nowrap">{{ r.last_question or '—' }}</td>
+                <td>{{ r.questions }}</td>
+                <td>{{ '—' if r.free_left is none else r.free_left }}</td>
+                <td>{% if r.free_left is none %}<span class="badge bg-success">Subscriber</span>{% elif r.free_left == 0 %}<span class="badge bg-warning text-dark">Free used up</span>{% else %}<span class="badge bg-light text-dark">Free</span>{% endif %}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="6" class="text-muted">No emails yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
     </div>
 
     <h2 class="h5 mt-5 mb-3">Usage</h2>
     <div class="row g-3">
-      <div class="col-lg-6">
-        <div class="card p-3"><h6>Lessons by day (last 14)</h6><canvas id="chartLessonsByDay" height="150"></canvas></div>
-      </div>
-      <div class="col-lg-6">
-        <div class="card p-3"><h6>Lessons by hour of day (last 7d)</h6><canvas id="chartLessonsByHour" height="150"></canvas></div>
-      </div>
-      <div class="col-lg-6">
-        <div class="card p-3"><h6>Mobile vs Desktop (last 30d)</h6><canvas id="chartDeviceSplit" height="150"></canvas></div>
-      </div>
+      <div class="col-lg-6"><div class="card p-3"><h6>New lessons per day (last 14 days)</h6><canvas id="chartLessonsByDay" height="150"></canvas></div></div>
+      <div class="col-lg-6"><div class="card p-3"><h6>New lessons by hour of day (last 7 days)</h6><canvas id="chartLessonsByHour" height="150"></canvas></div></div>
+      <div class="col-lg-6"><div class="card p-3"><h6>Phones and tablets vs computers (last 30 days)</h6><canvas id="chartDeviceSplit" height="150"></canvas></div></div>
       <div class="col-lg-6">
         <div class="card p-3">
-          <h6>Top questions</h6>
+          <h6>Most asked questions <small class="text-muted">(new and reused)</small></h6>
           <ol class="small mb-0">
             {% for q in data.top_questions %}
               <li>{{ q.question }} <span class="text-muted">· {{ q.count }}×</span></li>
             {% else %}
-              <li class="text-muted">Not tracked yet</li>
+              <li class="text-muted">No questions yet</li>
             {% endfor %}
           </ol>
         </div>
       </div>
     </div>
 
-    <h2 class="h5 mt-5 mb-3">Costs</h2>
+    <h2 class="h5 mt-5 mb-3">Spending</h2>
     <div class="row g-3">
-      <div class="col-lg-7">
-        <div class="card p-3"><h6>Cost by day (stacked)</h6><canvas id="chartCostByDay" height="150"></canvas></div>
-      </div>
-      <div class="col-lg-5">
-        <div class="card p-3"><h6>Cost share by provider (all time)</h6><canvas id="chartCostByProvider" height="150"></canvas></div>
-      </div>
+      <div class="col-lg-7"><div class="card p-3"><h6>Spending per day (last 14 days)</h6><canvas id="chartCostByDay" height="150"></canvas></div></div>
+      <div class="col-lg-5"><div class="card p-3"><h6>Spending by service (all time)</h6><canvas id="chartCostByProvider" height="150"></canvas></div></div>
     </div>
 
-    <h2 class="h5 mt-5 mb-3">Performance</h2>
+    <h2 class="h5 mt-5 mb-3">Speed</h2>
     <div class="row g-3">
-      <div class="col-lg-7">
-        <div class="card p-3"><h6>Avg duration by day (Claude vs Flux)</h6><canvas id="chartPerfByDay" height="150"></canvas></div>
-      </div>
+      <div class="col-lg-7"><div class="card p-3"><h6>Average time per day: writing a lesson vs one picture</h6><canvas id="chartPerfByDay" height="150"></canvas></div></div>
       <div class="col-lg-5">
         <div class="card p-3">
-          <h6>Slowest lessons</h6>
+          <h6>Slowest lessons to write</h6>
           <table class="table table-sm mb-0">
             <thead><tr><th>When</th><th class="truncate">Question</th><th class="nowrap">Time</th><th class="nowrap">Cost</th></tr></thead>
             <tbody>
@@ -159,10 +197,10 @@
                   <td class="nowrap">{{ r.created_at or '—' }}</td>
                   <td class="truncate" title="{{ r.question }}">{{ r.question }}</td>
                   <td class="nowrap">{{ (r.duration_ms/1000)|round(1) }}s</td>
-                  <td class="nowrap">${{ '%.4f'|format(r.cost) }}</td>
+                  <td class="nowrap">${{ '%.3f'|format(r.cost) }}</td>
                 </tr>
               {% else %}
-                <tr><td colspan="4" class="text-muted">Not tracked yet</td></tr>
+                <tr><td colspan="4" class="text-muted">No lessons yet</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -170,107 +208,70 @@
       </div>
     </div>
 
-    <h2 class="h5 mt-5 mb-3">Recent lessons (with cost breakdown)</h2>
+    <h2 class="h5 mt-5 mb-1">Recent new lessons</h2>
+    <p class="section-note mb-3">Picture and voice costs are estimates: they add up what was spent in the 5 minutes after each lesson, so lessons made at the same time can overlap.</p>
     <div class="card p-0">
-      <div class="table-responsive">
+      <div class="table-responsive scroll-table">
         <table class="table table-sm table-hover mb-0">
           <thead class="table-light">
-            <tr>
-              <th>When</th>
-              <th>Question</th>
-              <th class="nowrap">Claude</th>
-              <th class="nowrap">Flux</th>
-              <th class="nowrap">TTS</th>
-              <th class="nowrap">Total</th>
-              <th class="nowrap">Time</th>
-              <th>Device</th>
-            </tr>
+            <tr><th>When</th><th>Question</th><th class="nowrap">Writing</th><th class="nowrap">Pictures ≈</th><th class="nowrap">Voice ≈</th><th class="nowrap">Total ≈</th><th class="nowrap">Time ≈</th><th>Device</th></tr>
           </thead>
           <tbody>
             {% for r in data.recent_lessons %}
               <tr>
                 <td class="nowrap">{{ r.created_at or '—' }}</td>
                 <td class="truncate" title="{{ r.question }}">{{ r.question }}</td>
-                <td class="nowrap">${{ '%.4f'|format(r.claude_cost) }}</td>
-                <td class="nowrap">${{ '%.4f'|format(r.flux_cost) }}</td>
-                <td class="nowrap">${{ '%.4f'|format(r.tts_cost) }}</td>
-                <td class="nowrap"><strong>${{ '%.4f'|format(r.total_cost) }}</strong></td>
+                <td class="nowrap">${{ '%.3f'|format(r.claude_cost) }}</td>
+                <td class="nowrap">${{ '%.3f'|format(r.flux_cost) }}</td>
+                <td class="nowrap">${{ '%.3f'|format(r.tts_cost) }}</td>
+                <td class="nowrap"><strong>${{ '%.3f'|format(r.total_cost) }}</strong></td>
                 <td class="nowrap">{{ (r.duration_ms/1000)|round(1) }}s</td>
                 <td>{{ r.device }}</td>
               </tr>
             {% else %}
-              <tr><td colspan="8" class="text-muted">Not tracked yet</td></tr>
+              <tr><td colspan="8" class="text-muted">No lessons yet</td></tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
     </div>
 
-    <h2 class="h5 mt-5 mb-3">Geography</h2>
+    <h2 class="h5 mt-5 mb-3">Where people are</h2>
     <div class="row g-3">
-      <div class="col-lg-5">
-        <div class="card p-3">
-          <h6>Lessons by country</h6>
-          <canvas id="chartByCountry" height="200"></canvas>
-        </div>
-      </div>
-      <div class="col-lg-7">
-        <div class="card p-3">
-          <h6>Lessons by state / region</h6>
-          <canvas id="chartByRegion" height="200"></canvas>
-        </div>
-      </div>
+      <div class="col-lg-5"><div class="card p-3"><h6>New lessons by country</h6><canvas id="chartByCountry" height="200"></canvas></div></div>
+      <div class="col-lg-7"><div class="card p-3"><h6>New lessons by state or region (top 20)</h6><canvas id="chartByRegion" height="200"></canvas></div></div>
     </div>
 
-    <h2 class="h5 mt-5 mb-3">Filter by location</h2>
+    <h2 class="h5 mt-5 mb-3">Lessons from one place</h2>
     <div class="card p-3">
       <div class="row g-2 align-items-end mb-3">
         <div class="col-auto">
           <label class="form-label mb-1" for="filterCountry">Country</label>
-          <select id="filterCountry" class="form-select form-select-sm" style="min-width:160px;">
-            <option value="">All countries</option>
-          </select>
+          <select id="filterCountry" class="form-select form-select-sm" style="min-width:160px;"><option value="">All countries</option></select>
         </div>
         <div class="col-auto">
-          <label class="form-label mb-1" for="filterRegion">State / Region</label>
-          <select id="filterRegion" class="form-select form-select-sm" style="min-width:180px;" disabled>
-            <option value="">All regions</option>
-          </select>
+          <label class="form-label mb-1" for="filterRegion">State or region</label>
+          <select id="filterRegion" class="form-select form-select-sm" style="min-width:180px;" disabled><option value="">All regions</option></select>
         </div>
         <div class="col-auto">
-          <button id="filterApply" class="btn btn-sm btn-primary">Apply</button>
+          <button id="filterApply" class="btn btn-sm btn-dark">Show</button>
           <button id="filterReset" class="btn btn-sm btn-outline-secondary ms-1">Reset</button>
         </div>
-        <div class="col-auto ms-auto text-muted small" id="filterStatus"></div>
+        <div class="col-auto ms-auto text-muted small" id="filterStatus" aria-live="polite"></div>
       </div>
-      <div class="table-responsive">
-        <table class="table table-sm table-hover mb-0" id="locationTable">
-          <thead class="table-light">
-            <tr>
-              <th>When</th>
-              <th>Question</th>
-              <th>Country</th>
-              <th>State/Region</th>
-              <th>City</th>
-              <th>Device</th>
-              <th class="nowrap">Time</th>
-              <th class="nowrap">Cost</th>
-            </tr>
-          </thead>
-          <tbody id="locationTableBody">
-            <tr><td colspan="8" class="text-muted">Select a filter and click Apply</td></tr>
-          </tbody>
+      <div class="table-responsive scroll-table">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light"><tr><th>When</th><th>Question</th><th>Country</th><th>State/Region</th><th>City</th><th>Device</th><th class="nowrap">Time</th><th class="nowrap">Cost</th></tr></thead>
+          <tbody id="locationTableBody"><tr><td colspan="8" class="text-muted">Pick a place and press Show</td></tr></tbody>
         </table>
       </div>
     </div>
 
-    <h2 class="h5 mt-5 mb-3">Recent errors</h2>
+    <h2 class="h5 mt-5 mb-3">Failures in the last 24 hours</h2>
     <div class="card p-0">
-      <div class="table-responsive">
+      <div class="table-responsive scroll-table">
         <table class="table table-sm mb-0">
-          <thead class="table-light">
-            <tr><th>When</th><th>Endpoint</th><th>Question</th><th>Error</th><th>IP</th></tr>
-          </thead>
+          <thead class="table-light"><tr><th>When</th><th>Where</th><th>Question</th><th>Error</th><th>IP</th></tr></thead>
           <tbody>
             {% for e in data.recent_errors %}
               <tr>
@@ -281,232 +282,193 @@
                 <td class="nowrap small">{{ e.ip or '—' }}</td>
               </tr>
             {% else %}
-              <tr><td colspan="5" class="text-muted">No errors recorded</td></tr>
+              <tr><td colspan="5" class="text-muted">No failures</td></tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
     </div>
 
-    <h2 class="h5 mt-5 mb-3">Cached lessons
+    <h2 class="h5 mt-5 mb-1">Saved copies of asked questions
       <button class="btn btn-sm btn-outline-secondary ms-2" id="cacheLoadBtn">Load</button>
     </h2>
-    <div class="card p-3" id="cachePanel">
-      <p class="text-muted small mb-0">Click Load to see cached lessons.</p>
-    </div>
+    <p class="section-note mb-3">Deleting one makes the next person who asks that question get a freshly made lesson. Library lessons are managed on the Lesson library page.</p>
+    <div class="card p-3" id="cachePanel"><p class="text-muted small mb-0">Press Load to see them.</p></div>
 
     {% endif %}
   </main>
 
+  {% if db_enabled %}
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <script>
     const DATA = {{ data | tojson }};
+    const ORANGE = '#EF9F27', CHARCOAL = '#2C2C2A', TEAL = '#1D9E75', SLATE = '#888780';
 
+    // Questions and emails come from visitors, so always escape them before building HTML.
+    function esc(value) {
+      return String(value ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    }
+
+    const chartOptions = { responsive: true, plugins: { legend: { position: 'bottom' } } };
     function lineChart(id, labels, datasets) {
       const el = document.getElementById(id);
-      if (!el) return;
-      new Chart(el, { type: 'line', data: { labels, datasets },
-        options: { responsive: true, plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true } } } });
+      if (el) new Chart(el, { type: 'line', data: { labels, datasets }, options: { ...chartOptions, scales: { y: { beginAtZero: true } } } });
     }
     function barChart(id, labels, datasets, stacked = false) {
       const el = document.getElementById(id);
-      if (!el) return;
-      new Chart(el, { type: 'bar', data: { labels, datasets },
-        options: { responsive: true, plugins: { legend: { position: 'bottom' } },
-                   scales: { x: { stacked }, y: { stacked, beginAtZero: true } } } });
+      if (el) new Chart(el, { type: 'bar', data: { labels, datasets }, options: { ...chartOptions, scales: { x: { stacked }, y: { stacked, beginAtZero: true } } } });
     }
     function doughnut(id, labels, values) {
       const el = document.getElementById(id);
-      if (!el) return;
-      new Chart(el, { type: 'doughnut', data: { labels, datasets: [{ data: values }] },
-        options: { responsive: true, plugins: { legend: { position: 'bottom' } } } });
+      if (el) new Chart(el, { type: 'doughnut', data: { labels, datasets: [{ data: values, backgroundColor: [ORANGE, CHARCOAL, TEAL, SLATE, '#FAC775', '#5F5E5A', '#9FE1CB', '#B4B2A9'] }] }, options: chartOptions });
     }
+    const shortDate = d => d.slice(5);
 
     const lbd = DATA.lessons_by_day || [];
-    lineChart('chartLessonsByDay',
-      lbd.map(r => r.date),
-      [{ label: 'Lessons', data: lbd.map(r => r.count), borderColor: '#7F77DD', backgroundColor: 'rgba(127,119,221,0.2)', tension: 0.3, fill: true }]);
+    lineChart('chartLessonsByDay', lbd.map(r => shortDate(r.date)),
+      [{ label: 'New lessons', data: lbd.map(r => r.count), borderColor: ORANGE, backgroundColor: 'rgba(239,159,39,0.2)', tension: 0.3, fill: true }]);
 
     const lbh = DATA.lessons_by_hour || [];
-    barChart('chartLessonsByHour',
-      lbh.map(r => r.hour + 'h'),
-      [{ label: 'Lessons', data: lbh.map(r => r.count), backgroundColor: '#5DCAA5' }]);
+    barChart('chartLessonsByHour', lbh.map(r => r.hour + 'h'), [{ label: 'New lessons', data: lbh.map(r => r.count), backgroundColor: CHARCOAL }]);
 
     const ds = DATA.device_split || { mobile: 0, desktop: 0 };
-    doughnut('chartDeviceSplit', ['Mobile', 'Desktop'], [ds.mobile, ds.desktop]);
+    doughnut('chartDeviceSplit', ['Phones and tablets', 'Computers'], [ds.mobile, ds.desktop]);
 
     const cbd = DATA.cost_by_day || [];
-    barChart('chartCostByDay',
-      cbd.map(r => r.date),
-      [
-        { label: 'Claude', data: cbd.map(r => r.claude), backgroundColor: '#7F77DD' },
-        { label: 'Flux',   data: cbd.map(r => r.flux),   backgroundColor: '#EF9F27' },
-        { label: 'TTS',    data: cbd.map(r => r.tts),    backgroundColor: '#5DCAA5' },
-      ], true);
+    barChart('chartCostByDay', cbd.map(r => shortDate(r.date)), [
+      { label: 'Writing (Claude)', data: cbd.map(r => r.claude), backgroundColor: CHARCOAL },
+      { label: 'Pictures (Flux)', data: cbd.map(r => r.flux), backgroundColor: ORANGE },
+      { label: 'Voice', data: cbd.map(r => r.tts), backgroundColor: TEAL },
+    ], true);
 
     const cbp = DATA.cost_by_provider || [];
     doughnut('chartCostByProvider', cbp.map(r => r.provider), cbp.map(r => r.cost));
 
     const pbd = DATA.perf_by_day || [];
-    lineChart('chartPerfByDay',
-      pbd.map(r => r.date),
-      [
-        { label: 'Claude (ms)', data: pbd.map(r => r.claude_ms), borderColor: '#7F77DD', tension: 0.3 },
-        { label: 'Flux (ms)',   data: pbd.map(r => r.flux_ms),   borderColor: '#EF9F27', tension: 0.3 },
-      ]);
+    lineChart('chartPerfByDay', pbd.map(r => shortDate(r.date)), [
+      { label: 'Writing a lesson (s)', data: pbd.map(r => r.claude_ms == null ? null : r.claude_ms / 1000), borderColor: CHARCOAL, tension: 0.3 },
+      { label: 'One picture (s)', data: pbd.map(r => r.flux_ms == null ? null : r.flux_ms / 1000), borderColor: ORANGE, tension: 0.3 },
+    ]);
 
-    // ── Geography charts ──────────────────────────────────────────────────────
     const byCountry = DATA.lessons_by_country || [];
     doughnut('chartByCountry', byCountry.map(r => r.country), byCountry.map(r => r.count));
+    const byRegion = (DATA.lessons_by_region || []).slice(0, 20);
+    barChart('chartByRegion', byRegion.map(r => r.region + ' (' + r.country + ')'), [{ label: 'New lessons', data: byRegion.map(r => r.count), backgroundColor: ORANGE }]);
 
-    const byRegion = DATA.lessons_by_region || [];
-    barChart('chartByRegion',
-      byRegion.slice(0, 20).map(r => r.region + (byRegion.length > 1 ? ' (' + r.country + ')' : '')),
-      [{ label: 'Lessons', data: byRegion.slice(0, 20).map(r => r.count), backgroundColor: '#7F77DD' }]);
+    // ── Email search ─────────────────────────────────────────────────────────
+    const emailSearch = document.getElementById('emailSearch');
+    const emailRows = [...document.querySelectorAll('#emailRows tr[data-email]')];
+    const emailCount = document.getElementById('emailCount');
+    const emailCountText = emailCount.textContent;
+    emailSearch.addEventListener('input', () => {
+      const query = emailSearch.value.trim().toLowerCase();
+      let shown = 0;
+      emailRows.forEach(row => { row.hidden = !row.dataset.email.includes(query); if (!row.hidden) shown++; });
+      emailCount.textContent = query ? shown + ' matching' : emailCountText;
+    });
 
-    // ── Location filter ───────────────────────────────────────────────────────
+    // ── Location filter ──────────────────────────────────────────────────────
     const allRegions = DATA.lessons_by_region || [];
     const countrySelect = document.getElementById('filterCountry');
-    const regionSelect  = document.getElementById('filterRegion');
-    const applyBtn      = document.getElementById('filterApply');
-    const resetBtn      = document.getElementById('filterReset');
-    const statusEl      = document.getElementById('filterStatus');
-    const tbody         = document.getElementById('locationTableBody');
+    const regionSelect = document.getElementById('filterRegion');
+    const applyBtn = document.getElementById('filterApply');
+    const statusEl = document.getElementById('filterStatus');
+    const tbody = document.getElementById('locationTableBody');
+    const pickPrompt = '<tr><td colspan="8" class="text-muted">Pick a place and press Show</td></tr>';
 
-    // Populate country dropdown from data already in page
-    const countries = [...new Set((DATA.lessons_by_country || []).map(r => r.country))];
-    countries.forEach(c => {
+    function addOption(select, value, label) {
       const opt = document.createElement('option');
-      opt.value = c; opt.textContent = c;
-      countrySelect.appendChild(opt);
-    });
-
+      opt.value = value; opt.textContent = label;
+      select.appendChild(opt);
+    }
+    [...new Set(byCountry.map(r => r.country))].forEach(c => addOption(countrySelect, c, c));
     countrySelect.addEventListener('change', () => {
-      const chosen = countrySelect.value;
       regionSelect.innerHTML = '<option value="">All regions</option>';
-      if (chosen) {
-        allRegions.filter(r => r.country === chosen).forEach(r => {
-          const opt = document.createElement('option');
-          opt.value = r.region; opt.textContent = r.region + ' (' + r.count + ')';
-          regionSelect.appendChild(opt);
-        });
-        regionSelect.disabled = false;
-      } else {
-        regionSelect.disabled = true;
-      }
+      allRegions.filter(r => r.country === countrySelect.value).forEach(r => addOption(regionSelect, r.region, r.region + ' (' + r.count + ')'));
+      regionSelect.disabled = !countrySelect.value;
     });
 
-    async function loadFiltered() {
-      const country = countrySelect.value;
-      const region  = regionSelect.value;
-      const params  = new URLSearchParams();
-      if (country) params.set('country', country);
-      if (region)  params.set('region', region);
+    applyBtn.addEventListener('click', async () => {
+      const params = new URLSearchParams();
+      if (countrySelect.value) params.set('country', countrySelect.value);
+      if (regionSelect.value) params.set('region', regionSelect.value);
       statusEl.textContent = 'Loading…';
       applyBtn.disabled = true;
       try {
         const res = await fetch('/admin/lessons-by-location?' + params.toString());
-        const json = await res.json();
-        const rows = json.lessons || [];
-        statusEl.textContent = rows.length + ' rows';
-        if (!rows.length) {
-          tbody.innerHTML = '<tr><td colspan="8" class="text-muted">No lessons found for this filter</td></tr>';
-          return;
-        }
-        tbody.innerHTML = rows.map(r => `
+        const rows = (await res.json()).lessons || [];
+        statusEl.textContent = rows.length + ' lessons';
+        tbody.innerHTML = rows.length ? rows.map(r => `
           <tr>
-            <td class="nowrap">${r.created_at || '—'}</td>
-            <td class="truncate" title="${r.question}">${r.question}</td>
-            <td>${r.country}</td>
-            <td>${r.region}</td>
-            <td>${r.city}</td>
-            <td>${r.device}</td>
-            <td class="nowrap">${(r.duration_ms/1000).toFixed(1)}s</td>
-            <td class="nowrap">$${r.cost.toFixed(4)}</td>
-          </tr>`).join('');
-      } catch(e) {
-        statusEl.textContent = 'Error';
-        console.error(e);
+            <td class="nowrap">${esc(r.created_at || '—')}</td>
+            <td class="truncate" title="${esc(r.question)}">${esc(r.question)}</td>
+            <td>${esc(r.country)}</td><td>${esc(r.region)}</td><td>${esc(r.city)}</td><td>${esc(r.device)}</td>
+            <td class="nowrap">${(r.duration_ms / 1000).toFixed(1)}s</td>
+            <td class="nowrap">$${Number(r.cost).toFixed(3)}</td>
+          </tr>`).join('') : '<tr><td colspan="8" class="text-muted">No lessons from there</td></tr>';
+      } catch (e) {
+        statusEl.textContent = 'Could not load lessons';
       } finally {
         applyBtn.disabled = false;
       }
-    }
+    });
+    document.getElementById('filterReset').addEventListener('click', () => {
+      countrySelect.value = '';
+      regionSelect.innerHTML = '<option value="">All regions</option>';
+      regionSelect.disabled = true;
+      tbody.innerHTML = pickPrompt;
+      statusEl.textContent = '';
+    });
 
-    // ── Cache management ──────────────────────────────────────────────────────
+    // ── Saved copies ─────────────────────────────────────────────────────────
     const cacheLoadBtn = document.getElementById('cacheLoadBtn');
-    const cachePanel   = document.getElementById('cachePanel');
-
+    const cachePanel = document.getElementById('cachePanel');
     cacheLoadBtn.addEventListener('click', async () => {
       cacheLoadBtn.disabled = true;
       cacheLoadBtn.textContent = 'Loading…';
       try {
-        const res  = await fetch('/admin/cached-lessons');
-        const data = await res.json();
-        const rows = data.lessons || [];
-        if (!rows.length) {
-          cachePanel.innerHTML = '<p class="text-muted small mb-0">No cached lessons.</p>';
-          return;
-        }
+        const rows = (await (await fetch('/admin/cached-lessons')).json()).lessons || [];
+        if (!rows.length) { cachePanel.innerHTML = '<p class="text-muted small mb-0">No saved copies.</p>'; return; }
         cachePanel.innerHTML = `
-          <div class="table-responsive">
-            <table class="table table-sm table-hover mb-0" id="cacheTable">
-              <thead class="table-light">
-                <tr><th>Question</th><th class="nowrap">Hits</th><th class="nowrap">Pinned</th><th class="nowrap">Created</th><th class="nowrap">Last hit</th><th></th></tr>
-              </thead>
-              <tbody>
-                ${rows.map(r => `
-                  <tr id="crow-${CSS.escape(r.question)}">
-                    <td class="truncate" title="${r.question}">${r.question}</td>
-                    <td class="nowrap">${r.hits}</td>
-                    <td class="nowrap">${r.pinned ? '📌' : ''}</td>
-                    <td class="nowrap">${r.created || '—'}</td>
-                    <td class="nowrap">${r.last_hit || '—'}</td>
-                    <td class="nowrap">
-                      <button class="btn btn-sm btn-outline-danger cache-del-btn"
-                              data-q="${r.question.replace(/"/g, '&quot;')}">Delete</button>
-                    </td>
-                  </tr>`).join('')}
-              </tbody>
+          <div class="table-responsive scroll-table">
+            <table class="table table-sm table-hover mb-0">
+              <thead class="table-light"><tr><th>Question</th><th class="nowrap">Times reused</th><th class="nowrap">Kept</th><th class="nowrap">Made</th><th class="nowrap">Last reused</th><th></th></tr></thead>
+              <tbody>${rows.map((r, i) => `
+                <tr>
+                  <td class="truncate" title="${esc(r.question)}">${esc(r.question)}</td>
+                  <td class="nowrap">${esc(r.hits)}</td>
+                  <td class="nowrap">${r.pinned ? 'Yes' : ''}</td>
+                  <td class="nowrap">${esc(r.created || '—')}</td>
+                  <td class="nowrap">${esc(r.last_hit || '—')}</td>
+                  <td class="nowrap"><button class="btn btn-sm btn-outline-danger cache-del-btn" data-index="${i}">Delete</button></td>
+                </tr>`).join('')}</tbody>
             </table>
           </div>`;
-
-        cachePanel.querySelectorAll('.cache-del-btn').forEach(btn => {
-          btn.addEventListener('click', async () => {
-            const q = btn.dataset.q;
-            if (!confirm('Delete cached lesson for:\n"' + q + '"?')) return;
-            btn.disabled = true;
-            btn.textContent = '…';
-            const r = await fetch('/admin/delete-cached-lesson', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ question: q }),
-            });
-            const d = await r.json();
-            if (d.ok) {
-              btn.closest('tr').remove();
-            } else {
-              btn.disabled = false;
-              btn.textContent = 'Delete';
-              alert('Error: ' + d.error);
-            }
-          });
-        });
-      } catch(e) {
-        cachePanel.innerHTML = '<p class="text-danger small">Failed to load cache.</p>';
+        cachePanel.querySelectorAll('.cache-del-btn').forEach(btn => btn.addEventListener('click', async () => {
+          const question = rows[Number(btn.dataset.index)].question;
+          if (!confirm('Delete the saved copy for:\n"' + question + '"?')) return;
+          btn.disabled = true;
+          btn.textContent = '…';
+          try {
+            const result = await (await fetch('/admin/delete-cached-lesson', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question }),
+            })).json();
+            if (!result.ok) throw new Error(result.error || 'failed');
+            btn.closest('tr').remove();
+          } catch (e) {
+            btn.disabled = false;
+            btn.textContent = 'Delete';
+            alert('Could not delete: ' + e.message);
+          }
+        }));
+      } catch (e) {
+        cachePanel.innerHTML = '<p class="text-danger small mb-0">Could not load saved copies.</p>';
       } finally {
         cacheLoadBtn.disabled = false;
         cacheLoadBtn.textContent = 'Refresh';
       }
     });
-
-    applyBtn.addEventListener('click', loadFiltered);
-    resetBtn.addEventListener('click', () => {
-      countrySelect.value = '';
-      regionSelect.innerHTML = '<option value="">All regions</option>';
-      regionSelect.disabled = true;
-      tbody.innerHTML = '<tr><td colspan="8" class="text-muted">Select a filter and click Apply</td></tr>';
-      statusEl.textContent = '';
-    });
   </script>
+  {% endif %}
 </body>
 </html>

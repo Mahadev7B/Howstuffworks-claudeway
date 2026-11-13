@@ -1511,10 +1511,35 @@ def admin_dashboard():
         limit_questions=15, limit_recent=50,
         limit_slowest=10, limit_errors=30,
     )
-    from lesson_platform.db import ADMIN_TZ
+    from lesson_platform.db import ADMIN_EXCLUDE_CITIES, ADMIN_IP_PREFIXES, ADMIN_IPS, ADMIN_TZ
     return render_template("admin.html", db_enabled=True, data=data,
                            daily_budget=settings.daily_budget_usd,
-                           admin_tz=ADMIN_TZ)
+                           admin_tz=ADMIN_TZ, free_questions=askers.FREE_QUESTIONS,
+                           excluded_cities=ADMIN_EXCLUDE_CITIES,
+                           excluded_ip_count=len(ADMIN_IPS) + len(ADMIN_IP_PREFIXES))
+
+
+@app.get("/admin/askers.csv")
+def admin_askers_csv():
+    """Download every asker's email and question count. Admin only."""
+    if not _admin_authed():
+        return redirect(url_for("admin_login"))
+    import csv
+    import io
+    from lesson_platform.db import admin_askers_export
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["email", "first_seen", "last_question", "questions_asked", "free_left", "subscription_status"])
+    for row in admin_askers_export():
+        email = row["email"]
+        if email[:1] in ("=", "+", "-", "@"):
+            email = "'" + email  # Keep spreadsheet apps from treating an email as a formula.
+        writer.writerow([email, row["first_seen"], row["last_question"], row["questions"],
+                         "" if row["free_left"] is None else row["free_left"], row["status"]])
+    return Response(buffer.getvalue(), mimetype="text/csv", headers={
+        "Content-Disposition": 'attachment; filename="asklilowl-emails.csv"',
+        "Cache-Control": "no-store",
+    })
 
 
 @app.route("/admin/lessons-by-location", methods=["GET"])

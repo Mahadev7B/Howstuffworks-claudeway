@@ -866,7 +866,67 @@ _ADMIN_DEFAULTS = {
     "recent_errors": [],
     "lessons_by_country": [],
     "lessons_by_region": [],
+    "askers": {"total": 0, "new_today": 0, "new_7d": 0, "subscribed": 0, "at_limit": 0,
+               "questions": 0, "rows": [], "available": False},
 }
+
+# Askers who have used this many questions see the subscription message.
+ASKER_FREE_QUESTIONS = 3
+_ACTIVE_SUBSCRIPTIONS = ["active", "trialing"]
+
+
+def _local_days(days: int) -> list[str]:
+    """The last `days` calendar dates in ADMIN_TZ, oldest first, as YYYY-MM-DD."""
+    today = today_start_local().date()
+    return [str(today - timedelta(days=offset)) for offset in range(days - 1, -1, -1)]
+
+
+def _fill_days(rows: list[dict[str, Any]], days: int, empty: dict[str, Any]) -> list[dict[str, Any]]:
+    """Charts should show quiet days as zero instead of skipping them."""
+    by_date = {r["date"]: r for r in rows}
+    return [by_date.get(day, {"date": day, **empty}) for day in _local_days(days)]
+
+
+def _admin_askers(cur, today_start: datetime, limit: int) -> dict[str, Any]:
+    cur.execute("""
+        SELECT COUNT(*),
+               COUNT(*) FILTER (WHERE created_at >= %s),
+               COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days'),
+               COUNT(*) FILTER (WHERE subscription_status = ANY(%s))
+        FROM askers
+    """, (today_start, _ACTIVE_SUBSCRIPTIONS))
+    total, new_today, new_7d, subscribed = (int(v or 0) for v in cur.fetchone())
+    cur.execute(f"""
+        SELECT a.email,
+               to_char(a.created_at AT TIME ZONE '{ADMIN_TZ}', 'YYYY-MM-DD HH24:MI'),
+               to_char(a.last_question_at AT TIME ZONE '{ADMIN_TZ}', 'YYYY-MM-DD HH24:MI'),
+               a.subscription_status,
+               COUNT(q.question_hash)
+        FROM askers a
+        LEFT JOIN asker_questions q ON q.email = a.email
+        GROUP BY a.email, a.created_at, a.last_question_at, a.subscription_status
+        ORDER BY a.last_question_at DESC
+    """)
+    rows, at_limit, questions = [], 0, 0
+    for email, first_seen, last_question, status, asked in cur.fetchall():
+        asked = int(asked or 0)
+        questions += asked
+        is_subscribed = status in _ACTIVE_SUBSCRIPTIONS
+        if not is_subscribed and asked >= ASKER_FREE_QUESTIONS:
+            at_limit += 1
+        rows.append({"email": email, "first_seen": first_seen, "last_question": last_question,
+                     "questions": asked, "status": status,
+                     "free_left": None if is_subscribed else max(ASKER_FREE_QUESTIONS - asked, 0)})
+    return {"total": total, "new_today": new_today, "new_7d": new_7d, "subscribed": subscribed,
+            "at_limit": at_limit, "questions": questions, "rows": rows[:limit],
+            "available": True}
+
+
+def admin_askers_export() -> list[dict[str, Any]]:
+    """Every asker for the admin CSV download. Empty when the DB is unavailable."""
+    if _pool is None:
+        return []
+    return _safe_query([], lambda cur: _admin_askers(cur, today_start_local(), limit=1_000_000)["rows"])
 
 
 def admin_load_all(
@@ -878,6 +938,7 @@ def admin_load_all(
     limit_recent: int = 50,
     limit_slowest: int = 10,
     limit_errors: int = 30,
+    limit_askers: int = 200,
 ) -> dict[str, Any]:
     """Run every admin dashboard query in one pool checkout — single connection."""
     import copy
@@ -948,7 +1009,17 @@ def admin_load_all(
         """, (today_start, *xip_params))
         all_errors_today = int(cur.fetchone()[0] or 0)
 
+        cur.execute(f"""
+            SELECT COUNT(*),
+                   COUNT(*) FILTER (WHERE created_at >= %s)
+            FROM api_calls
+            WHERE success = true AND endpoint = ANY(%s) AND lesson IS NULL {xip_sql}
+        """, (today_start, endpoints, *xip_params))
+        saved_all_time, saved_today = (int(v or 0) for v in cur.fetchone())
+
         overview = {
+            "saved_copies_all_time": saved_all_time,
+            "saved_copies_today": saved_today,
             "total_lessons": total_lessons,
             "lessons_today": lessons_today,
             "unique_ips_today": unique_ips_today,
@@ -972,7 +1043,8 @@ def admin_load_all(
               AND created_at > NOW() - INTERVAL '1 day' * %s {xip_sql}
             GROUP BY d ORDER BY d
         """, (endpoints, days_lessons, *xip_params))
-        lessons_by_day = [{"date": str(r[0]), "count": int(r[1])} for r in cur.fetchall()]
+        lessons_by_day = _fill_days([{"date": str(r[0]), "count": int(r[1])} for r in cur.fetchall()],
+                                    days_lessons, {"count": 0})
 
         # ── Lessons by hour ───────────────────────────────────────────────────
         cur.execute(f"""
@@ -1002,10 +1074,10 @@ def admin_load_all(
 
         # ── Top questions ─────────────────────────────────────────────────────
         cur.execute(f"""
-            SELECT question, COUNT(*) AS n
+            SELECT MIN(question), COUNT(*) AS n
             FROM api_calls
-            WHERE {_REAL_LESSON_FILTER} {xip_sql}
-            GROUP BY question ORDER BY n DESC
+            WHERE success = true AND endpoint = ANY(%s) {xip_sql}
+            GROUP BY LOWER(TRIM(question)) ORDER BY n DESC
             LIMIT %s
         """, (endpoints, *xip_params, limit_questions))
         top_questions = [{"question": r[0], "count": int(r[1])} for r in cur.fetchall()]
@@ -1026,6 +1098,7 @@ def admin_load_all(
             cost_by_day.append({"date": str(r[0]), "claude": round(c, 5),
                                  "flux": round(f, 5), "tts": round(t, 5),
                                  "total": round(c + f + t, 5)})
+        cost_by_day = _fill_days(cost_by_day, days_cost, {"claude": 0, "flux": 0, "tts": 0, "total": 0})
 
         # ── Cost by provider ──────────────────────────────────────────────────
         cur.execute(f"""
@@ -1100,6 +1173,7 @@ def admin_load_all(
         """, (endpoints, _FLUX_ENDPOINT, days_perf, *xip_params))
         perf_by_day = [{"date": str(r[0]), "claude_ms": int(r[1] or 0), "flux_ms": int(r[2] or 0)}
                        for r in cur.fetchall()]
+        perf_by_day = _fill_days(perf_by_day, days_perf, {"claude_ms": None, "flux_ms": None})
 
         # ── Slowest lessons ───────────────────────────────────────────────────
         cur.execute(f"""
@@ -1152,7 +1226,14 @@ def admin_load_all(
         lessons_by_region = [{"country": r[0], "region": r[1], "count": int(r[2])}
                              for r in cur.fetchall()]
 
+        try:
+            asker_summary = _admin_askers(cur, today_start, limit_askers)
+        except Exception:
+            logger.exception("Admin askers query failed")
+            asker_summary = copy.deepcopy(_ADMIN_DEFAULTS["askers"])
+
         return {
+            "askers": asker_summary,
             "overview": overview,
             "lessons_by_day": lessons_by_day,
             "lessons_by_hour": lessons_by_hour,
