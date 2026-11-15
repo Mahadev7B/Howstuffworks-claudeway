@@ -623,6 +623,7 @@ def explore_lesson(slug: str):
     return render_template("share.html", lesson=library.with_publication_scripts(publication["lesson"]),
                            question=publication["summary"], slug=slug,
                            published=True, publication=publication,
+                           cube_animation_data=private_cube_animation(slug, publication["lesson"]),
                            canonical_url="https://www.asklilowl.com/explore/" + slug)
 
 

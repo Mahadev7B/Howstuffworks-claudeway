@@ -75,7 +75,7 @@
   function draw(canvas,scene,frame) {
     const ctx=canvas.getContext('2d');if(!ctx)return;
     const w=canvas.width,h=canvas.height,pose=poseAtFrame(scene,frame),r=pose.rotation;
-    const bg=ctx.createLinearGradient(0,0,w,h);bg.addColorStop(0,'#172b42');bg.addColorStop(1,'#091625');ctx.fillStyle=bg;ctx.fillRect(0,0,w,h);
+    const bg=ctx.createLinearGradient(0,0,w,h);bg.addColorStop(0,'#2C2C2A');bg.addColorStop(1,'#141414');ctx.fillStyle=bg;ctx.fillRect(0,0,w,h);
     const project=p=>[w*.43+dot(p,right)*h*.28,h*.53-dot(p,up)*h*.28];
     const polys=[],selected=p=>r&&(r.whole||p[r.axis]===r.sign);
     function polygon(points,n,color,active){if(dot(n,camera)<=0.005)return;polys.push({points,depth:points.reduce((a,p)=>a+dot(p,camera),0)/4,color,active});}
@@ -96,14 +96,14 @@
     // A small face-on cue removes the camera-dependent meaning of clockwise.
     const token=scene.moves[pose.moveIndex],m=token?notation(token):null;
     if(m&&!m.whole){const x=w*.82,y=h*.24,radius=h*.075;
-      ctx.fillStyle='#203e56';ctx.beginPath();ctx.roundRect(x-radius-18,y-radius-24,radius*2+36,radius*2+77,14);ctx.fill();
-      ctx.strokeStyle='#91fff0';ctx.lineWidth=5;const ccw=token.endsWith("'");const start=-Math.PI*.7,end=start+(ccw?-1:1)*Math.PI*1.55;
+      ctx.fillStyle='#3a3936';ctx.beginPath();ctx.roundRect(x-radius-18,y-radius-24,radius*2+36,radius*2+77,14);ctx.fill();
+      ctx.strokeStyle='#FAC775';ctx.lineWidth=5;const ccw=token.endsWith("'");const start=-Math.PI*.7,end=start+(ccw?-1:1)*Math.PI*1.55;
       ctx.beginPath();ctx.arc(x,y,radius,start,end,ccw);ctx.stroke();
       const px=x+radius*Math.cos(end),py=y+radius*Math.sin(end),tangent=end+(ccw?-1:1)*Math.PI/2;
-      ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(px-14*Math.cos(tangent-.55),py-14*Math.sin(tangent-.55));ctx.lineTo(px-14*Math.cos(tangent+.55),py-14*Math.sin(tangent+.55));ctx.closePath();ctx.fillStyle='#91fff0';ctx.fill();
+      ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(px-14*Math.cos(tangent-.55),py-14*Math.sin(tangent-.55));ctx.lineTo(px-14*Math.cos(tangent+.55),py-14*Math.sin(tangent+.55));ctx.closePath();ctx.fillStyle='#FAC775';ctx.fill();
       ctx.fillStyle='#fff';ctx.textAlign='center';ctx.font='bold '+Math.round(h*.055)+'px sans-serif';ctx.fillText(token[0],x,y+10);ctx.font=Math.round(h*.024)+'px sans-serif';ctx.fillText('Look at this face',x,y+radius+36);
     }
-    ctx.fillStyle='#acc8d9';ctx.font=Math.round(h*.027)+'px sans-serif';ctx.textAlign='left';
+    ctx.fillStyle='#D3D1C7';ctx.font=Math.round(h*.027)+'px sans-serif';ctx.textAlign='left';
     ctx.fillText(m?.whole?'Whole cube: change your hold, not just one layer':'FRONT stays facing you during face turns',w*.065,h*.92);
     return pose;
   }

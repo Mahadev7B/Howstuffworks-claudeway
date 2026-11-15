@@ -74,3 +74,16 @@ def test_actual_template_leaves_unbound_lesson_player_unchanged():
     page=_render(None)
     assert '<canvas ' not in page and 'cube-player.js' not in page
     assert 'Slide 16 of 16' in page and '/audio/15.mp3' in page
+
+
+def test_public_explore_page_shows_the_cube_player(monkeypatch):
+    import app as site
+    lesson = {"title": "Cube", "slides": [{"title": f"S{i}", "narration": "N", "explanation": "N", "fun_fact": "F",
+                                          "image_data_url": "data:image/png;base64,aA=="} for i in range(16)]}
+    data = json.loads((ROOT / 'lesson_platform/cube_animation_v2.json').read_bytes())
+    monkeypatch.setattr(site.library, "get_published_lesson", lambda slug: {"lesson": lesson, "summary": "Cube", "title": "Cube"})
+    monkeypatch.setattr(site, "private_cube_animation", lambda slug, l: data if slug == 'solve-a-2x2-rubiks-cube' else None)
+    page = site.app.test_client().get('/explore/solve-a-2x2-rubiks-cube').get_data(as_text=True)
+    assert 'id="cube-animation-data"' in page and 'cube-player.css' in page and page.count('class="cube-motion"') == 16
+    other = site.app.test_client().get('/explore/why-is-the-sky-blue').get_data(as_text=True)
+    assert 'id="cube-animation-data"' not in other and 'cube-player.css' not in other
