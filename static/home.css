@@ -44,6 +44,11 @@ body.cinema-home { margin: 0; background: #141414; color: #F1EFE8; font-family: 
 .owl-ask > * { pointer-events: auto; }
 .owl-panel { width: min(360px, calc(100vw - 32px)); box-sizing: border-box; background: #2C2C2A; border: 1px solid #5F5E5A; border-radius: 16px; padding: 18px; color: #F1EFE8; }
 .owl-panel[hidden] { display: none; }
+.owl-panel { position: relative; }
+.owl-panel > label { padding-right: 40px; }
+.owl-minimize { position: absolute; top: 10px; right: 10px; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border: 1px solid #5F5E5A; border-radius: 10px; background: #141414; color: #F1EFE8; font: 700 24px/1 Nunito, system-ui, sans-serif; cursor: pointer; padding: 0; }
+.owl-minimize:hover { border-color: #FAC775; color: #FAC775; }
+.owl-minimize:focus-visible { outline: 3px solid #FAC775; outline-offset: 2px; }
 .owl-panel label { display: block; font-family: 'Baloo 2', sans-serif; font-size: 20px; font-weight: 700; margin-bottom: 10px; color: #F1EFE8; }
 .owl-panel .ask-form { display: flex; flex-wrap: wrap; gap: 8px; background: none; box-shadow: none; border: 0; padding: 0; margin: 0; max-width: none; }
 .owl-panel .ask-form input { flex: 1 1 100%; min-width: 0; box-sizing: border-box; font: inherit; font-size: 16px; padding: 12px 14px; border-radius: 10px; border: 1px solid #5F5E5A; background: #141414; color: #F1EFE8; }

@@ -145,3 +145,10 @@ def test_limit_screen_has_the_ask_for_more_button(site, monkeypatch):
     monkeypatch.setattr(app_module.library, "list_published_cards", lambda: [])
     page = site.get("/").data
     assert b'id="moreBtn"' in page and b"Ask for 2 more free lessons" in page
+
+
+def test_question_box_has_a_minus_button_to_close_it(site, monkeypatch):
+    app_module = importlib.import_module("app")
+    monkeypatch.setattr(app_module.library, "list_published_cards", lambda: [])
+    page = site.get("/").get_data(as_text=True)
+    assert 'id="owlMinimize"' in page and 'aria-label="Close the question box"' in page

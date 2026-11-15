@@ -8,6 +8,7 @@
     if (open) (document.getElementById('askerEmailRow').hidden ? input : document.getElementById('askerEmail')).focus();
   }
   toggle.addEventListener('click', () => setOpen(panel.hidden));
+  document.getElementById('owlMinimize').addEventListener('click', () => { setOpen(false); toggle.focus(); });
 
   // The grown-up's email is kept only in this browser; no password, no account page.
   const KEY = 'asklilowl-email';

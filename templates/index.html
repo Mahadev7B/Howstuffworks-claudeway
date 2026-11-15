@@ -356,6 +356,7 @@
 
   <div class="owl-ask">
     <div class="owl-panel" id="askPanel" data-verify="{{ 1 if email_verification else 0 }}"{% if not ask_open %} hidden{% endif %}>
+      <button type="button" class="owl-minimize" id="owlMinimize" aria-label="Close the question box" title="Close">&minus;</button>
       <label for="question">What do you wonder about?</label>
       <form class="ask-form" id="askForm" action="{{ url_for('lesson') }}" method="post">
         <div class="asker-email" id="askerEmailRow">
