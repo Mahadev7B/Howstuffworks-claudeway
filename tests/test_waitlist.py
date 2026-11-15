@@ -100,3 +100,48 @@ def test_home_says_three_free_lessons_without_a_free_month(site, monkeypatch):
     assert b"Your first 3 lessons are free" in page
     assert b"free month" not in page.lower()
     assert b"waitlist.js" in page
+
+
+def test_two_more_lessons_after_review_and_the_question_comes_back(site):
+    answer(site, "browsing")
+    for n in range(3):
+        ask(site, f"Lesson {n}?")
+    assert ask(site, "Lesson 4?").status_code == 402
+    assert askers.grant_bonus("mum@example.com", 2) is True
+    reply = ask(site, "Lesson 4?")
+    assert reply.status_code == 200
+    body = reply.get_json()
+    assert body["free_left"] == 1 and body["free_limit"] == 5
+    assert body["waitlist_choice"] is None  # Cleared, so the lesson page asks again.
+    assert ask(site, "Lesson 5?").get_json()["free_left"] == 0
+    blocked = ask(site, "Lesson 6?").get_json()
+    assert blocked["code"] == "waitlist" and "5 free lessons" in blocked["error"]
+
+
+def test_grant_needs_an_existing_email(site):
+    assert askers.grant_bonus("nobody@example.com", 2) is False
+
+
+def test_parent_can_ask_for_more_and_approval_clears_the_request(site):
+    for n in range(3):
+        ask(site, f"Lesson {n}?")
+    blocked = ask(site, "Lesson 4?").get_json()
+    assert blocked["code"] == "waitlist" and blocked["more_requested"] is False
+    sent = site.post("/api/more-lessons", json={"email": "mum@example.com", "parent_consent": True})
+    assert sent.get_json() == {"ok": True}
+    assert ask(site, "Lesson 4?").get_json()["more_requested"] is True
+    askers.grant_bonus("mum@example.com", 2)
+    assert askers.allowance("mum@example.com", "x")["more_requested"] is False
+    assert ask(site, "Lesson 4?").status_code == 200
+
+
+def test_more_lessons_needs_consent_and_a_known_email(site):
+    assert site.post("/api/more-lessons", json={"email": "mum@example.com"}).status_code == 400
+    assert site.post("/api/more-lessons", json={"email": "new@example.com", "parent_consent": True}).status_code == 404
+
+
+def test_limit_screen_has_the_ask_for_more_button(site, monkeypatch):
+    app_module = importlib.import_module("app")
+    monkeypatch.setattr(app_module.library, "list_published_cards", lambda: [])
+    page = site.get("/").data
+    assert b'id="moreBtn"' in page and b"Ask for 2 more free lessons" in page

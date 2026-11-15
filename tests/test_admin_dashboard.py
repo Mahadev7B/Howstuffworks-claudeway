@@ -69,8 +69,8 @@ def test_csv_download_has_every_asker_and_neutralises_formulas(admin, monkeypatc
     assert response.status_code == 200
     assert response.mimetype == "text/csv"
     text = response.data.decode()
-    assert text.splitlines()[0] == "email,first_seen,last_question,questions_asked,free_left,subscription_status,waitlist"
-    assert "mum@example.com,a,b,3,0,none," in text
+    assert text.splitlines()[0] == "email,first_seen,last_question,questions_asked,free_left,subscription_status,waitlist,asked_for_more"
+    assert "mum@example.com,a,b,3,0,none,," in text
     assert "'=cmd@example.com" in text
 
 
@@ -102,9 +102,9 @@ def test_asker_summary_counts_limits_and_subscribers():
         (3, 1, 2, 1),
         (0,),
         [("subscribe", 2)],
-        [("a@example.com", "d1", "d2", "none", 3, "subscribe"),
-         ("b@example.com", "d1", "d2", "none", 1, None),
-         ("c@example.com", "d1", "d2", "active", 7, "subscribe")],
+        [("a@example.com", "d1", "d2", "none", 3, "subscribe", 0, "2026-11-15 09:00"),
+         ("b@example.com", "d1", "d2", "none", 1, None, 0, None),
+         ("c@example.com", "d1", "d2", "active", 7, "subscribe", 0, None)],
     ])
     summary = db._admin_askers(cursor, db.today_start_local(), limit=2)
     assert summary["total"] == 3 and summary["subscribed"] == 1
@@ -114,6 +114,7 @@ def test_asker_summary_counts_limits_and_subscribers():
     assert len(summary["rows"]) == 2
     assert summary["waitlist"] == {"subscribe": 2, "browsing": 0, "price": 0}
     assert summary["rows"][0]["waitlist"] == "subscribe"
+    assert summary["more_requests"] == 1 and summary["rows"][0]["requested_more"] == "2026-11-15 09:00"
 
 
 def test_admin_delete_needs_csrf_and_removes_email(admin, monkeypatch):
@@ -140,3 +141,27 @@ def test_dashboard_shows_feedback_comments_escaped(admin):
     assert b"Written comments" in page
     assert b"&lt;b&gt;too long&lt;/b&gt;" in page
     assert b"<b>too long</b>" not in page
+
+
+def test_asker_summary_counts_bonus_lessons():
+    db = importlib.import_module("lesson_platform.db")
+    cursor = FakeCursor([(1, 0, 1, 0), (0,), [], [("a@example.com", "d1", "d2", "none", 3, None, 2, None)]])
+    summary = db._admin_askers(cursor, db.today_start_local(), limit=5)
+    assert summary["rows"][0]["free_left"] == 2 and summary["rows"][0]["bonus"] == 2
+    assert summary["at_limit"] == 0
+
+
+def test_admin_grant_needs_csrf_and_gives_two_lessons(admin, monkeypatch):
+    client, app_module = admin
+    monkeypatch.setattr(app_module.app, "secret_key", "test-secret-not-dev")
+    with client.session_transaction() as session:
+        session["admin"] = True
+    granted = []
+    monkeypatch.setattr(app_module.askers, "grant_bonus", lambda email, lessons: granted.append((email, lessons)) or True)
+    assert client.post("/admin/askers/grant", data={"email": "mum@example.com"}).status_code == 403
+    page = client.get("/admin").data.decode()
+    assert "Give 2 more lessons" in page
+    token = page.split('name="csrf_token" value="', 1)[1].split('"', 1)[0]
+    response = client.post("/admin/askers/grant", data={"email": "Mum@Example.com", "csrf_token": token})
+    assert response.status_code == 302 and "asker=granted" in response.headers["Location"]
+    assert granted == [("mum@example.com", 2)]

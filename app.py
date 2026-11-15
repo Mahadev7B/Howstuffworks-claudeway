@@ -722,7 +722,7 @@ def _asker_gate(raw_email: str | None, question: str, consent=None, token=None) 
         return email, None, ("asker_unavailable", ASKER_UNAVAILABLE_MESSAGE, 503)
     reason = allowance["reason"]
     if reason == "waitlist":
-        return email, allowance, ("waitlist", WAITLIST_MESSAGE.format(free=askers.FREE_QUESTIONS), 402)
+        return email, allowance, ("waitlist", WAITLIST_MESSAGE.format(free=allowance["free_limit"]), 402)
     if reason == "trial_available":
         message = TRIAL_AVAILABLE_MESSAGE.format(free=askers.FREE_QUESTIONS, daily=askers.TRIAL_DAILY_NEW)
         return email, allowance, ("trial_available", message, 402)
@@ -840,8 +840,9 @@ def api_lesson():
         code, message, status = refusal
         body = {"ok": False, "error": message, "code": code}
         if allowance is not None:
-            body.update(free_left=allowance["free_left"], free_limit=askers.FREE_QUESTIONS,
+            body.update(free_left=allowance["free_left"], free_limit=allowance["free_limit"],
                         waitlist_choice=allowance.get("waitlist_choice"),
+                        more_requested=allowance.get("more_requested", False),
                         subscribe_available=billing.enabled() and code == "subscription_required")
         return jsonify(body), status
 
@@ -857,14 +858,35 @@ def api_lesson():
         return jsonify({"ok": False, "error": err}), 500
     generated = bool(getattr(g, "lesson_generated", False))
     askers.record_question(email, question, generated=generated)
-    reply = {"ok": True, "lesson": data, "subscribed": allowance["subscribed"], "free_left": None, "new_left_today": None}
+    reply = {"ok": True, "lesson": data, "subscribed": allowance["subscribed"], "free_left": None, "new_left_today": None,
+             "free_limit": allowance["free_limit"], "waitlist_choice": allowance.get("waitlist_choice")}
     if allowance["subscribed"]:
         pass
     elif allowance["trial"] == "active":
         reply["new_left_today"] = max(allowance["new_left_today"] - (1 if generated and not allowance["repeat"] else 0), 0)
     else:
-        reply["free_left"] = max(askers.FREE_QUESTIONS - allowance["used"] - (0 if allowance["repeat"] else 1), 0)
+        reply["free_left"] = max(allowance["free_limit"] - allowance["used"] - (0 if allowance["repeat"] else 1), 0)
     return jsonify(reply)
+
+
+@app.post("/api/more-lessons")
+def api_more_lessons():
+    """A parent who used their free lessons asks to try a few more; the admin reviews it."""
+    payload = request.get_json(silent=True) or {}
+    email = askers.normalize_email(payload.get("email"))
+    refusal = _email_refusal(email, payload.get("parent_consent"), payload.get("email_token"))
+    if refusal is not None:
+        return jsonify({"ok": False, "code": refusal[0], "error": refusal[1]}), refusal[2]
+    if not ratelimit.allow("more-lessons", _client_ip(), 10):
+        return jsonify({"ok": False, "error": "Too many tries. Please wait a while and try again."}), 429
+    try:
+        saved = askers.request_more(email)
+    except Exception:
+        logger.exception("Could not save a request for more lessons")
+        return jsonify({"ok": False, "error": ASKER_UNAVAILABLE_MESSAGE}), 503
+    if not saved:
+        return jsonify({"ok": False, "error": "Please make a lesson first."}), 404
+    return jsonify({"ok": True})
 
 
 @app.post("/api/waitlist")
@@ -1719,6 +1741,7 @@ def admin_dashboard():
                            admin_tz=ADMIN_TZ, free_questions=askers.FREE_QUESTIONS,
                            excluded_cities=ADMIN_EXCLUDE_CITIES,
                            csrf_token=_library_csrf_token(), asker_result=request.args.get("asker"),
+                           mail_enabled=mailer.enabled(),
 )
 
 
@@ -1732,6 +1755,24 @@ def admin_delete_asker():
     return redirect(url_for("admin_dashboard", asker="deleted" if deleted else "not-found") + "#emails")
 
 
+@app.post("/admin/askers/grant")
+def admin_grant_asker():
+    """After reviewing a parent's email, give their address 2 more free lessons and ask the waitlist question again."""
+    if not _library_write_allowed():
+        return "Forbidden", 403
+    email = askers.normalize_email(request.form.get("email"))
+    granted = askers.grant_bonus(email, 2) if email else False
+    if granted and mailer.enabled():
+        try:
+            mailer.send(email, "You have 2 more AskLilOwl lessons", (
+                "Hello,\n\nGood news: we've added 2 more free lessons for you on AskLilOwl. "
+                "Ask Lil Owl a new question any time at https://www.asklilowl.com\n\n"
+                "Thanks for trying AskLilOwl!\nPrivacy questions: Asklilowl@gmail.com\n"))
+        except mailer.MailUnavailable:
+            logger.warning("Could not email the family about their extra lessons")
+    return redirect(url_for("admin_dashboard", asker="granted" if granted else "not-found") + "#emails")
+
+
 @app.get("/admin/askers.csv")
 def admin_askers_csv():
     """Download every asker's email and question count. Admin only."""
@@ -1742,13 +1783,15 @@ def admin_askers_csv():
     from lesson_platform.db import admin_askers_export
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(["email", "first_seen", "last_question", "questions_asked", "free_left", "subscription_status", "waitlist"])
+    writer.writerow(["email", "first_seen", "last_question", "questions_asked", "free_left", "subscription_status",
+                     "waitlist", "asked_for_more"])
     for row in admin_askers_export():
         email = row["email"]
         if email[:1] in ("=", "+", "-", "@"):
             email = "'" + email  # Keep spreadsheet apps from treating an email as a formula.
         writer.writerow([email, row["first_seen"], row["last_question"], row["questions"],
-                         "" if row["free_left"] is None else row["free_left"], row["status"], row.get("waitlist") or ""])
+                         "" if row["free_left"] is None else row["free_left"], row["status"], row.get("waitlist") or "",
+                         row.get("requested_more") or ""])
     return Response(buffer.getvalue(), mimetype="text/csv", headers={
         "Content-Disposition": 'attachment; filename="asklilowl-emails.csv"',
         "Cache-Control": "no-store",

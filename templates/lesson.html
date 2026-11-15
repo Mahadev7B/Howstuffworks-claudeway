@@ -365,12 +365,18 @@
       let waitlistShown = false;
       function lessonFinished() {
         if (waitlistShown || !window.Waitlist || window.Waitlist.answered()) return;
-        let left = '';
-        try { left = sessionStorage.getItem('asklilowl-free-left') || ''; } catch (e) {}
+        let left = '', limit = '';
+        try {
+          left = sessionStorage.getItem('asklilowl-free-left') || '';
+          limit = sessionStorage.getItem('asklilowl-free-limit') || '';
+        } catch (e) {}
         const n = parseInt(left, 10);
+        const usual = (parseInt(limit, 10) || {{ free_questions|default(3) }}) === {{ free_questions|default(3) }};
+        const lessonsLeft = n === 1 ? '1 free lesson left.' : n + ' free lessons left.';
         const intro = Number.isNaN(n) ? 'Your first {{ free_questions|default(3) }} lessons are free.'
           : (n === 0 ? "That was your last free lesson for now."
-             : 'Your first {{ free_questions|default(3) }} lessons are free. You have ' + n + ' left.');
+             : (usual ? 'Your first {{ free_questions|default(3) }} lessons are free. You have ' + n + ' left.'
+                      : 'You have ' + lessonsLeft));
         const box = document.getElementById('waitlistBox');
         if (window.Waitlist.render(box, { intro })) {
           waitlistShown = true;

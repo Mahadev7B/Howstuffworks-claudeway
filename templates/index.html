@@ -409,6 +409,11 @@
         <button type="button" id="cancelBtn" class="secondary">Stop</button>
       </div>
       <div class="waitlist" id="waitlistBox" hidden></div>
+      <div class="waitlist more-lessons" id="moreBox" hidden>
+        <p class="waitlist-question">Still want to try more?</p>
+        <button type="button" class="waitlist-choice" id="moreBtn">🙋 Ask for 2 more free lessons</button>
+        <p class="waitlist-status" id="moreStatus" role="status"></p>
+      </div>
       <p class="muted">While you wait — munch the dots! <span id="elapsed">0s</span></p>
       <canvas id="game" width="360" height="240" tabindex="0" aria-label="Car race mini game"></canvas>
       <p class="muted game-hint" id="gameHint">← → ▲ ▼ to move · <span id="gameStatus">Score: 0</span></p>
@@ -519,6 +524,29 @@
     const cancelBtn = document.getElementById('cancelBtn');
     const subscribeBtn = document.getElementById('subscribeBtn');
     const waitlistBox = document.getElementById('waitlistBox');
+    const moreBox = document.getElementById('moreBox');
+    const moreBtn = document.getElementById('moreBtn');
+    const moreStatus = document.getElementById('moreStatus');
+    const MORE_SENT = "Thanks! We'll review your request and let you know by email when your extra lessons are ready.";
+    function showMoreSent() { moreBox.replaceChildren(Object.assign(document.createElement('p'), { className: 'waitlist-thanks', textContent: MORE_SENT })); }
+    moreBtn.addEventListener('click', async () => {
+      const asker = window.AskerEmail ? await window.AskerEmail.confirm() : null;
+      if (!asker) return;
+      moreBtn.disabled = true;
+      moreStatus.textContent = 'Sending…';
+      try {
+        const res = await fetch('/api/more-lessons', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: asker.email, parent_consent: true, email_token: asker.token }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!data.ok) throw new Error(data.error || 'Please try again.');
+        showMoreSent();
+      } catch (e) {
+        moreStatus.textContent = 'Could not send: ' + e.message;
+        moreBtn.disabled = false;
+      }
+    });
     // A grown-up's subscription is paid on Stripe's own page; card details never reach this site.
     subscribeBtn.addEventListener('click', async () => {
       const asker = window.AskerEmail ? await window.AskerEmail.confirm() : null;
@@ -646,6 +674,7 @@
       openLessonBtn.hidden = true;
       subscribeBtn.hidden = true;
       waitlistBox.hidden = true;
+      moreBox.hidden = true;
       cancelBtn.hidden = false;
       cancelBtn.textContent = 'Stop';
       loadingMsg.textContent = 'Drawing your lesson…';
@@ -679,17 +708,25 @@
         clearInterval(activeTimer);
         activeTimer = null;
         if (data.ok && window.AskerEmail) window.AskerEmail.update(data);
-        if (data.ok) { try { sessionStorage.setItem('asklilowl-free-left', data.free_left == null ? '' : String(data.free_left)); } catch (e) {} }
+        if (data.ok) {
+          try {
+            sessionStorage.setItem('asklilowl-free-left', data.free_left == null ? '' : String(data.free_left));
+            sessionStorage.setItem('asklilowl-free-limit', data.free_limit == null ? '' : String(data.free_limit));
+          } catch (e) {}
+          if (window.Waitlist && 'waitlist_choice' in data) window.Waitlist.sync(data.waitlist_choice);
+        }
         if (!data.ok && (data.code === 'subscription_required' || data.code === 'email_required' || data.code === 'consent_required' || data.code === 'verify_required' || data.code === 'waitlist' || data.code === 'daily_limit' || data.code === 'asker_unavailable')) {
           loadingMsg.textContent = data.error;
           elapsed.textContent = '';
           openLessonBtn.hidden = true;
           subscribeBtn.hidden = !(data.code === 'subscription_required' && data.subscribe_available);
           if (data.code === 'waitlist' && window.Waitlist) {
-            if (data.waitlist_choice) window.Waitlist.remember(data.waitlist_choice);
+            window.Waitlist.sync(data.waitlist_choice || '');
             const answered = data.waitlist_choice || window.Waitlist.answered();
             if (answered) { waitlistBox.replaceChildren(); waitlistBox.hidden = false; waitlistBox.textContent = window.Waitlist.thanks(answered); }
             else window.Waitlist.render(waitlistBox, { allowSkip: false });
+            moreBox.hidden = false;
+            if (data.more_requested) showMoreSent();
           }
           cancelBtn.textContent = 'Back';
           if ((data.code === 'email_required' || data.code === 'consent_required') && window.AskerEmail) window.AskerEmail.forget();

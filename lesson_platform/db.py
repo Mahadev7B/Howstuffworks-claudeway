@@ -221,6 +221,8 @@ ALTER TABLE askers ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT;
 ALTER TABLE askers ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ;
 ALTER TABLE askers ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMPTZ;
 ALTER TABLE askers ADD COLUMN IF NOT EXISTS waitlist_choice TEXT;
+ALTER TABLE askers ADD COLUMN IF NOT EXISTS bonus_lessons INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE askers ADD COLUMN IF NOT EXISTS more_requested_at TIMESTAMPTZ;
 ALTER TABLE askers ADD COLUMN IF NOT EXISTS waitlist_at TIMESTAMPTZ;
 ALTER TABLE asker_questions ADD COLUMN IF NOT EXISTS generated BOOLEAN NOT NULL DEFAULT true;
 CREATE TABLE IF NOT EXISTS tts_audio (
@@ -944,7 +946,7 @@ _ADMIN_DEFAULTS = {
     "lessons_by_country": [],
     "lessons_by_region": [],
     "feedback": {"total": 0, "up": 0, "down": 0, "comments": 0, "last_30d": 0, "rows": [], "available": False},
-    "askers": {"total": 0, "new_today": 0, "new_7d": 0, "subscribed": 0, "on_free_month": 0, "waitlist": {"subscribe": 0, "browsing": 0, "price": 0}, "at_limit": 0,
+    "askers": {"total": 0, "new_today": 0, "new_7d": 0, "subscribed": 0, "on_free_month": 0, "waitlist": {"subscribe": 0, "browsing": 0, "price": 0}, "more_requests": 0, "at_limit": 0,
                "questions": 0, "rows": [], "available": False},
 }
 
@@ -988,24 +990,30 @@ def _admin_askers(cur, today_start: datetime, limit: int) -> dict[str, Any]:
                to_char(a.last_question_at AT TIME ZONE '{ADMIN_TZ}', 'YYYY-MM-DD HH24:MI'),
                a.subscription_status,
                COUNT(q.question_hash),
-               a.waitlist_choice
+               a.waitlist_choice,
+               a.bonus_lessons,
+               to_char(a.more_requested_at AT TIME ZONE '{ADMIN_TZ}', 'YYYY-MM-DD HH24:MI')
         FROM askers a
         LEFT JOIN asker_questions q ON q.email = a.email
-        GROUP BY a.email, a.created_at, a.last_question_at, a.subscription_status, a.waitlist_choice
-        ORDER BY a.last_question_at DESC
+        GROUP BY a.email, a.created_at, a.last_question_at, a.subscription_status, a.waitlist_choice, a.bonus_lessons, a.more_requested_at
+        ORDER BY (a.more_requested_at IS NULL), a.last_question_at DESC
     """)
     rows, at_limit, questions = [], 0, 0
-    for email, first_seen, last_question, status, asked, choice in cur.fetchall():
+    more_requests = 0
+    for email, first_seen, last_question, status, asked, choice, bonus, requested in cur.fetchall():
+        more_requests += 1 if requested else 0
+        free_limit = ASKER_FREE_QUESTIONS + int(bonus or 0)
         asked = int(asked or 0)
         questions += asked
         is_subscribed = status in _ACTIVE_SUBSCRIPTIONS
-        if not is_subscribed and asked >= ASKER_FREE_QUESTIONS:
+        if not is_subscribed and asked >= free_limit:
             at_limit += 1
         rows.append({"email": email, "first_seen": first_seen, "last_question": last_question,
                      "questions": asked, "status": status, "waitlist": choice,
-                     "free_left": None if is_subscribed else max(ASKER_FREE_QUESTIONS - asked, 0)})
+                     "bonus": int(bonus or 0), "requested_more": requested,
+                     "free_left": None if is_subscribed else max(free_limit - asked, 0)})
     return {"total": total, "new_today": new_today, "new_7d": new_7d, "subscribed": subscribed,
-            "on_free_month": on_free_month, "waitlist": waitlist, "at_limit": at_limit, "questions": questions, "rows": rows[:limit],
+            "on_free_month": on_free_month, "waitlist": waitlist, "more_requests": more_requests, "at_limit": at_limit, "questions": questions, "rows": rows[:limit],
             "available": True}
 
 

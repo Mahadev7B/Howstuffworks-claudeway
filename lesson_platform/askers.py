@@ -32,6 +32,8 @@ _memory_asked: dict[str, dict[str, tuple[float, bool]]] = {}  # email -> {questi
 _memory_status: dict[str, str] = {}
 _memory_trial: dict[str, float] = {}
 _memory_waitlist: dict[str, str] = {}
+_memory_bonus: dict[str, int] = {}
+_memory_requests: dict[str, float] = {}
 
 
 class AskerUnavailable(RuntimeError):
@@ -67,6 +69,8 @@ def allowance(email: str, question: str, is_saved=None) -> dict:
             status = _memory_status.get(email, "none")
             started_ts = _memory_trial.get(email)
             choice = _memory_waitlist.get(email)
+            bonus = _memory_bonus.get(email, 0)
+            requested = email in _memory_requests
             used, repeat = len(asked), qhash in asked
             # Only lessons made during the free month count toward its 24-hour limit.
             since = max(window_start.timestamp(), started_ts or 0)
@@ -77,10 +81,10 @@ def allowance(email: str, question: str, is_saved=None) -> dict:
     else:
         try:
             with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
-                cur.execute("SELECT subscription_status, trial_started_at, waitlist_choice FROM askers WHERE email = %s",
-                            (email,))
+                cur.execute("SELECT subscription_status, trial_started_at, waitlist_choice, bonus_lessons, "
+                            "more_requested_at IS NOT NULL FROM askers WHERE email = %s", (email,))
                 row = cur.fetchone()
-                status, started, choice = (row[0], row[1], row[2]) if row else ("none", None, None)
+                status, started, choice, bonus, requested = row if row else ("none", None, None, 0, False)
                 since = max(window_start, started) if started else window_start
                 cur.execute(
                     "SELECT COUNT(*), COUNT(*) FILTER (WHERE question_hash = %s), "
@@ -95,6 +99,7 @@ def allowance(email: str, question: str, is_saved=None) -> dict:
             logger.exception("Asker allowance check failed")
             raise AskerUnavailable(str(exc)) from exc
     used, new_today = int(used), int(new_today)
+    free_limit = FREE_QUESTIONS + int(bonus or 0)
     subscribed = status in _ACTIVE
     trial, trial_ends = _trial_state(started, now)
 
@@ -102,7 +107,7 @@ def allowance(email: str, question: str, is_saved=None) -> dict:
         reason = "subscribed"
     elif repeat:
         reason = "repeat"
-    elif used < FREE_QUESTIONS:
+    elif used < free_limit:
         reason = "free"
     elif trial == "active":
         if new_today < TRIAL_DAILY_NEW:
@@ -120,7 +125,8 @@ def allowance(email: str, question: str, is_saved=None) -> dict:
         reason = "waitlist"
     return {
         "used": used,
-        "free_left": max(FREE_QUESTIONS - used, 0),
+        "free_left": max(free_limit - used, 0),
+        "free_limit": free_limit,
         "subscribed": subscribed,
         "repeat": repeat,
         "trial": trial,
@@ -132,6 +138,7 @@ def allowance(email: str, question: str, is_saved=None) -> dict:
                             if oldest is not None and new_today >= TRIAL_DAILY_NEW else None),
         "reason": reason,
         "waitlist_choice": choice,
+        "more_requested": bool(requested),
         "allowed": reason in ("subscribed", "repeat", "free", "trial", "saved_copy"),
     }
 
@@ -201,6 +208,38 @@ def set_waitlist(email: str, choice: str) -> None:
         )
 
 
+def request_more(email: str) -> bool:
+    """A parent who used their free lessons asks for more. Returns False if the email is unknown."""
+    if db._pool is None:
+        with _memory_lock:
+            if email not in _memory_asked:
+                return False
+            _memory_requests.setdefault(email, time.time())
+            return True
+    with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        cur.execute("UPDATE askers SET more_requested_at = COALESCE(more_requested_at, NOW()) WHERE email = %s", (email,))
+        return cur.rowcount > 0
+
+
+def grant_bonus(email: str, lessons: int = 2) -> bool:
+    """Give an email more free lessons and clear its waitlist answer so the question is asked again."""
+    if db._pool is None:
+        with _memory_lock:
+            if email not in _memory_asked and email not in _memory_waitlist:
+                return False
+            _memory_bonus[email] = _memory_bonus.get(email, 0) + lessons
+            _memory_waitlist.pop(email, None)
+            _memory_requests.pop(email, None)
+            return True
+    with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE askers SET bonus_lessons = bonus_lessons + %s, waitlist_choice = NULL, waitlist_at = NULL, "
+            "more_requested_at = NULL WHERE email = %s",
+            (lessons, email),
+        )
+        return cur.rowcount > 0
+
+
 def set_subscription(email: str, status: str, customer_id: str | None = None,
                      subscription_id: str | None = None) -> None:
     """Record what Stripe says about this email's subscription."""
@@ -230,6 +269,8 @@ def delete_asker(email: str) -> bool:
         with _memory_lock:
             existed = email in _memory_asked or email in _memory_status or email in _memory_trial
             _memory_waitlist.pop(email, None)
+            _memory_bonus.pop(email, None)
+            _memory_requests.pop(email, None)
             _memory_asked.pop(email, None)
             _memory_status.pop(email, None)
             _memory_trial.pop(email, None)
@@ -250,3 +291,5 @@ def reset_memory() -> None:
         _memory_status.clear()
         _memory_trial.clear()
         _memory_waitlist.clear()
+        _memory_bonus.clear()
+        _memory_requests.clear()

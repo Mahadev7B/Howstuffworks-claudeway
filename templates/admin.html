@@ -131,7 +131,12 @@
       <div class="col-6 col-lg-3"><div class="card card-stat p-3"><div class="label">Waitlist: want to subscribe</div><div class="value">{{ wl.subscribe }}</div><div class="small text-muted">{{ wl.browsing }} just trying it · {{ wl.price }} price too high · {{ ak.at_limit }} used all free lessons</div></div></div>
       <div class="col-6 col-lg-3"><div class="card card-stat p-3"><div class="label">Subscribers</div><div class="value">{{ ak.subscribed }}</div><div class="small text-muted">paying $4.99 a month</div></div></div>
     </div>
-    {% if asker_result == 'deleted' %}
+    {% if ak.get('more_requests') %}
+      <div class="alert alert-info py-2">🙋 {{ ak.more_requests }} {{ 'family has' if ak.more_requests == 1 else 'families have' }} asked for more free lessons. They're at the top of the list; press "Give 2 more lessons" to approve.</div>
+    {% endif %}
+    {% if asker_result == 'granted' %}
+      <div class="alert alert-success py-2">Gave that email 2 more free lessons. They'll see the waitlist question again after their next lesson{% if mail_enabled %}, and we emailed them to say the lessons are ready{% else %}. Email isn't set up yet, so let them know yourself{% endif %}.</div>
+    {% elif asker_result == 'deleted' %}
       <div class="alert alert-success py-2">Deleted that email and the questions linked to it.</div>
     {% elif asker_result == 'not-found' %}
       <div class="alert alert-warning py-2">That email wasn't found, so nothing was deleted.</div>
@@ -156,9 +161,14 @@
                 <td>{{ r.questions }}</td>
                 <td>{{ '—' if r.free_left is none else r.free_left }}</td>
                 <td>{% if r.free_left is none %}<span class="badge bg-success">Subscriber</span>{% elif r.free_left == 0 %}<span class="badge bg-warning text-dark">Free used up</span>{% else %}<span class="badge bg-light text-dark">Free</span>{% endif %}</td>
-                <td class="nowrap small">{{ {'subscribe': '⭐ Wants to subscribe', 'browsing': '👀 Just trying', 'price': '💬 Price too high'}.get(r.get('waitlist'), '—') }}</td>
+                <td class="nowrap small">{{ {'subscribe': '⭐ Wants to subscribe', 'browsing': '👀 Just trying', 'price': '💬 Price too high'}.get(r.get('waitlist'), '—') }}{% if r.get('requested_more') %}<br><span class="badge bg-info text-dark">🙋 Asked for more {{ r.requested_more }}</span>{% endif %}</td>
                 <td class="nowrap">
-                  <form method="post" action="{{ url_for('admin_delete_asker') }}" class="asker-delete">
+                  <form method="post" action="{{ url_for('admin_grant_asker') }}" class="asker-grant d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="email" value="{{ r.email }}">
+                    <button type="submit" class="btn btn-sm btn-outline-success">Give 2 more lessons</button>
+                  </form>
+                  <form method="post" action="{{ url_for('admin_delete_asker') }}" class="asker-delete d-inline">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <input type="hidden" name="email" value="{{ r.email }}">
                     <button type="submit" class="btn btn-sm btn-outline-danger">Delete</button>
@@ -414,6 +424,10 @@
       emailCount.textContent = query ? shown + ' matching' : emailCountText;
     });
 
+    document.querySelectorAll('form.asker-grant').forEach(form => form.addEventListener('submit', (event) => {
+      const email = form.querySelector('[name=email]').value;
+      if (!confirm('Give ' + email + ' 2 more free lessons? They\'ll be asked the waitlist question again.')) event.preventDefault();
+    }));
     document.querySelectorAll('form.asker-delete').forEach(form => form.addEventListener('submit', (event) => {
       const email = form.querySelector('[name=email]').value;
       if (!confirm('Delete ' + email + ' and its question history? This cannot be undone.')) event.preventDefault();

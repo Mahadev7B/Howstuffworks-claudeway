@@ -34,6 +34,8 @@
   window.Waitlist = {
     answered() { return read(CHOICE_KEY); },
     remember(choice) { try { if (choice) localStorage.setItem(CHOICE_KEY, choice); } catch (e) {} },
+    // The server's answer wins: after an admin grant it's empty again, so the question comes back.
+    sync(choice) { try { choice ? localStorage.setItem(CHOICE_KEY, choice) : localStorage.removeItem(CHOICE_KEY); } catch (e) {} },
     thanks(choice) { return THANKS[choice] || ''; },
     // Fill `box` with the question. `intro` is shown above it; `allowSkip` adds "Maybe later".
     render(box, { intro = '', allowSkip = true } = {}) {
