@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='library.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='home.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='waitlist.css') }}">
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
@@ -360,7 +361,7 @@
         <div class="asker-email" id="askerEmailRow">
           <label for="askerEmail">Grown-up's email</label>
           <input type="email" name="email" id="askerEmail" placeholder="parent@example.com" required autocomplete="email" maxlength="254">
-          <p class="asker-note">No password needed.{% if email_verification %} We'll email a 6-digit code to confirm it.{% endif %} We remember it on this device. {{ free_questions }} free questions, then a free month with up to 5 new questions every 24 hours.</p>
+          <p class="asker-note">No password needed.{% if email_verification %} We'll email a 6-digit code to confirm it.{% endif %} We remember it on this device. Your first {{ free_questions }} lessons are free.</p>
           <label class="asker-consent"><input type="checkbox" name="parent_consent" value="yes" id="askerConsent" required> <span>I'm a parent or guardian, I'll stay with my child while they use AskLilOwl, and I agree to the <a href="{{ url_for('privacy') }}" target="_blank" rel="noopener">privacy policy</a>.</span></label>
         </div>
         <p class="asker-saved" id="askerSaved" hidden>Asking as <strong id="askerSavedEmail"></strong> · <button type="button" id="askerChange">Change</button></p>
@@ -404,10 +405,10 @@
       <p id="loadingMsg">Drawing your lesson…</p>
       <div class="loading-actions">
         <button type="button" id="openLessonBtn" class="primary big-btn" hidden>Open Lesson →</button>
-        <button type="button" id="trialBtn" class="primary big-btn" hidden>Start my free month</button>
         <button type="button" id="subscribeBtn" class="primary big-btn" hidden>Subscribe for $4.99 a month</button>
         <button type="button" id="cancelBtn" class="secondary">Stop</button>
       </div>
+      <div class="waitlist" id="waitlistBox" hidden></div>
       <p class="muted">While you wait — munch the dots! <span id="elapsed">0s</span></p>
       <canvas id="game" width="360" height="240" tabindex="0" aria-label="Car race mini game"></canvas>
       <p class="muted game-hint" id="gameHint">← → ▲ ▼ to move · <span id="gameStatus">Score: 0</span></p>
@@ -517,31 +518,7 @@
     const openLessonBtn = document.getElementById('openLessonBtn');
     const cancelBtn = document.getElementById('cancelBtn');
     const subscribeBtn = document.getElementById('subscribeBtn');
-    const trialBtn = document.getElementById('trialBtn');
-    let lastQuestion = '';
-    // One free month per family: up to 5 new lessons a day, no card.
-    trialBtn.addEventListener('click', async () => {
-      const asker = window.AskerEmail ? await window.AskerEmail.confirm() : null;
-      if (!asker) { loading.hidden = true; return; }
-      trialBtn.disabled = true;
-      try {
-        const res = await fetch('/api/trial/start', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: asker.email, parent_consent: true, email_token: asker.token }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (data.code === 'verify_required' && window.AskerEmail) window.AskerEmail.forgetToken();
-        if (data.ok || data.code === 'trial_used') {
-          trialBtn.hidden = true;
-          if (data.ok && lastQuestion) { userInitiated = true; askQuestion(lastQuestion); return; }
-        }
-        loadingMsg.textContent = data.ok ? 'Your free month has started!' : (data.error || 'Please try again.');
-      } catch (e) {
-        loadingMsg.textContent = 'Network error. Please try again.';
-      } finally {
-        trialBtn.disabled = false;
-      }
-    });
+    const waitlistBox = document.getElementById('waitlistBox');
     // A grown-up's subscription is paid on Stripe's own page; card details never reach this site.
     subscribeBtn.addEventListener('click', async () => {
       const asker = window.AskerEmail ? await window.AskerEmail.confirm() : null;
@@ -666,10 +643,9 @@
       // Reset state for a fresh request
       cancelled = false;
       slide1AudioBytes = null;
-      lastQuestion = question;
       openLessonBtn.hidden = true;
       subscribeBtn.hidden = true;
-      trialBtn.hidden = true;
+      waitlistBox.hidden = true;
       cancelBtn.hidden = false;
       cancelBtn.textContent = 'Stop';
       loadingMsg.textContent = 'Drawing your lesson…';
@@ -703,12 +679,18 @@
         clearInterval(activeTimer);
         activeTimer = null;
         if (data.ok && window.AskerEmail) window.AskerEmail.update(data);
-        if (!data.ok && (data.code === 'subscription_required' || data.code === 'email_required' || data.code === 'consent_required' || data.code === 'verify_required' || data.code === 'trial_available' || data.code === 'daily_limit' || data.code === 'asker_unavailable')) {
+        if (data.ok) { try { sessionStorage.setItem('asklilowl-free-left', data.free_left == null ? '' : String(data.free_left)); } catch (e) {} }
+        if (!data.ok && (data.code === 'subscription_required' || data.code === 'email_required' || data.code === 'consent_required' || data.code === 'verify_required' || data.code === 'waitlist' || data.code === 'daily_limit' || data.code === 'asker_unavailable')) {
           loadingMsg.textContent = data.error;
           elapsed.textContent = '';
           openLessonBtn.hidden = true;
           subscribeBtn.hidden = !(data.code === 'subscription_required' && data.subscribe_available);
-          trialBtn.hidden = data.code !== 'trial_available';
+          if (data.code === 'waitlist' && window.Waitlist) {
+            if (data.waitlist_choice) window.Waitlist.remember(data.waitlist_choice);
+            const answered = data.waitlist_choice || window.Waitlist.answered();
+            if (answered) { waitlistBox.replaceChildren(); waitlistBox.hidden = false; waitlistBox.textContent = window.Waitlist.thanks(answered); }
+            else window.Waitlist.render(waitlistBox, { allowSkip: false });
+          }
           cancelBtn.textContent = 'Back';
           if ((data.code === 'email_required' || data.code === 'consent_required') && window.AskerEmail) window.AskerEmail.forget();
           if (data.code === 'verify_required' && window.AskerEmail) window.AskerEmail.forgetToken();
@@ -1084,5 +1066,6 @@
     });
   </script>
   <script src="{{ url_for('static', filename='home.js') }}"></script>
+  <script src="{{ url_for('static', filename='waitlist.js') }}"></script>
 </body>
 </html>

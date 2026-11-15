@@ -53,6 +53,7 @@
     {% else %}
     {% set ov = data.overview %}
     {% set ak = data.askers %}
+    {% set wl = ak.get('waitlist') or {'subscribe': 0, 'browsing': 0, 'price': 0} %}
 
     <h2 class="h5 mb-1">Today</h2>
     <p class="section-note mb-3">Since {{ ov.today_start_iso[:16].replace('T', ' ') }}. "New lessons" are lessons made from a question; asking a question that already has a lesson reuses the saved copy for free.</p>
@@ -120,14 +121,14 @@
     </div>
 
     <h2 class="h5 mt-5 mb-1" id="emails">Emails</h2>
-    <p class="section-note mb-3">Grown-ups' emails given before asking a question. Each email gets {{ free_questions }} free questions; asking the same question again doesn't count. Questions asked before emails were required aren't linked to anyone.</p>
+    <p class="section-note mb-3">Grown-ups' emails given before asking a question. Each email gets {{ free_questions }} free lessons; asking the same question again, or one another family already asked, doesn't count. Questions asked before emails were required aren't linked to anyone.</p>
     {% if not ak.available %}
       <div class="alert alert-warning">The email list couldn't be loaded just now. Reload the page to try again.</div>
     {% endif %}
     <div class="row g-3 mb-3">
       <div class="col-6 col-lg-3"><div class="card card-stat p-3"><div class="label">Unique emails</div><div class="value">{{ ak.total }}</div><div class="small text-muted">{{ ak.new_today }} new today · {{ ak.new_7d }} this week</div></div></div>
       <div class="col-6 col-lg-3"><div class="card card-stat p-3"><div class="label">Questions from emails</div><div class="value">{{ ak.questions }}</div><div class="small text-muted">different questions, all time</div></div></div>
-      <div class="col-6 col-lg-3"><div class="card card-stat p-3"><div class="label">On the free month</div><div class="value">{{ ak.on_free_month }}</div><div class="small text-muted">{{ ak.at_limit }} have used their {{ free_questions }} free questions</div></div></div>
+      <div class="col-6 col-lg-3"><div class="card card-stat p-3"><div class="label">Waitlist: want to subscribe</div><div class="value">{{ wl.subscribe }}</div><div class="small text-muted">{{ wl.browsing }} just trying it · {{ wl.price }} price too high · {{ ak.at_limit }} used all free lessons</div></div></div>
       <div class="col-6 col-lg-3"><div class="card card-stat p-3"><div class="label">Subscribers</div><div class="value">{{ ak.subscribed }}</div><div class="small text-muted">paying $4.99 a month</div></div></div>
     </div>
     {% if asker_result == 'deleted' %}
@@ -145,7 +146,7 @@
       </div>
       <div class="table-responsive scroll-table">
         <table class="table table-sm table-hover mb-0">
-          <thead class="table-light"><tr><th>Email</th><th class="nowrap">First seen</th><th class="nowrap">Last question</th><th class="nowrap">Questions</th><th class="nowrap">Free left</th><th>Plan</th><th><span class="visually-hidden">Delete</span></th></tr></thead>
+          <thead class="table-light"><tr><th>Email</th><th class="nowrap">First seen</th><th class="nowrap">Last question</th><th class="nowrap">Questions</th><th class="nowrap">Free left</th><th>Plan</th><th>Waitlist</th><th><span class="visually-hidden">Delete</span></th></tr></thead>
           <tbody id="emailRows">
             {% for r in ak.rows %}
               <tr data-email="{{ r.email }}">
@@ -155,6 +156,7 @@
                 <td>{{ r.questions }}</td>
                 <td>{{ '—' if r.free_left is none else r.free_left }}</td>
                 <td>{% if r.free_left is none %}<span class="badge bg-success">Subscriber</span>{% elif r.free_left == 0 %}<span class="badge bg-warning text-dark">Free used up</span>{% else %}<span class="badge bg-light text-dark">Free</span>{% endif %}</td>
+                <td class="nowrap small">{{ {'subscribe': '⭐ Wants to subscribe', 'browsing': '👀 Just trying', 'price': '💬 Price too high'}.get(r.get('waitlist'), '—') }}</td>
                 <td class="nowrap">
                   <form method="post" action="{{ url_for('admin_delete_asker') }}" class="asker-delete">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -164,7 +166,7 @@
                 </td>
               </tr>
             {% else %}
-              <tr><td colspan="7" class="text-muted">No emails yet.</td></tr>
+              <tr><td colspan="8" class="text-muted">No emails yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>

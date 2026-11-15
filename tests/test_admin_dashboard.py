@@ -69,8 +69,8 @@ def test_csv_download_has_every_asker_and_neutralises_formulas(admin, monkeypatc
     assert response.status_code == 200
     assert response.mimetype == "text/csv"
     text = response.data.decode()
-    assert text.splitlines()[0] == "email,first_seen,last_question,questions_asked,free_left,subscription_status"
-    assert "mum@example.com,a,b,3,0,none" in text
+    assert text.splitlines()[0] == "email,first_seen,last_question,questions_asked,free_left,subscription_status,waitlist"
+    assert "mum@example.com,a,b,3,0,none," in text
     assert "'=cmd@example.com" in text
 
 
@@ -101,9 +101,10 @@ def test_asker_summary_counts_limits_and_subscribers():
     cursor = FakeCursor([
         (3, 1, 2, 1),
         (0,),
-        [("a@example.com", "d1", "d2", "none", 3),
-         ("b@example.com", "d1", "d2", "none", 1),
-         ("c@example.com", "d1", "d2", "active", 7)],
+        [("subscribe", 2)],
+        [("a@example.com", "d1", "d2", "none", 3, "subscribe"),
+         ("b@example.com", "d1", "d2", "none", 1, None),
+         ("c@example.com", "d1", "d2", "active", 7, "subscribe")],
     ])
     summary = db._admin_askers(cursor, db.today_start_local(), limit=2)
     assert summary["total"] == 3 and summary["subscribed"] == 1
@@ -111,6 +112,8 @@ def test_asker_summary_counts_limits_and_subscribers():
     assert summary["questions"] == 11
     assert [r["free_left"] for r in summary["rows"]] == [0, 2]
     assert len(summary["rows"]) == 2
+    assert summary["waitlist"] == {"subscribe": 2, "browsing": 0, "price": 0}
+    assert summary["rows"][0]["waitlist"] == "subscribe"
 
 
 def test_admin_delete_needs_csrf_and_removes_email(admin, monkeypatch):

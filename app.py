@@ -505,7 +505,7 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
         return None, blocked
 
     started = time.time()
-    g.lesson_generated = True  # A new lesson is being made (counts toward the free month's daily limit).
+    g.lesson_generated = True  # A new lesson is being made (saved copies don't count as new).
     try:
         data = generate_lesson(question, settings)
     except Exception as exc:  # noqa: BLE001
@@ -687,11 +687,12 @@ DAILY_LIMIT_MESSAGE = (
     "Questions other families already asked still work."
 )
 TRIAL_ENDED_MESSAGE = "Your free month has ended. Subscriptions are coming soon."
+WAITLIST_MESSAGE = "That's your {free} free lessons! Subscriptions with unlimited lessons are coming soon."
 SUBSCRIPTION_MESSAGE = (
     "You've used your {free} free questions. A $4.99 monthly subscription "
     "unlocks more questions."
 )
-ASKER_UNAVAILABLE_MESSAGE = "We couldn't check your free questions just now. Please try again."
+ASKER_UNAVAILABLE_MESSAGE = "We couldn't check your free lessons just now. Please try again."
 
 
 def _consent_given(value) -> bool:
@@ -720,6 +721,8 @@ def _asker_gate(raw_email: str | None, question: str, consent=None, token=None) 
     except askers.AskerUnavailable:
         return email, None, ("asker_unavailable", ASKER_UNAVAILABLE_MESSAGE, 503)
     reason = allowance["reason"]
+    if reason == "waitlist":
+        return email, allowance, ("waitlist", WAITLIST_MESSAGE.format(free=askers.FREE_QUESTIONS), 402)
     if reason == "trial_available":
         message = TRIAL_AVAILABLE_MESSAGE.format(free=askers.FREE_QUESTIONS, daily=askers.TRIAL_DAILY_NEW)
         return email, allowance, ("trial_available", message, 402)
@@ -838,6 +841,7 @@ def api_lesson():
         body = {"ok": False, "error": message, "code": code}
         if allowance is not None:
             body.update(free_left=allowance["free_left"], free_limit=askers.FREE_QUESTIONS,
+                        waitlist_choice=allowance.get("waitlist_choice"),
                         subscribe_available=billing.enabled() and code == "subscription_required")
         return jsonify(body), status
 
@@ -863,7 +867,25 @@ def api_lesson():
     return jsonify(reply)
 
 
-@app.post("/api/trial/start")
+@app.post("/api/waitlist")
+def api_waitlist():
+    """Save the grown-up's answer to "when subscriptions open, which sounds like you?"."""
+    payload = request.get_json(silent=True) or {}
+    email = askers.normalize_email(payload.get("email"))
+    refusal = _email_refusal(email, payload.get("parent_consent"), payload.get("email_token"))
+    if refusal is not None:
+        return jsonify({"ok": False, "code": refusal[0], "error": refusal[1]}), refusal[2]
+    choice = str(payload.get("choice") or "")
+    if choice not in askers.WAITLIST_CHOICES:
+        return jsonify({"ok": False, "error": "Please pick one of the answers."}), 400
+    try:
+        askers.set_waitlist(email, choice)
+    except Exception:
+        logger.exception("Could not save a waitlist answer")
+        return jsonify({"ok": False, "error": ASKER_UNAVAILABLE_MESSAGE}), 503
+    return jsonify({"ok": True, "choice": choice})
+
+
 def api_trial_start():
     """Start a family's one free month (no card needed)."""
     payload = request.get_json(silent=True) or {}
@@ -1720,13 +1742,13 @@ def admin_askers_csv():
     from lesson_platform.db import admin_askers_export
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(["email", "first_seen", "last_question", "questions_asked", "free_left", "subscription_status"])
+    writer.writerow(["email", "first_seen", "last_question", "questions_asked", "free_left", "subscription_status", "waitlist"])
     for row in admin_askers_export():
         email = row["email"]
         if email[:1] in ("=", "+", "-", "@"):
             email = "'" + email  # Keep spreadsheet apps from treating an email as a formula.
         writer.writerow([email, row["first_seen"], row["last_question"], row["questions"],
-                         "" if row["free_left"] is None else row["free_left"], row["status"]])
+                         "" if row["free_left"] is None else row["free_left"], row["status"], row.get("waitlist") or ""])
     return Response(buffer.getvalue(), mimetype="text/csv", headers={
         "Content-Disposition": 'attachment; filename="asklilowl-emails.csv"',
         "Cache-Control": "no-store",

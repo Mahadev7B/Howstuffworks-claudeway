@@ -45,6 +45,7 @@
   </style>
   <link rel="stylesheet" href="{{ url_for('static', filename='lesson-cast.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='cinema-theme.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='waitlist.css') }}">
 </head>
 <body class="cinema-page">
   <main class="lesson">
@@ -122,6 +123,8 @@
       </div>
       <button id="nextBtn">Next →</button>
     </nav>
+
+    <section class="waitlist" id="waitlistBox" hidden aria-live="polite"></section>
 
     <section class="feedback" id="feedback" data-question="{{ question }}">
       <h3>Did this lesson help?</h3>
@@ -354,6 +357,24 @@
         } else {
           setAuto(false);
           statusEl.textContent = 'All done! Press play to watch again.';
+          lessonFinished();
+        }
+      }
+
+      // When a lesson ends, ask the grown-up the waitlist question until they've answered it.
+      let waitlistShown = false;
+      function lessonFinished() {
+        if (waitlistShown || !window.Waitlist || window.Waitlist.answered()) return;
+        let left = '';
+        try { left = sessionStorage.getItem('asklilowl-free-left') || ''; } catch (e) {}
+        const n = parseInt(left, 10);
+        const intro = Number.isNaN(n) ? 'Your first {{ free_questions|default(3) }} lessons are free.'
+          : (n === 0 ? "That was your last free lesson for now."
+             : 'Your first {{ free_questions|default(3) }} lessons are free. You have ' + n + ' left.');
+        const box = document.getElementById('waitlistBox');
+        if (window.Waitlist.render(box, { intro })) {
+          waitlistShown = true;
+          box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
       }
 
@@ -381,13 +402,17 @@
           return;
         }
         setAuto(false);
-        speakCurrent(() => { statusEl.textContent = 'Done. Press play to hear again.'; });
+        speakCurrent(() => {
+          statusEl.textContent = 'Done. Press play to hear again.';
+          if (current === total - 1) lessonFinished();
+        });
       });
 
       function manualNav(delta) {
         if (autoMode) { setAuto(false); stopAllAudio(); }
         show(current + delta);
         statusEl.textContent = 'Slide ' + (current + 1) + ' of ' + total + '.';
+        if (current === total - 1) lessonFinished();
       }
 
       prevBtn.addEventListener('click', () => manualNav(-1));
@@ -797,5 +822,6 @@
       });
     })();
   </script>
+  <script src="{{ url_for('static', filename='waitlist.js') }}"></script>
 </body>
 </html>

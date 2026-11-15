@@ -220,6 +220,8 @@ ALTER TABLE feedback ALTER COLUMN rating DROP NOT NULL;
 ALTER TABLE askers ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT;
 ALTER TABLE askers ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ;
 ALTER TABLE askers ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMPTZ;
+ALTER TABLE askers ADD COLUMN IF NOT EXISTS waitlist_choice TEXT;
+ALTER TABLE askers ADD COLUMN IF NOT EXISTS waitlist_at TIMESTAMPTZ;
 ALTER TABLE asker_questions ADD COLUMN IF NOT EXISTS generated BOOLEAN NOT NULL DEFAULT true;
 CREATE TABLE IF NOT EXISTS tts_audio (
   text_hash  TEXT PRIMARY KEY,
@@ -942,7 +944,7 @@ _ADMIN_DEFAULTS = {
     "lessons_by_country": [],
     "lessons_by_region": [],
     "feedback": {"total": 0, "up": 0, "down": 0, "comments": 0, "last_30d": 0, "rows": [], "available": False},
-    "askers": {"total": 0, "new_today": 0, "new_7d": 0, "subscribed": 0, "on_free_month": 0, "at_limit": 0,
+    "askers": {"total": 0, "new_today": 0, "new_7d": 0, "subscribed": 0, "on_free_month": 0, "waitlist": {"subscribe": 0, "browsing": 0, "price": 0}, "at_limit": 0,
                "questions": 0, "rows": [], "available": False},
 }
 
@@ -977,29 +979,33 @@ def _admin_askers(cur, today_start: datetime, limit: int) -> dict[str, Any]:
         WHERE trial_started_at > NOW() - INTERVAL '30 days' AND NOT (subscription_status = ANY(%s))
     """, (_ACTIVE_SUBSCRIPTIONS,))
     on_free_month = int(cur.fetchone()[0] or 0)
+    cur.execute("SELECT waitlist_choice, COUNT(*) FROM askers WHERE waitlist_choice IS NOT NULL GROUP BY 1")
+    waitlist = {"subscribe": 0, "browsing": 0, "price": 0}
+    waitlist.update({choice: int(n) for choice, n in cur.fetchall()})
     cur.execute(f"""
         SELECT a.email,
                to_char(a.created_at AT TIME ZONE '{ADMIN_TZ}', 'YYYY-MM-DD HH24:MI'),
                to_char(a.last_question_at AT TIME ZONE '{ADMIN_TZ}', 'YYYY-MM-DD HH24:MI'),
                a.subscription_status,
-               COUNT(q.question_hash)
+               COUNT(q.question_hash),
+               a.waitlist_choice
         FROM askers a
         LEFT JOIN asker_questions q ON q.email = a.email
-        GROUP BY a.email, a.created_at, a.last_question_at, a.subscription_status
+        GROUP BY a.email, a.created_at, a.last_question_at, a.subscription_status, a.waitlist_choice
         ORDER BY a.last_question_at DESC
     """)
     rows, at_limit, questions = [], 0, 0
-    for email, first_seen, last_question, status, asked in cur.fetchall():
+    for email, first_seen, last_question, status, asked, choice in cur.fetchall():
         asked = int(asked or 0)
         questions += asked
         is_subscribed = status in _ACTIVE_SUBSCRIPTIONS
         if not is_subscribed and asked >= ASKER_FREE_QUESTIONS:
             at_limit += 1
         rows.append({"email": email, "first_seen": first_seen, "last_question": last_question,
-                     "questions": asked, "status": status,
+                     "questions": asked, "status": status, "waitlist": choice,
                      "free_left": None if is_subscribed else max(ASKER_FREE_QUESTIONS - asked, 0)})
     return {"total": total, "new_today": new_today, "new_7d": new_7d, "subscribed": subscribed,
-            "on_free_month": on_free_month, "at_limit": at_limit, "questions": questions, "rows": rows[:limit],
+            "on_free_month": on_free_month, "waitlist": waitlist, "at_limit": at_limit, "questions": questions, "rows": rows[:limit],
             "available": True}
 
 

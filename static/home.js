@@ -122,7 +122,7 @@
       if (data.subscribed) return;
       const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
       if (typeof data.free_left === 'number') {
-        savedEmail.textContent = field.value + ' (' + plural(data.free_left, 'free question') + ' left)';
+        savedEmail.textContent = field.value + ' (' + plural(data.free_left, 'free lesson') + ' left)';
       } else if (typeof data.new_left_today === 'number') {
         savedEmail.textContent = field.value + ' (free month: ' + plural(data.new_left_today, 'new question') + ' left for now)';
       }

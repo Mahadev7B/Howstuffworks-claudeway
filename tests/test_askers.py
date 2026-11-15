@@ -39,7 +39,7 @@ def test_question_without_valid_email_is_refused_before_generation(site, email):
     assert site.generated == []
 
 
-def test_three_free_questions_then_free_month_offer(site):
+def test_three_free_lessons_then_waitlist(site):
     for number, left in ((1, 2), (2, 1), (3, 0)):
         response = ask(site, f"Question number {number}?")
         assert response.status_code == 200
@@ -47,8 +47,8 @@ def test_three_free_questions_then_free_month_offer(site):
     blocked = ask(site, "Question number 4?")
     assert blocked.status_code == 402
     body = blocked.get_json()
-    assert body["code"] == "trial_available"
-    assert "free month" in body["error"]
+    assert body["code"] == "waitlist"
+    assert "free lessons" in body["error"] and "free month" not in body["error"]
     assert body["free_left"] == 0
     assert len(site.generated) == 3
 
@@ -100,7 +100,7 @@ def test_home_form_asks_for_email_without_password(site, monkeypatch):
     monkeypatch.setattr(app_module.library, "list_published_cards", lambda: [])
     page = site.get("/").data
     assert b'type="email" name="email"' in page
-    assert b"free month" in page
+    assert b"first 3 lessons are free" in page and b"free month" not in page
     assert b'type="password"' not in page
 
 

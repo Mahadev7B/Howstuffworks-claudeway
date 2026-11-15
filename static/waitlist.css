@@ -1,0 +1,14 @@
+/* Subscription waitlist question, in the Cinema night colours. */
+.waitlist { max-width: 560px; margin: 16px auto 0; padding: 16px 18px; border-radius: 14px; background: #2C2C2A; color: #F1EFE8; text-align: left; font-family: Nunito, system-ui, sans-serif; }
+.waitlist[hidden] { display: none; }
+main.lesson > .waitlist { max-width: none; margin: 1rem 0 0; }
+.waitlist p { margin: 0 0 10px; line-height: 1.45; }
+.waitlist .waitlist-intro { font-family: 'Baloo 2', sans-serif; font-size: 1.15rem; font-weight: 700; color: #FAC775; }
+.waitlist .waitlist-question { font-weight: 700; }
+.waitlist-choices { display: flex; flex-direction: column; gap: 8px; }
+.waitlist .waitlist-choice { width: 100%; min-height: 44px; padding: 10px 14px; border: 1px solid #5F5E5A; border-radius: 10px; background: #141414; color: #F1EFE8; font: inherit; font-size: 0.95rem; text-align: left; cursor: pointer; }
+.waitlist .waitlist-choice:hover, .waitlist .waitlist-choice:focus-visible { border-color: #FAC775; }
+.waitlist .waitlist-choice:disabled { opacity: .6; cursor: wait; }
+.waitlist .waitlist-status { margin: 8px 0 0; color: #FAC775; min-height: 1em; font-size: 0.9rem; }
+.waitlist .waitlist-thanks { margin: 0; font-weight: 700; color: #FAC775; }
+.waitlist .waitlist-skip { margin-top: 4px; padding: 6px 0; border: 0; background: none; color: #B4B2A9; font: inherit; font-size: 0.9rem; text-decoration: underline; cursor: pointer; }
