@@ -144,4 +144,3 @@ body.cinema-home { margin: 0; background: #141414; color: #F1EFE8; font-family: 
   .owl-panel { padding: 12px; max-height: calc(100vh - 84px); max-height: calc(100svh - 84px); overflow-y: auto; }
   .owl-panel label { margin-bottom: 6px; font-size: 18px; }
 }
-.owl-panel .private-note { margin: 0 0 10px; padding: 10px 12px; border: 1px solid #FAC775; border-radius: 10px; background: #2C2C2A; color: #F1EFE8; font-size: 14px; }

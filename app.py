@@ -654,7 +654,6 @@ def home():
     return render_template("index.html", examples=EXAMPLE_QUESTIONS, prefill=prefill, cards=cards,
                            free_questions=askers.FREE_QUESTIONS, billing_test_mode=billing.test_mode(),
                            email_verification=verification.required(),
-                           asking_private=_asking_private(),
                            subscribe_result=request.args.get("subscribed") or request.args.get("subscribe"),
                            rows=_home_rows(cards), spotlight=_home_spotlight(cards),
                            ask_open=bool(prefill or not cards))
@@ -738,8 +737,6 @@ app.jinja_env.globals["privacy_contact_email"] = PRIVACY_CONTACT_EMAIL
 app.jinja_env.globals["billing_portal_url"] = billing.portal_url
 
 EMAIL_REQUIRED_MESSAGE = "Please enter a grown-up's email to ask your own question."
-PRIVATE_MESSAGE = ("Lil Owl is taking a short break from new questions while we get things ready. "
-                   "You can still explore all the ready-made lessons below!")
 DEVICE_EMAIL_MESSAGE = ("This device is already set up for another grown-up's email ({email}). "
                         "Please use that email to keep asking questions here.")
 DEVICE_COOKIE = "lilowl_device"
@@ -776,11 +773,6 @@ def _email_refusal(email: str | None, consent, token) -> tuple[str, str, int] | 
     if verification.required() and not verification.token_valid(email, token):
         return ("verify_required", VERIFY_REQUIRED_MESSAGE, 401)
     return None
-
-
-def _asking_private() -> bool:
-    """While PRIVATE_ASKING is on (the default), only a browser logged in to /admin may ask new questions."""
-    return os.getenv("PRIVATE_ASKING", "on").strip().lower() != "off" and not _admin_authed()
 
 
 def _device_lock_on() -> bool:
@@ -900,8 +892,6 @@ def lesson():
         question = request.form.get("question", "").strip()
     if not question:
         return redirect(url_for("home"))
-    if request.method == "POST" and _asking_private():
-        return render_template("error.html", question=question[:200], error=PRIVATE_MESSAGE), 403
     if len(question) > 200:
         _log_refused("/lesson", question, "too long")
         return render_template("error.html", question=question[:200],
@@ -955,8 +945,6 @@ def api_lesson():
     question = (payload.get("question") or "").strip()
     if not question:
         return jsonify({"ok": False, "error": "question is required"}), 400
-    if _asking_private():
-        return jsonify({"ok": False, "code": "private", "error": PRIVATE_MESSAGE}), 403
     if len(question) > 200:
         _log_refused("/api/lesson", question, "too long")
         return jsonify({"ok": False, "error": "Question too long — keep it under 200 characters."}), 400
@@ -1139,8 +1127,6 @@ def api_quiz():
     lesson = payload.get("lesson")
     if not isinstance(lesson, dict) or not lesson.get("slides"):
         return jsonify({"ok": False, "error": "lesson is required"}), 400
-    if _asking_private():
-        return jsonify({"ok": False, "code": "private", "error": "Quizzes are taking a short break for now."}), 403
     try:
         quiz = generate_quiz(lesson, settings)
         return jsonify({"ok": True, "quiz": quiz})

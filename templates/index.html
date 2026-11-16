@@ -358,7 +358,6 @@
     <div class="owl-panel" id="askPanel" data-verify="{{ 1 if email_verification else 0 }}"{% if not ask_open %} hidden{% endif %}>
       <button type="button" class="owl-minimize" id="owlMinimize" aria-label="Close the question box" title="Close">&minus;</button>
       <label for="question">What do you wonder about?</label>
-      {% if asking_private %}<p class="asker-note private-note" id="privateNote" role="status">🦉 Lil Owl is taking a short break from new questions while we get things ready. You can still explore all the ready-made lessons below!</p>{% endif %}
       <form class="ask-form" id="askForm" action="{{ url_for('lesson') }}" method="post">
         <div class="asker-email" id="askerEmailRow">
           <label for="askerEmail">Grown-up's email</label>
@@ -717,7 +716,7 @@
           } catch (e) {}
           if (window.Waitlist && 'waitlist_choice' in data) window.Waitlist.sync(data.waitlist_choice);
         }
-        if (!data.ok && (data.code === 'subscription_required' || data.code === 'email_required' || data.code === 'consent_required' || data.code === 'verify_required' || data.code === 'device_email' || data.code === 'private' || data.code === 'waitlist' || data.code === 'daily_limit' || data.code === 'asker_unavailable')) {
+        if (!data.ok && (data.code === 'subscription_required' || data.code === 'email_required' || data.code === 'consent_required' || data.code === 'verify_required' || data.code === 'device_email' || data.code === 'waitlist' || data.code === 'daily_limit' || data.code === 'asker_unavailable')) {
           loadingMsg.textContent = data.error;
           elapsed.textContent = '';
           openLessonBtn.hidden = true;
