@@ -58,6 +58,8 @@ from lesson_platform import (
     today_spend_usd,
 )
 from lesson_platform.db import cached_lesson_exists, get_pool_stats, get_saved_tts, get_write_stats, save_tts
+from lesson_platform import spam_log
+from lesson_platform.guardrails import refusal_reason
 from lesson_platform import askers
 from lesson_platform import billing
 from lesson_platform import mailer
@@ -432,6 +434,16 @@ def _client_context() -> dict:
     }
 
 
+def _log_refused(endpoint: str, question: str, reason: str) -> None:
+    """Note a refused question for the admin page. Capped so a flood of bot requests can't fill the log."""
+    ip = _client_ip()
+    if not (ratelimit.allow("refused-log", ip, 20) and ratelimit.allow("refused-log-all", "site", 300)):
+        return
+    spam_log.record(endpoint=endpoint, question=question, reason=reason, ip=ip,
+                    forwarded_for=request.headers.get("X-Forwarded-For"), remote_addr=request.remote_addr,
+                    user_agent=request.headers.get("User-Agent"))
+
+
 def _guardrail_check(endpoint: str, ctx: dict) -> str | None:
     """Return an error code/message if a guardrail blocks the request, else None.
 
@@ -779,11 +791,13 @@ def lesson():
     if not question:
         return redirect(url_for("home"))
     if len(question) > 200:
+        _log_refused("/lesson", question, "too long")
         return render_template("error.html", question=question[:200],
                                error="Your question is a bit too long — try a shorter version!"), 400
 
     blocked = check_question(question)
     if blocked:
+        _log_refused("/lesson", question, refusal_reason(blocked))
         return render_template("error.html", question=question, error=blocked), 400
 
     ctx = _client_context()
@@ -829,10 +843,12 @@ def api_lesson():
     if not question:
         return jsonify({"ok": False, "error": "question is required"}), 400
     if len(question) > 200:
+        _log_refused("/api/lesson", question, "too long")
         return jsonify({"ok": False, "error": "Question too long — keep it under 200 characters."}), 400
 
     blocked = check_question(question)
     if blocked:
+        _log_refused("/api/lesson", question, refusal_reason(blocked))
         return jsonify({"ok": False, "error": blocked}), 400
 
     email, allowance, refusal = _asker_gate(payload.get("email"), question, payload.get("parent_consent"),
@@ -1737,7 +1753,7 @@ def admin_dashboard():
         limit_slowest=10, limit_errors=30,
     )
     from lesson_platform.db import ADMIN_EXCLUDE_CITIES, ADMIN_TZ
-    return render_template("admin.html", db_enabled=True, data=data,
+    return render_template("admin.html", db_enabled=True, data=data, refused=spam_log.summary(ADMIN_TZ),
                            daily_budget=settings.daily_budget_usd,
                            admin_tz=ADMIN_TZ, free_questions=askers.FREE_QUESTIONS,
                            excluded_cities=ADMIN_EXCLUDE_CITIES,

@@ -167,6 +167,11 @@ def is_advice_question(question: str) -> bool:
     return bool(tokens & _ADVICE_KEYWORDS)
 
 
+def refusal_reason(message: str) -> str:
+    """Short label for the admin page: which rule refused the question."""
+    return "link" if message == _LINK_MSG else "blocked word"
+
+
 def check_question(question: str) -> str | None:
     """Return an error message if the question should be blocked, else None.
 

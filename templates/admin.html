@@ -216,6 +216,59 @@
       </div>
     </div>
 
+    {% if refused %}
+    <h2 class="h5 mt-5 mb-1" id="blocked">Blocked questions</h2>
+    <p class="section-note mb-3">Questions the site refused before making a lesson: ones with web links (usually spam bots), rude words, or over 200 characters. Nothing was spent. These aren't saved in the database: the list is cleared on every deploy or restart{% if refused.since %} and goes back to {{ refused.since }}{% endif %}. IP addresses are never kept; the device tag groups tries from the same device on the same day. Each one also appears in the Render logs as "Refused question".</p>
+    <div class="row g-3 mb-3">
+      <div class="col-6 col-lg-4"><div class="card card-stat p-3 {{ 'warn' if refused.last_1d else '' }}"><div class="label">Last 24 hours</div><div class="value">{{ refused.last_1d }}</div><div class="small text-muted">refused questions</div></div></div>
+      <div class="col-6 col-lg-4"><div class="card card-stat p-3"><div class="label">With web links</div><div class="value">{{ refused.links }}</div><div class="small text-muted">likely spam bots</div></div></div>
+      <div class="col-6 col-lg-4"><div class="card card-stat p-3"><div class="label">All in the list</div><div class="value">{{ refused.total }}</div><div class="small text-muted">since the last deploy</div></div></div>
+    </div>
+    {% if refused.devices %}
+    <h6 class="mb-2">Most active devices</h6>
+    <div class="card p-0 mb-3">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light"><tr><th>Device tag</th><th>Tries</th><th>Why</th><th>Last try</th><th>Where</th><th>Browser</th></tr></thead>
+          <tbody>
+            {% for d in refused.devices %}
+              <tr>
+                <td class="nowrap"><code>{{ d.device }}</code></td>
+                <td>{{ d.count }}</td>
+                <td class="nowrap small">{{ d.reasons }}</td>
+                <td class="nowrap">{{ d.last }}</td>
+                <td class="nowrap small">{{ d.place }}</td>
+                <td class="truncate small" title="{{ d.user_agent }}">{{ d.user_agent }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+    <div class="card p-0">
+      <div class="table-responsive scroll-table">
+        <table class="table table-sm table-hover mb-0">
+          <thead class="table-light"><tr><th>When</th><th>Why</th><th>What they typed</th><th>Device</th><th>Where</th><th>Browser</th></tr></thead>
+          <tbody>
+            {% for b in refused.rows %}
+              <tr>
+                <td class="nowrap">{{ b.created_at }}</td>
+                <td class="nowrap">{% if b.reason == 'link' %}🔗 Web link{% elif b.reason == 'too long' %}📏 Too long{% else %}🚫 Blocked word{% endif %}</td>
+                <td class="truncate" title="{{ b.question }}">{{ b.question }}</td>
+                <td class="nowrap"><code>{{ b.device }}</code></td>
+                <td class="nowrap small">{{ b.place }}</td>
+                <td class="truncate small" title="{{ b.user_agent }}">{{ b.user_agent }}</td>
+              </tr>
+            {% else %}
+              <tr><td colspan="6" class="text-muted">No blocked questions since the last deploy</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
     <h2 class="h5 mt-5 mb-3">Usage</h2>
     <div class="row g-3">
       <div class="col-lg-6"><div class="card p-3"><h6>New lessons per day (last 14 days)</h6><canvas id="chartLessonsByDay" height="150"></canvas></div></div>
