@@ -82,6 +82,56 @@ def test_still_wrong_after_retry_is_flagged(monkeypatch, settings):
     assert result["meta"]["math_problems"]
 
 
+@pytest.mark.parametrize("question", ["how to make fractions into decimals", "explain 1/4 + 3/5", "what is 7 times 8",
+                                      "Teach me decimals and fractions", "what is a prime number", "how do you find the area of a square"])
+def test_math_questions_are_recognised(question):
+    from lesson_platform.math_check import is_math_question
+    assert is_math_question(question)
+
+
+@pytest.mark.parametrize("question", ["How to solve 2*2 Rubik's cube", "Why is the sky blue?", "Who is number three in Cars",
+                                      "What are all India's prime ministers", "How do planes fly?", "Is the 14th Prime Minister alive?"])
+def test_other_questions_are_not_math(question):
+    from lesson_platform.math_check import is_math_question
+    assert not is_math_question(question)
+
+
+def test_math_questions_use_the_math_model(monkeypatch, settings):
+    client = FakeClient([lesson("1/4 + 1/2 = 3/4")])
+    used = []
+    original = client.create
+    client.messages.create = lambda **kw: used.append(kw["model"]) or original(**kw)
+    monkeypatch.setattr(ai_generation, "Anthropic", lambda api_key: client)
+    result = ai_generation.generate_lesson("explain 1/4 + 1/2", settings)
+    assert used == ["claude-sonnet-4-6"] and result["meta"]["model"] == "claude-sonnet-4-6" and result["meta"]["math"]
+
+
+def test_other_questions_keep_the_normal_model(monkeypatch, settings):
+    client = FakeClient([lesson("Planes have wings.")])
+    used = []
+    original = client.create
+    client.messages.create = lambda **kw: used.append(kw["model"]) or original(**kw)
+    monkeypatch.setattr(ai_generation, "Anthropic", lambda api_key: client)
+    result = ai_generation.generate_lesson("How do planes fly?", settings)
+    assert used == [settings.anthropic_model] and "math" not in result["meta"]
+
+
+def test_quiz_model_is_chosen_from_the_lesson_words_not_its_meta(monkeypatch, settings):
+    used = []
+
+    def create(**kw):
+        used.append(kw["model"])
+        quiz = {"questions": [{"question": "q", "options": ["a", "b", "c"], "correct_index": 0, "explanation": "e"}] * 3}
+        return SimpleNamespace(usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+                               content=[SimpleNamespace(type="tool_use", input=quiz)])
+
+    monkeypatch.setattr(ai_generation, "Anthropic", lambda api_key: SimpleNamespace(messages=SimpleNamespace(create=create)))
+    slides = [{"number": 1, "title": "t", "explanation": "e"}]
+    ai_generation.generate_quiz({"title": "Adding Fractions", "slides": slides}, settings)
+    ai_generation.generate_quiz({"title": "How Planes Fly", "meta": {"math": True}, "slides": slides}, settings)
+    assert used == ["claude-sonnet-4-6", settings.anthropic_model]
+
+
 def test_prompt_has_math_rules():
     assert "Math questions" in ai_generation.SYSTEM_PROMPT
     assert "Never write \"1/3 = 0.33\"" in ai_generation.SYSTEM_PROMPT

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 class Settings:
     anthropic_api_key: str
     anthropic_model: str
+    math_model: str  # Used instead of anthropic_model for math questions.
     openai_api_key: str
     openai_tts_model: str
     openai_tts_voice: str
@@ -29,6 +30,7 @@ def load_settings() -> Settings:
     return Settings(
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
         anthropic_model=os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"),
+        math_model=os.getenv("MATH_MODEL", "claude-sonnet-4-6"),
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
         openai_tts_model=os.getenv("OPENAI_TTS_MODEL", "tts-1"),
         openai_tts_voice=os.getenv("OPENAI_TTS_VOICE", "nova"),

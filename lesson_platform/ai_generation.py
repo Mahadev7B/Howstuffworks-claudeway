@@ -17,7 +17,7 @@ from typing import Any
 from anthropic import Anthropic
 
 from .config import Settings
-from .math_check import check_lesson
+from .math_check import check_lesson, is_math_question
 
 logger = logging.getLogger(__name__)
 
@@ -347,8 +347,10 @@ def generate_quiz(lesson: dict[str, Any], settings: Settings) -> dict[str, Any]:
     lesson_summary = f"Lesson title: {lesson.get('title', '')}\n\n{slides_text}"
 
     client = Anthropic(api_key=settings.anthropic_api_key)
+    # Decided from the lesson's own words: the lesson comes from the browser, so its meta can't be trusted.
+    is_math = is_math_question(f"{lesson.get('title', '')} {lesson.get('subject', '')}")
     response = client.messages.create(
-        model=settings.anthropic_model,
+        model=settings.math_model if is_math else settings.anthropic_model,
         max_tokens=800,
         system=_QUIZ_SYSTEM,
         tools=[_QUIZ_TOOL],
@@ -380,8 +382,10 @@ def generate_lesson(question: str, settings: Settings) -> dict[str, Any]:
 
     logger.info("Generating lesson for question: %s", question)
 
+    is_math = is_math_question(question)
+    model = settings.math_model if is_math else settings.anthropic_model
     request = f'A child asked: "{question}"\n\nCreate the 4-slide lesson now. Keep every text field short.'
-    lesson, input_tokens, output_tokens = _ask_for_lesson(client, settings, request)
+    lesson, input_tokens, output_tokens = _ask_for_lesson(client, model, request)
     math_problems = check_lesson(lesson)
     math_retried = False
     if math_problems:
@@ -391,7 +395,7 @@ def generate_lesson(question: str, settings: Settings) -> dict[str, Any]:
         retry_request = (request + "\n\nImportant: a draft of this lesson had these arithmetic mistakes:\n- "
                          + "\n- ".join(math_problems)
                          + "\nWork every calculation out carefully and make sure every number is correct.")
-        retry, more_in, more_out = _ask_for_lesson(client, settings, retry_request)
+        retry, more_in, more_out = _ask_for_lesson(client, model, retry_request)
         input_tokens += more_in
         output_tokens += more_out
         retry_problems = check_lesson(retry)
@@ -407,7 +411,7 @@ def generate_lesson(question: str, settings: Settings) -> dict[str, Any]:
         "claude-sonnet": (3.00, 15.00),
         "claude-opus":   (15.00, 75.00),
     }
-    model_key = next((k for k in _PRICING if k in settings.anthropic_model), "claude-sonnet")
+    model_key = next((k for k in _PRICING if k in model), "claude-sonnet")
     in_price, out_price = _PRICING[model_key]
     cost_usd = (input_tokens * in_price + output_tokens * out_price) / 1_000_000
 
@@ -416,8 +420,10 @@ def generate_lesson(question: str, settings: Settings) -> dict[str, Any]:
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "estimated_cost_usd": round(cost_usd, 5),
-        "model": settings.anthropic_model,
+        "model": model,
     }
+    if is_math:
+        lesson["meta"]["math"] = True
     if math_retried:
         lesson["meta"]["math_retried"] = True
     if math_problems:
@@ -427,11 +433,11 @@ def generate_lesson(question: str, settings: Settings) -> dict[str, Any]:
     return lesson
 
 
-def _ask_for_lesson(client: Anthropic, settings: Settings, request: str) -> tuple[dict[str, Any], int, int]:
+def _ask_for_lesson(client: Anthropic, model: str, request: str) -> tuple[dict[str, Any], int, int]:
     """One Claude call for a lesson. Returns (validated lesson, input tokens, output tokens)."""
     call_started = time.time()
     response = client.messages.create(
-        model=settings.anthropic_model,
+        model=model,
         max_tokens=2000,
         system=SYSTEM_PROMPT,
         tools=[_LESSON_TOOL],

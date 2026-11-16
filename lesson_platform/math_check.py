@@ -96,6 +96,28 @@ def problems_in_text(text: str) -> list[str]:
     return found
 
 
+_MATH_WORDS = re.compile(
+    r"\b(maths?|mathematics|arithmetic|fractions?|decimals?|percent(age)?s?|%|multipl(y|ying|ication|ied)|"
+    r"divid(e|ing|ed)|division|subtract(ing|ion)?|addition|adding|sums?|equations?|algebra|geometry|"
+    r"angles?|perimeter|area of|volume of|square roots?|prime numbers?|even numbers?|odd numbers?|"
+    r"times tables?|place value|number line|long division|denominators?|numerators?|ratios?|averages?|"
+    r"probability|negative numbers?|exponents?|squared|cubed|pythagoras|pi\b|integers?|factors?|"
+    r"multiples?|remainders?|greatest common|least common|lcm|gcd|calculat(e|ing|ion)|"
+    r"how many (sides|corners|degrees|minutes in|seconds in|hours in|days in|weeks in|months in|inches|centimet|millimet|grams in|ounces in))\b",
+    re.IGNORECASE,
+)
+_MATH_EXPRESSION = re.compile(rf"\d\s*(?:\+|-|−|×|\*|÷|/|=|\^)\s*\d|{_NUM}\s+(?:plus|minus|times|divided by)\s+{_NUM}", re.IGNORECASE)
+
+
+def is_math_question(question: str) -> bool:
+    """True when a child's question is about maths, so it can go to the stronger model."""
+    q = question or ""
+    # "2x2 Rubik's cube", "3*3 grid": a size, not a sum.
+    q = re.sub(r"\b\d\s*[x×*]\s*\d(?=\s*(?:rubik|cube|grid|board|puzzle))", " ", q, flags=re.IGNORECASE)
+    q = re.sub(r"\b\d\s*[x×*]\s*\d\b(?=.*\b(?:rubik|cube)\b)", " ", q, flags=re.IGNORECASE)
+    return bool(_MATH_EXPRESSION.search(q) or _MATH_WORDS.search(q))
+
+
 def check_lesson(lesson: dict) -> list[str]:
     """Every arithmetic mistake found in the lesson's visible text and narration, labelled by slide."""
     problems = [f"Title: {p}" for p in problems_in_text(lesson.get("title", ""))]
