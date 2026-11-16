@@ -31,6 +31,7 @@ from flask import (
     session,
     url_for,
 )
+from itsdangerous import BadSignature, URLSafeSerializer
 
 from lesson_platform import (
     admin_load_all,
@@ -693,6 +694,10 @@ app.jinja_env.globals["privacy_contact_email"] = PRIVACY_CONTACT_EMAIL
 app.jinja_env.globals["billing_portal_url"] = billing.portal_url
 
 EMAIL_REQUIRED_MESSAGE = "Please enter a grown-up's email to ask your own question."
+DEVICE_EMAIL_MESSAGE = ("This device is already set up for another grown-up's email ({email}). "
+                        "Please use that email to keep asking questions here.")
+DEVICE_COOKIE = "lilowl_device"
+DEVICE_COOKIE_MAX_AGE_S = 400 * 24 * 3600
 CONSENT_REQUIRED_MESSAGE = "A parent or guardian needs to agree to the privacy policy first."
 VERIFY_REQUIRED_MESSAGE = "Please confirm the grown-up's email with the code we send to it."
 TRIAL_AVAILABLE_MESSAGE = (
@@ -727,10 +732,60 @@ def _email_refusal(email: str | None, consent, token) -> tuple[str, str, int] | 
     return None
 
 
+def _device_lock_on() -> bool:
+    """While emails aren't confirmed with a code, each device may use only one email for free lessons."""
+    return os.getenv("DEVICE_EMAIL_LOCK", "on").strip().lower() != "off" and not verification.required()
+
+
+def _device_signer() -> URLSafeSerializer:
+    return URLSafeSerializer(app.secret_key, salt="device-email")
+
+
+def _device_email() -> str | None:
+    raw = request.cookies.get(DEVICE_COOKIE)
+    if not raw:
+        return None
+    try:
+        value = _device_signer().loads(raw)
+    except BadSignature:
+        return None
+    return value if isinstance(value, str) else None
+
+
+def _mask_email(email: str) -> str:
+    local, _, domain = email.partition("@")
+    return f"{local[:2]}***@{domain}"
+
+
+def _device_refusal(email: str | None) -> tuple[str, str, int] | None:
+    if email is None or not _device_lock_on():
+        return None
+    linked = _device_email()
+    if linked and linked != email:
+        return ("device_email", DEVICE_EMAIL_MESSAGE.format(email=_mask_email(linked)), 403)
+    return None
+
+
+def _link_device(email: str) -> None:
+    """Remember, on this device, the email that just got a lesson (the cookie is set after the response)."""
+    if _device_lock_on() and _device_email() is None:
+        g.link_device_email = email
+
+
+@app.after_request
+def _set_device_cookie(response):
+    email = getattr(g, "link_device_email", None)
+    if email:
+        response.set_cookie(DEVICE_COOKIE, _device_signer().dumps(email), max_age=DEVICE_COOKIE_MAX_AGE_S,
+                            httponly=True, secure=request.is_secure or request.headers.get("X-Forwarded-Proto") == "https",
+                            samesite="Lax")
+    return response
+
+
 def _asker_gate(raw_email: str | None, question: str, consent=None, token=None) -> tuple[str | None, dict | None, tuple[str, str, int] | None]:
     """Return (email, allowance, refusal). Refusal is (code, message, HTTP status)."""
     email = askers.normalize_email(raw_email)
-    refusal = _email_refusal(email, consent, token)
+    refusal = _email_refusal(email, consent, token) or _device_refusal(email)
     if refusal is not None:
         return email, None, refusal
     try:
@@ -834,6 +889,7 @@ def lesson():
             return render_template("error.html", question=question, error=friendly), 429
         return render_template("error.html", question=question, error=err), 500
     askers.record_question(email, question, generated=bool(getattr(g, "lesson_generated", False)))
+    _link_device(email)
     resp = app.make_response(render_template("lesson.html", question=question, lesson=data))
     resp.headers["Cache-Control"] = "private, max-age=600"
     return resp
@@ -879,6 +935,7 @@ def api_lesson():
         return jsonify({"ok": False, "error": err}), 500
     generated = bool(getattr(g, "lesson_generated", False))
     askers.record_question(email, question, generated=generated)
+    _link_device(email)
     reply = {"ok": True, "lesson": data, "subscribed": allowance["subscribed"], "free_left": None, "new_left_today": None,
              "free_limit": allowance["free_limit"], "waitlist_choice": allowance.get("waitlist_choice")}
     if allowance["subscribed"]:
@@ -895,7 +952,7 @@ def api_more_lessons():
     """A parent who used their free lessons asks to try a few more; the admin reviews it."""
     payload = request.get_json(silent=True) or {}
     email = askers.normalize_email(payload.get("email"))
-    refusal = _email_refusal(email, payload.get("parent_consent"), payload.get("email_token"))
+    refusal = _email_refusal(email, payload.get("parent_consent"), payload.get("email_token")) or _device_refusal(email)
     if refusal is not None:
         return jsonify({"ok": False, "code": refusal[0], "error": refusal[1]}), refusal[2]
     if not ratelimit.allow("more-lessons", _client_ip(), 10):

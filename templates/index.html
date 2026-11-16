@@ -716,7 +716,7 @@
           } catch (e) {}
           if (window.Waitlist && 'waitlist_choice' in data) window.Waitlist.sync(data.waitlist_choice);
         }
-        if (!data.ok && (data.code === 'subscription_required' || data.code === 'email_required' || data.code === 'consent_required' || data.code === 'verify_required' || data.code === 'waitlist' || data.code === 'daily_limit' || data.code === 'asker_unavailable')) {
+        if (!data.ok && (data.code === 'subscription_required' || data.code === 'email_required' || data.code === 'consent_required' || data.code === 'verify_required' || data.code === 'device_email' || data.code === 'waitlist' || data.code === 'daily_limit' || data.code === 'asker_unavailable')) {
           loadingMsg.textContent = data.error;
           elapsed.textContent = '';
           openLessonBtn.hidden = true;
@@ -730,7 +730,7 @@
             if (data.more_requested) showMoreSent();
           }
           cancelBtn.textContent = 'Back';
-          if ((data.code === 'email_required' || data.code === 'consent_required') && window.AskerEmail) window.AskerEmail.forget();
+          if ((data.code === 'email_required' || data.code === 'consent_required' || data.code === 'device_email') && window.AskerEmail) window.AskerEmail.forget();
           if (data.code === 'verify_required' && window.AskerEmail) window.AskerEmail.forgetToken();
           return;
         }

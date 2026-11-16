@@ -65,7 +65,8 @@ def test_email_is_case_insensitive_and_counted_per_person(site):
     for number in range(3):
         assert ask(site, f"Question {number}?", "Parent@Example.com").status_code == 200
     assert ask(site, "Another?", "parent@example.com ").status_code == 402
-    assert ask(site, "Another?", "other@example.com").status_code == 200
+    other_device = importlib.import_module("app").app.test_client()  # One email per device while codes are off.
+    assert ask(other_device, "Another?", "other@example.com").status_code == 200
 
 
 def test_failed_generation_does_not_use_a_free_question(site, monkeypatch):
