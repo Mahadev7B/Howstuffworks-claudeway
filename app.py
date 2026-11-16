@@ -560,6 +560,10 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
     render_ms = int((time.time() - render_started) * 1000)
     total_ms = int((time.time() - started) * 1000)
     logger.info("Flux render %dms | total request %dms", render_ms, total_ms)
+    if (data.get("meta") or {}).get("math_problems"):
+        # Arithmetic still wrong after a retry: show it this once, but don't save it for the next child.
+        logger.warning("Not saving lesson with arithmetic mistakes: %s", question[:80])
+        return data, None
     _recent_put(question, data)
     # Always persist to DB immediately — so thumbs-up and redeploys never
     # lose the lesson. Thumbs-up just marks it pinned; it doesn't need to

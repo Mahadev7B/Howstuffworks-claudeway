@@ -17,6 +17,7 @@ from typing import Any
 from anthropic import Anthropic
 
 from .config import Settings
+from .math_check import check_lesson
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,27 @@ Question types and how to handle them:
   Tone for these: neutral, kid-friendly, never scary, never strict.
   Avoid extreme statements. Do NOT say "never do this" or "this is dangerous".
   Use phrases like "a little is fine", "balance is best", "take breaks".
+
+• Math questions (numbers, counting, adding, subtracting, multiplying, dividing, fractions,
+  decimals, percentages, shapes, measuring, time, money, patterns) — every number must be
+  mathematically correct. Build a TEACHING lesson:
+    Slide 1: What it means — a precise, kid-friendly definition (e.g. "the bottom number tells
+             how many EQUAL pieces the whole is cut into").
+    Slide 2: The method — the steps, in order, in plain words.
+    Slide 3: A worked example — real small numbers, every step written out
+             (e.g. "1/4 + 1/2: change 1/2 into 2/4, then 1/4 + 2/4 = 3/4").
+    Slide 4: A second worked example, or a common mistake and how to avoid it.
+  Math accuracy rules:
+    - Work out every calculation carefully before writing it. Write sums with symbols
+      ("3 × 4 = 12", "1/4 = 0.25") so they are easy to check.
+    - If the child asked about specific numbers, use exactly those numbers and give the correct final answer.
+    - Never call a slide "Example" or "Practice" unless it actually shows the numbers.
+    - No "always" or "never" claims unless true for EVERY number. ("Multiplying by a fraction
+      smaller than 1 gives a smaller answer" — not "multiplying fractions always gives a smaller answer".)
+    - Decimals that go on forever must say so: "1/3 = 0.333... (the 3s go on forever)", or use
+      "about": "1/3 is about 0.33". Never write "1/3 = 0.33".
+    - Keep the same numbers in the explanation, fun_fact and narration of a slide.
+  For math lessons only, explanation and narration may be up to 3 short sentences so the steps fit.
 
 Tone rules (always):
 - Friendly, warm, non-judgmental, never scary, never strict.
@@ -300,6 +322,8 @@ _QUIZ_TOOL: dict[str, Any] = {
 _QUIZ_SYSTEM = """You generate short, fun multiple-choice quizzes for kids aged 6–10 based on a lesson they just read.
 
 Rules:
+- For any math question, work out the answer carefully: the correct option must be exactly right and the
+  wrong options must really be wrong.
 - Create exactly 3 questions.
 - Each question tests basic understanding from the lesson only.
 - 3 answer options per question, exactly one correct.
@@ -356,37 +380,25 @@ def generate_lesson(question: str, settings: Settings) -> dict[str, Any]:
 
     logger.info("Generating lesson for question: %s", question)
 
-    response = client.messages.create(
-        model=settings.anthropic_model,
-        max_tokens=2000,
-        system=SYSTEM_PROMPT,
-        tools=[_LESSON_TOOL],
-        tool_choice={"type": "tool", "name": "produce_lesson"},
-        messages=[
-            {
-                "role": "user",
-                "content": f'A child asked: "{question}"\n\nCreate the 4-slide lesson now. Keep every text field short.',
-            }
-        ],
-    )
-
-    claude_ms = int((time.time() - started) * 1000)
-    input_tokens = response.usage.input_tokens
-    output_tokens = response.usage.output_tokens
-    logger.info("Claude done in %dms — %d in / %d out tokens", claude_ms, input_tokens, output_tokens)
-
-    # With tool_use, the API guarantees valid JSON in tool_use blocks
-    tool_block = next(
-        (b for b in response.content if getattr(b, "type", None) == "tool_use"),
-        None,
-    )
-    if tool_block is None:
-        raw_text = "".join(
-            b.text for b in response.content if getattr(b, "type", None) == "text"
-        )
-        lesson = _validate_lesson(_extract_json(raw_text))
-    else:
-        lesson = _validate_lesson(tool_block.input)
+    request = f'A child asked: "{question}"\n\nCreate the 4-slide lesson now. Keep every text field short.'
+    lesson, input_tokens, output_tokens = _ask_for_lesson(client, settings, request)
+    math_problems = check_lesson(lesson)
+    math_retried = False
+    if math_problems:
+        # One more try, telling Claude exactly which sums were wrong. Keep whichever draft has fewer mistakes.
+        logger.warning("Lesson arithmetic wrong, asking again: %s", math_problems)
+        math_retried = True
+        retry_request = (request + "\n\nImportant: a draft of this lesson had these arithmetic mistakes:\n- "
+                         + "\n- ".join(math_problems)
+                         + "\nWork every calculation out carefully and make sure every number is correct.")
+        retry, more_in, more_out = _ask_for_lesson(client, settings, retry_request)
+        input_tokens += more_in
+        output_tokens += more_out
+        retry_problems = check_lesson(retry)
+        if len(retry_problems) <= len(math_problems):
+            lesson, math_problems = retry, retry_problems
+        if math_problems:
+            logger.error("Lesson arithmetic still wrong after retry: %s", math_problems)
 
     elapsed_ms = int((time.time() - started) * 1000)
     # Pricing per 1M tokens by model family
@@ -406,6 +418,39 @@ def generate_lesson(question: str, settings: Settings) -> dict[str, Any]:
         "estimated_cost_usd": round(cost_usd, 5),
         "model": settings.anthropic_model,
     }
+    if math_retried:
+        lesson["meta"]["math_retried"] = True
+    if math_problems:
+        lesson["meta"]["math_problems"] = math_problems
 
     logger.info("Lesson total %dms — $%.5f", elapsed_ms, cost_usd)
     return lesson
+
+
+def _ask_for_lesson(client: Anthropic, settings: Settings, request: str) -> tuple[dict[str, Any], int, int]:
+    """One Claude call for a lesson. Returns (validated lesson, input tokens, output tokens)."""
+    call_started = time.time()
+    response = client.messages.create(
+        model=settings.anthropic_model,
+        max_tokens=2000,
+        system=SYSTEM_PROMPT,
+        tools=[_LESSON_TOOL],
+        tool_choice={"type": "tool", "name": "produce_lesson"},
+        messages=[{"role": "user", "content": request}],
+    )
+    input_tokens = response.usage.input_tokens
+    output_tokens = response.usage.output_tokens
+    logger.info("Claude done in %dms — %d in / %d out tokens",
+                int((time.time() - call_started) * 1000), input_tokens, output_tokens)
+
+    # With tool_use, the API guarantees valid JSON in tool_use blocks
+    tool_block = next(
+        (b for b in response.content if getattr(b, "type", None) == "tool_use"),
+        None,
+    )
+    if tool_block is None:
+        raw_text = "".join(
+            b.text for b in response.content if getattr(b, "type", None) == "text"
+        )
+        return _validate_lesson(_extract_json(raw_text)), input_tokens, output_tokens
+    return _validate_lesson(tool_block.input), input_tokens, output_tokens
