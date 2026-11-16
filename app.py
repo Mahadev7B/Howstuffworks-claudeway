@@ -11,6 +11,7 @@ import base64
 import hashlib
 import logging
 import os
+import re
 import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -60,6 +61,7 @@ from lesson_platform import (
 )
 from lesson_platform.db import cached_lesson_exists, get_pool_stats, get_saved_tts, get_write_stats, save_tts
 from lesson_platform import spam_log
+from lesson_platform.math_check import is_math_question
 from lesson_platform.guardrails import refusal_reason
 from lesson_platform import askers
 from lesson_platform import billing
@@ -216,8 +218,44 @@ def _has_unsafe_banned_word(prompt: str) -> bool:
     return False
 
 
-def _sanitize_flux_prompt(prompt: str, slide_title: str, subject: str) -> str:
-    """Return a safe prompt, replacing it if it contains diagram/arrow language."""
+_COUNT_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
+                "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty"]
+# Picture models can't draw numbers or sums: they turn them into nonsense symbols.
+_MATH_WRITING = re.compile(
+    r"\d|[=+÷×%]|\b(number lines?|calculators?|equations?|formulas?|symbols?|digits?|numerals?|decimals?|"
+    r"fractions?|percent|blackboards?|chalkboards?|whiteboards?|worksheets?|textbooks?|recipe cards?|"
+    r"price tags?|receipts?|signs?|scoreboards?|clocks?|displayed|displaying|screens? showing)\b",
+    re.IGNORECASE,
+)
+_SAFE_MATH_SCENE = ("A cheerful child at a sunny kitchen table sharing a pizza cut into equal slices, "
+                    "with a glass of juice and a chocolate bar broken into equal pieces, bright and colorful")
+
+
+def _counts_as_words(text: str) -> str:
+    """"8 equal slices" -> "eight equal slices", so the count survives without a written number."""
+    return re.sub(r"(?<![\d./])\b(\d{1,2})\b(?![\d./%])(?=\s+[a-zA-Z])",
+                  lambda m: _COUNT_WORDS[int(m.group(1))] if int(m.group(1)) <= 20 else m.group(1), text)
+
+
+def _sanitize_flux_prompt(prompt: str, slide_title: str, subject: str, math: bool = False) -> str:
+    """Return a safe prompt, replacing it if it contains diagram/arrow language.
+
+    For math lessons, the parts asking for numbers, sums, number lines or writing are dropped and the
+    scene kept; if little is left, a fixed math-free scene is used (never the slide title, which would
+    make the picture tool try to draw "decimals" or "fractions").
+    """
+    if math:
+        start = prompt.lower().find("visually engaging educational illustration")
+        body = (prompt[:start] if start >= 0 else prompt).strip().rstrip(",. ")
+        clauses = re.split(r"(?<=[,.;])\s+", _counts_as_words(body))
+        kept = [c for c in clauses if not (_MATH_WRITING.search(c) or _has_unsafe_banned_word(c))]
+        scene = " ".join(kept).strip().rstrip(",.; ")
+        if len(scene.split()) < 10:
+            logger.warning("Math picture prompt had little left after cleaning — using a safe scene: %s", prompt[:120])
+            scene = _SAFE_MATH_SCENE
+        elif kept != clauses:
+            logger.info("Math picture prompt cleaned: %s", prompt[:120])
+        return f"{scene}, {_FLUX_STYLE_SUFFIX}"
     if _has_unsafe_banned_word(prompt):
         logger.warning("Flux prompt contained banned words — rewriting: %s", prompt[:120])
         return (
@@ -256,6 +294,7 @@ def _render_with_flux(slide: dict, ctx: dict) -> bool:
         prompt,
         slide.get("title", ""),
         slide.get("subject", ""),
+        math=bool(slide.get("math_lesson")),
     )
     negative_prompt = (slide.get("image_negative_prompt") or "").strip() or None
     started = time.time()
@@ -319,8 +358,11 @@ def _attach_slide_images(lesson: dict, ctx: dict | None = None) -> None:
         ctx = {"city": None, "region": None, "country": None, "user_agent": None}
     use_flux = settings.image_provider == "flux" and bool(settings.fal_api_key)
     subject = lesson.get("subject", "")
+    is_math = bool((lesson.get("meta") or {}).get("math")) or is_math_question(f"{lesson.get('title', '')} {subject}")
     for s in lesson.get("slides", []):
         s.setdefault("subject", subject)
+        if is_math:
+            s["math_lesson"] = True
     slides = [s for s in lesson.get("slides", []) if not s.get("image_data_url")]
     rendered_flux = rendered_mpl = 0
 
@@ -332,6 +374,7 @@ def _attach_slide_images(lesson: dict, ctx: dict | None = None) -> None:
                 (s.get("image_prompt") or "").strip(),
                 s.get("title", ""),
                 s.get("subject", ""),
+                math=bool(s.get("math_lesson")),
             ) if (s.get("image_prompt") or "").strip() else "")
             prompts.append(p)
             neg_prompts.append((s.get("image_negative_prompt") or "").strip() or None)
@@ -611,6 +654,7 @@ def home():
     return render_template("index.html", examples=EXAMPLE_QUESTIONS, prefill=prefill, cards=cards,
                            free_questions=askers.FREE_QUESTIONS, billing_test_mode=billing.test_mode(),
                            email_verification=verification.required(),
+                           asking_private=_asking_private(),
                            subscribe_result=request.args.get("subscribed") or request.args.get("subscribe"),
                            rows=_home_rows(cards), spotlight=_home_spotlight(cards),
                            ask_open=bool(prefill or not cards))
@@ -694,6 +738,8 @@ app.jinja_env.globals["privacy_contact_email"] = PRIVACY_CONTACT_EMAIL
 app.jinja_env.globals["billing_portal_url"] = billing.portal_url
 
 EMAIL_REQUIRED_MESSAGE = "Please enter a grown-up's email to ask your own question."
+PRIVATE_MESSAGE = ("Lil Owl is taking a short break from new questions while we get things ready. "
+                   "You can still explore all the ready-made lessons below!")
 DEVICE_EMAIL_MESSAGE = ("This device is already set up for another grown-up's email ({email}). "
                         "Please use that email to keep asking questions here.")
 DEVICE_COOKIE = "lilowl_device"
@@ -730,6 +776,11 @@ def _email_refusal(email: str | None, consent, token) -> tuple[str, str, int] | 
     if verification.required() and not verification.token_valid(email, token):
         return ("verify_required", VERIFY_REQUIRED_MESSAGE, 401)
     return None
+
+
+def _asking_private() -> bool:
+    """While PRIVATE_ASKING is on (the default), only a browser logged in to /admin may ask new questions."""
+    return os.getenv("PRIVATE_ASKING", "on").strip().lower() != "off" and not _admin_authed()
 
 
 def _device_lock_on() -> bool:
@@ -849,6 +900,8 @@ def lesson():
         question = request.form.get("question", "").strip()
     if not question:
         return redirect(url_for("home"))
+    if request.method == "POST" and _asking_private():
+        return render_template("error.html", question=question[:200], error=PRIVATE_MESSAGE), 403
     if len(question) > 200:
         _log_refused("/lesson", question, "too long")
         return render_template("error.html", question=question[:200],
@@ -902,6 +955,8 @@ def api_lesson():
     question = (payload.get("question") or "").strip()
     if not question:
         return jsonify({"ok": False, "error": "question is required"}), 400
+    if _asking_private():
+        return jsonify({"ok": False, "code": "private", "error": PRIVATE_MESSAGE}), 403
     if len(question) > 200:
         _log_refused("/api/lesson", question, "too long")
         return jsonify({"ok": False, "error": "Question too long — keep it under 200 characters."}), 400
@@ -1084,6 +1139,8 @@ def api_quiz():
     lesson = payload.get("lesson")
     if not isinstance(lesson, dict) or not lesson.get("slides"):
         return jsonify({"ok": False, "error": "lesson is required"}), 400
+    if _asking_private():
+        return jsonify({"ok": False, "code": "private", "error": "Quizzes are taking a short break for now."}), 403
     try:
         quiz = generate_quiz(lesson, settings)
         return jsonify({"ok": True, "quiz": quiz})
