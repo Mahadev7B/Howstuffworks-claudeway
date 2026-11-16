@@ -118,6 +118,14 @@ _HARD_BLOCK_MSG = (
     "That topic isn't something we cover here."
 )
 
+_LINK_MSG = "Please ask your question without a web link or website address."
+
+# Kids' questions never need a link; spam bots almost always include one.
+_LINK_PATTERN = re.compile(
+    r"https?://|www\.|\b[a-z0-9-]+\.(?:com|net|org|cc|ru|io|co|xyz|info|biz|top|site|online|shop|link|click|me|tk)(?:/|\b)",
+    re.IGNORECASE,
+)
+
 _OFFTOPIC_MSG = (
     "This app explores science, nature, history, inventions, and how the world works. "
     "Try asking something like \"How do rockets fly?\", \"Why is the sky blue?\", "
@@ -174,5 +182,8 @@ def check_question(question: str) -> str | None:
 
     if any(prefix in q_lower for prefix in _HARD_BLOCK_PREFIXES):
         return _HARD_BLOCK_MSG
+
+    if _LINK_PATTERN.search(question):
+        return _LINK_MSG
 
     return None
