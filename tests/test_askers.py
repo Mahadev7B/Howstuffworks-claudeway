@@ -1,6 +1,7 @@
 """Asking your own question needs an email; three questions are free, then a subscription."""
 
 import importlib
+import threading
 
 import pytest
 
@@ -69,6 +70,36 @@ def test_email_is_case_insensitive_and_counted_per_person(site):
     assert ask(other_device, "Another?", "other@example.com").status_code == 200
 
 
+def test_concurrent_new_questions_cannot_both_take_the_last_free_one(site, monkeypatch):
+    app_module = importlib.import_module("app")
+    for number in range(2):
+        assert ask(site, f"Already asked {number}?").status_code == 200
+    barrier = threading.Barrier(2)
+    codes = []
+    generated = []
+
+    def slow_track(endpoint, question, ctx):
+        generated.append(question)
+        return {"title": question, "slides": []}, None
+
+    monkeypatch.setattr(app_module, "_track_lesson", slow_track)
+
+    def worker(question):
+        barrier.wait(timeout=5)
+        client = app_module.app.test_client()
+        codes.append(ask(client, question).status_code)
+
+    threads = [threading.Thread(target=worker, args=(f"Race {number}?",)) for number in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sorted(codes) == [200, 402]
+    assert generated == [question for question in generated if question.startswith("Race")]
+    assert len(generated) == 1
+    assert app_module.askers.allowance("parent@example.com", "Anything else?")["used"] == 3
+
+
 def test_failed_generation_does_not_use_a_free_question(site, monkeypatch):
     app_module = importlib.import_module("app")
     monkeypatch.setattr(app_module, "_track_lesson", lambda *a: (None, "boom"))
@@ -82,7 +113,7 @@ def test_database_trouble_refuses_instead_of_generating(site, monkeypatch):
     def broken(email, question, **kwargs):
         raise app_module.askers.AskerUnavailable("down")
 
-    monkeypatch.setattr(app_module.askers, "allowance", broken)
+    monkeypatch.setattr(app_module.askers, "claim_question", broken)
     response = ask(site, "Why?")
     assert response.status_code == 503
     assert response.get_json()["code"] == "asker_unavailable"

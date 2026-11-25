@@ -908,9 +908,11 @@ def _asker_gate(raw_email: str | None, question: str, consent=None, token=None) 
     if refusal is not None:
         return email, None, refusal
     try:
-        allowance = askers.allowance(email, question, is_saved=lambda: _question_is_saved(question))
+        # Reserve the slot before any slow work so a second request sees it.
+        allowance, reserved = askers.claim_question(email, question, is_saved=lambda: _question_is_saved(question))
     except askers.AskerUnavailable:
         return email, None, ("asker_unavailable", ASKER_UNAVAILABLE_MESSAGE, 503)
+    g.asker_claim = (email, question) if reserved else None
     reason = allowance["reason"]
     if reason == "waitlist":
         return email, allowance, ("waitlist", WAITLIST_MESSAGE.format(free=allowance["free_limit"]), 402)
@@ -927,18 +929,42 @@ def _asker_gate(raw_email: str | None, question: str, consent=None, token=None) 
     return email, allowance, None
 
 
+def _release_asker_claim() -> None:
+    claim = getattr(g, "asker_claim", None)
+    if not claim:
+        return
+    g.asker_claim = None
+    try:
+        askers.release_question(*claim)
+    except Exception:
+        logger.exception("Could not release a reserved question")
+
+
+def _finish_asker_claim(generated: bool) -> None:
+    claim = getattr(g, "asker_claim", None)
+    if not claim:
+        return
+    g.asker_claim = None
+    askers.finish_question(*claim, generated)
+
+
 def _question_is_saved(question: str) -> bool:
     """A saved lesson already exists, so answering costs nothing new."""
     return _recent_get(question) is not None or (db_enabled and cached_lesson_exists(question))
 
 
-def _lookup_only(question: str, ctx: dict) -> dict | None:
-    """Return a cached lesson without ever calling Claude/Flux.
+def _lesson_has_pictures(lesson: dict) -> bool:
+    slides = lesson.get("slides") or []
+    return bool(slides) and all(slide.get("image_data_url") for slide in slides)
 
-    Checks the in-memory recent cache and the persisted DB cache. Returns
-    None if neither has the lesson — caller should redirect rather than
-    regenerate.
+
+def _lookup_only(question: str, ctx: dict) -> dict | None:
+    """Return a cached lesson without calling Claude, Flux, or any other paid API.
+
+    Checks the in-memory recent cache and the persisted DB cache. Missing
+    pictures stay missing: the page shows a placeholder and nothing new is saved.
     """
+    del ctx  # GET lookups must not use request context to generate pictures.
     recent = _recent_get(question)
     if recent is not None:
         return recent
@@ -946,17 +972,8 @@ def _lookup_only(question: str, ctx: dict) -> dict | None:
     if cached is None:
         return None
     cached.setdefault("meta", {})["from_cache"] = True
-    slides_before = cached.get("slides", [])
-    had_images = bool(slides_before) and all(s.get("image_data_url") for s in slides_before)
-    _attach_slide_images(cached, ctx)
-    _keep_redrawn_pictures(question, cached, had_images)
-    slides = cached.get("slides", [])
-    if slides and not any(s.get("image_data_url") for s in slides):
-        logger.warning("Cached lesson has no renderable images — busting cache: %s", question)
-        delete_cached_lesson(question)
-        return None
-    # Refresh the in-memory cache so a follow-up Back/refresh stays instant
-    _recent_put(question, cached)
+    if _lesson_has_pictures(cached):
+        _recent_put(question, cached)
     return cached
 
 
@@ -1001,17 +1018,20 @@ def lesson():
     email, _, refusal = _asker_gate(request.form.get("email"), question, request.form.get("parent_consent"))
     if refusal is not None:
         return render_template("error.html", question=question, error=refusal[1]), refusal[2]
-    data, err = _track_lesson("/lesson", question, ctx)
-    if err is not None:
-        if err == RATE_LIMIT_ERROR:
-            friendly = "Too many questions. Please try again later."
-            return render_template("error.html", question=question, error=friendly), 429
-        return render_template("error.html", question=question, error=err), 500
-    askers.record_question(email, question, generated=bool(getattr(g, "lesson_generated", False)))
-    _link_device(email)
-    resp = app.make_response(render_template("lesson.html", question=question, lesson=data))
-    resp.headers["Cache-Control"] = "private, max-age=600"
-    return resp
+    try:
+        data, err = _track_lesson("/lesson", question, ctx)
+        if err is not None:
+            if err == RATE_LIMIT_ERROR:
+                friendly = "Too many questions. Please try again later."
+                return render_template("error.html", question=question, error=friendly), 429
+            return render_template("error.html", question=question, error=err), 500
+        _finish_asker_claim(bool(getattr(g, "lesson_generated", False)))
+        _link_device(email)
+        resp = app.make_response(render_template("lesson.html", question=question, lesson=data))
+        resp.headers["Cache-Control"] = "private, max-age=600"
+        return resp
+    finally:
+        _release_asker_claim()
 
 
 @app.route("/api/lesson", methods=["POST"])
@@ -1043,18 +1063,21 @@ def api_lesson():
         return jsonify(body), status
 
     ctx = _client_context()
-    data, err = _track_lesson("/api/lesson", question, ctx)
-    if err is not None:
-        if err == RATE_LIMIT_ERROR:
-            return jsonify({
-                "ok": False,
-                "error": "rate_limit",
-                "message": "Too many questions. Please try again later.",
-            }), 429
-        return jsonify({"ok": False, "error": err}), 500
-    generated = bool(getattr(g, "lesson_generated", False))
-    askers.record_question(email, question, generated=generated)
-    _link_device(email)
+    try:
+        data, err = _track_lesson("/api/lesson", question, ctx)
+        if err is not None:
+            if err == RATE_LIMIT_ERROR:
+                return jsonify({
+                    "ok": False,
+                    "error": "rate_limit",
+                    "message": "Too many questions. Please try again later.",
+                }), 429
+            return jsonify({"ok": False, "error": err}), 500
+        generated = bool(getattr(g, "lesson_generated", False))
+        _finish_asker_claim(generated)
+        _link_device(email)
+    finally:
+        _release_asker_claim()
     reply = {"ok": True, "lesson": data, "subscribed": allowance["subscribed"], "free_left": None, "new_left_today": None,
              "free_limit": allowance["free_limit"], "waitlist_choice": allowance.get("waitlist_choice")}
     if allowance["subscribed"]:
@@ -1294,13 +1317,12 @@ def share_lesson(slug: str):
     if lesson_data is None:
         return render_template("error.html", question="", error="This share link has expired or doesn't exist."), 404
     question = lesson_data.pop("_share_question", "")
-    # Check in-memory cache first — images already attached, no Flux call needed
+    # Opening a share link never draws new pictures. A complete lesson can be
+    # remembered in memory; a lesson with missing art is served as stored.
     cached = _recent_get(question)
     if cached is not None:
         lesson_data = cached
-    else:
-        ctx = _client_context()
-        _attach_slide_images(lesson_data, ctx)
+    elif _lesson_has_pictures(lesson_data):
         _recent_put(question, lesson_data)
     return render_template("share.html", question=question, lesson=lesson_data, slug=slug)
 

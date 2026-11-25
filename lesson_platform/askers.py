@@ -54,54 +54,13 @@ def _trial_state(started: datetime | None, now: datetime) -> tuple[str, datetime
     return ("active" if now < ends else "ended"), ends
 
 
-def allowance(email: str, question: str, is_saved=None) -> dict:
-    """Decide whether this email may ask this question now, and why.
-
-    `is_saved` is an optional callable that says whether a saved lesson already
-    exists for the question; it's only consulted when the daily limit is reached.
-    """
-    qhash = db.question_hash(question)
-    now = datetime.now(timezone.utc)
-    window_start = now - timedelta(seconds=WINDOW_S)
-    if db._pool is None:
-        with _memory_lock:
-            asked = _memory_asked.get(email, {})
-            status = _memory_status.get(email, "none")
-            started_ts = _memory_trial.get(email)
-            choice = _memory_waitlist.get(email)
-            bonus = _memory_bonus.get(email, 0)
-            requested = email in _memory_requests
-            used, repeat = len(asked), qhash in asked
-            # Only lessons made during the free month count toward its 24-hour limit.
-            since = max(window_start.timestamp(), started_ts or 0)
-            recent = [ts for ts, generated in asked.values() if generated and ts >= since]
-            new_today = len(recent)
-            oldest = datetime.fromtimestamp(min(recent), timezone.utc) if recent else None
-        started = datetime.fromtimestamp(started_ts, timezone.utc) if started_ts else None
-    else:
-        try:
-            with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
-                cur.execute("SELECT subscription_status, trial_started_at, waitlist_choice, bonus_lessons, "
-                            "more_requested_at IS NOT NULL FROM askers WHERE email = %s", (email,))
-                row = cur.fetchone()
-                status, started, choice, bonus, requested = row if row else ("none", None, None, 0, False)
-                since = max(window_start, started) if started else window_start
-                cur.execute(
-                    "SELECT COUNT(*), COUNT(*) FILTER (WHERE question_hash = %s), "
-                    "COUNT(*) FILTER (WHERE generated AND created_at >= %s), "
-                    "MIN(created_at) FILTER (WHERE generated AND created_at >= %s) "
-                    "FROM asker_questions WHERE email = %s",
-                    (qhash, since, since, email),
-                )
-                used, repeat, new_today, oldest = cur.fetchone()
-                repeat = bool(repeat)
-        except Exception as exc:
-            logger.exception("Asker allowance check failed")
-            raise AskerUnavailable(str(exc)) from exc
+def _decide(status, started, choice, bonus, requested, used, repeat, new_today, oldest, now, saved: bool) -> dict:
+    """Turn one consistent snapshot into the same allowance dict the routes already use."""
     used, new_today = int(used), int(new_today)
     free_limit = FREE_QUESTIONS + int(bonus or 0)
     subscribed = status in _ACTIVE
     trial, trial_ends = _trial_state(started, now)
+    repeat = bool(repeat)
 
     if subscribed:
         reason = "subscribed"
@@ -112,11 +71,11 @@ def allowance(email: str, question: str, is_saved=None) -> dict:
     elif trial == "active":
         if new_today < TRIAL_DAILY_NEW:
             reason = "trial"
-        elif is_saved is not None and is_saved():
+        elif saved:
             reason = "saved_copy"
         else:
             reason = "daily_limit"
-    elif is_saved is not None and is_saved():
+    elif saved:
         reason = "saved_copy"
     elif trial == "ended" and not WAITLIST_INSTEAD_OF_TRIAL:
         reason = "subscription_required"
@@ -141,6 +100,161 @@ def allowance(email: str, question: str, is_saved=None) -> dict:
         "more_requested": bool(requested),
         "allowed": reason in ("subscribed", "repeat", "free", "trial", "saved_copy"),
     }
+
+
+def _memory_snapshot(email: str, qhash: str, now: datetime):
+    asked = _memory_asked.get(email, {})
+    status = _memory_status.get(email, "none")
+    started_ts = _memory_trial.get(email)
+    choice = _memory_waitlist.get(email)
+    bonus = _memory_bonus.get(email, 0)
+    requested = email in _memory_requests
+    used, repeat = len(asked), qhash in asked
+    window_start = (now - timedelta(seconds=WINDOW_S)).timestamp()
+    # Only lessons made during the free month count toward its 24-hour limit.
+    since = max(window_start, started_ts or 0)
+    recent = [ts for ts, generated in asked.values() if generated and ts >= since]
+    new_today = len(recent)
+    oldest = datetime.fromtimestamp(min(recent), timezone.utc) if recent else None
+    started = datetime.fromtimestamp(started_ts, timezone.utc) if started_ts else None
+    return status, started, choice, bonus, requested, used, repeat, new_today, oldest
+
+
+def _db_snapshot(cur, email: str, qhash: str, now: datetime, lock: bool):
+    if lock:
+        cur.execute(
+            "INSERT INTO askers (email, consented_at) VALUES (%s, NOW()) "
+            "ON CONFLICT (email) DO NOTHING",
+            (email,),
+        )
+        cur.execute(
+            "SELECT subscription_status, trial_started_at, waitlist_choice, bonus_lessons, "
+            "more_requested_at IS NOT NULL FROM askers WHERE email = %s FOR UPDATE",
+            (email,),
+        )
+    else:
+        cur.execute(
+            "SELECT subscription_status, trial_started_at, waitlist_choice, bonus_lessons, "
+            "more_requested_at IS NOT NULL FROM askers WHERE email = %s",
+            (email,),
+        )
+    row = cur.fetchone()
+    status, started, choice, bonus, requested = row if row else ("none", None, None, 0, False)
+    window_start = now - timedelta(seconds=WINDOW_S)
+    since = max(window_start, started) if started else window_start
+    cur.execute(
+        "SELECT COUNT(*), COUNT(*) FILTER (WHERE question_hash = %s), "
+        "COUNT(*) FILTER (WHERE generated AND created_at >= %s), "
+        "MIN(created_at) FILTER (WHERE generated AND created_at >= %s) "
+        "FROM asker_questions WHERE email = %s",
+        (qhash, since, since, email),
+    )
+    used, repeat, new_today, oldest = cur.fetchone()
+    return status, started, choice, bonus, requested, used, repeat, new_today, oldest
+
+
+def allowance(email: str, question: str, is_saved=None) -> dict:
+    """Decide whether this email may ask this question now, and why.
+
+    `is_saved` is an optional callable that says whether a saved lesson already
+    exists for the question; it's only consulted when the daily limit is reached.
+    This read does not reserve a slot. Asking goes through claim_question.
+    """
+    qhash = db.question_hash(question)
+    now = datetime.now(timezone.utc)
+    saved = bool(is_saved()) if is_saved is not None else False
+    if db._pool is None:
+        with _memory_lock:
+            snapshot = _memory_snapshot(email, qhash, now)
+    else:
+        try:
+            with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+                snapshot = _db_snapshot(cur, email, qhash, now, lock=False)
+        except Exception as exc:
+            logger.exception("Asker allowance check failed")
+            raise AskerUnavailable(str(exc)) from exc
+    return _decide(*snapshot, now, saved)
+
+
+def claim_question(email: str, question: str, is_saved=None) -> tuple[dict, bool]:
+    """Decide and, when this question newly counts, record it before returning.
+
+    The insert happens in the same locked step as the count, so two requests
+    cannot both take the last free question. Returns (allowance, reserved).
+    `reserved` is True only when this call inserted the question. The allowance
+    numbers are from before that insert, matching a check that then records.
+    """
+    qhash = db.question_hash(question)
+    now = datetime.now(timezone.utc)
+    saved = bool(is_saved()) if is_saved is not None else False
+    if db._pool is None:
+        with _memory_lock:
+            decision = _decide(*_memory_snapshot(email, qhash, now), now, saved)
+            reserved = False
+            if decision["allowed"] and not decision["repeat"]:
+                _memory_asked.setdefault(email, {})[qhash] = (time.time(), False)
+                reserved = True
+            return decision, reserved
+    try:
+        with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+            decision = _decide(*_db_snapshot(cur, email, qhash, now, lock=True), now, saved)
+            reserved = False
+            if decision["allowed"]:
+                cur.execute(
+                    "UPDATE askers SET last_question_at = NOW(), "
+                    "consented_at = COALESCE(consented_at, NOW()) WHERE email = %s",
+                    (email,),
+                )
+                if not decision["repeat"]:
+                    cur.execute(
+                        "INSERT INTO asker_questions (email, question_hash, question, generated) "
+                        "VALUES (%s, %s, %s, false) "
+                        "ON CONFLICT (email, question_hash) DO NOTHING RETURNING question_hash",
+                        (email, qhash, question[:500]),
+                    )
+                    reserved = cur.fetchone() is not None
+            return decision, reserved
+    except Exception as exc:
+        logger.exception("Asker allowance check failed")
+        raise AskerUnavailable(str(exc)) from exc
+
+
+def finish_question(email: str, question: str, generated: bool) -> None:
+    """Record whether a reserved question was newly made or a saved copy."""
+    qhash = db.question_hash(question)
+    if db._pool is None:
+        with _memory_lock:
+            slot = _memory_asked.get(email, {}).get(qhash)
+            if slot is not None:
+                _memory_asked[email][qhash] = (slot[0], bool(generated))
+        return
+    try:
+        with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE asker_questions SET generated = %s WHERE email = %s AND question_hash = %s",
+                (bool(generated), email, qhash),
+            )
+    except Exception:
+        logger.exception("Failed to finish asker question")
+
+
+def release_question(email: str, question: str) -> None:
+    """Drop a reservation when the lesson was not actually made."""
+    qhash = db.question_hash(question)
+    if db._pool is None:
+        with _memory_lock:
+            asked = _memory_asked.get(email)
+            if asked is not None:
+                asked.pop(qhash, None)
+        return
+    try:
+        with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM asker_questions WHERE email = %s AND question_hash = %s",
+                (email, qhash),
+            )
+    except Exception:
+        logger.exception("Failed to release asker question")
 
 
 def record_question(email: str, question: str, generated: bool = True) -> None:
