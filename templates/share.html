@@ -8,8 +8,29 @@
   <meta property="og:title" content="{{ publication.title if published else lesson.title }}">
   <meta property="og:description" content="{{ publication.summary if published else question }}">
   {% if published and not editorial_preview|default(false) %}<link rel="canonical" href="{{ canonical_url }}">{% endif %}
-  <meta property="og:image" content="{{ url_for('admin_publication_thumbnail_preview', slug=slug, _external=True) if editorial_preview|default(false) else (url_for('explore_thumbnail', slug=slug, _external=True) if published else url_for('static', filename='favicon.svg', _external=True)) }}">
+  {% if editorial_preview|default(false) %}
+    {% set share_image = url_for('admin_publication_thumbnail_preview', slug=slug, _external=True) %}
+  {% elif published %}
+    {% set share_image = 'https://www.asklilowl.com/explore/' ~ slug ~ '/thumbnail.webp' %}
+  {% else %}
+    {% set share_image = 'https://www.asklilowl.com/static/brand/og-share.png' %}
+  {% endif %}
+  <meta property="og:image" content="{{ share_image }}">
+  {% if published and not editorial_preview|default(false) %}
+  <meta property="og:url" content="{{ canonical_url }}">
+  <meta property="og:image:width" content="480">
+  <meta property="og:image:height" content="300">
+  {% elif not editorial_preview|default(false) %}
+  <meta property="og:url" content="https://www.asklilowl.com/s/{{ slug }}">
+  {% endif %}
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="Ask Lil Owl">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ publication.title if published else lesson.title }}">
+  <meta name="twitter:description" content="{{ publication.summary if published else question }}">
+  <meta name="twitter:image" content="{{ share_image }}">
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='brand/apple-touch-icon.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   {% if cube_animation_data|default(none) %}<link rel="stylesheet" href="{{ url_for('static', filename='cube-player.css') }}">{% endif %}
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
@@ -106,10 +127,11 @@
           </div>
 
           <div class="illustration">
+            {% set picture = slide.image_src or slide.image_data_url %}
             {% if cube_animation_data|default(none) %}
             <div class="cube-motion">
               <canvas class="cube-canvas" width="900" height="620" hidden role="img" aria-label="Animated cube demonstration: {{ slide.title }}"></canvas>
-              {% if slide.image_data_url %}<img src="{{ slide.image_data_url }}" alt="{{ slide.title }}" class="slide-image cube-poster">{% endif %}
+              {% if picture %}<img src="{{ picture }}" alt="{{ slide.title }}" class="slide-image cube-poster">{% endif %}
               <strong class="cube-move-label" aria-live="polite">Ready to watch</strong>
               <span class="cube-move-count"></span>
               <div class="cube-toolbar">
@@ -122,8 +144,8 @@
             </div>
             <p class="cube-hint">Watch the highlighted layer. Clockwise is judged looking straight at the named face. You can pause after every move.</p>
             {% else %}
-            {% if slide.image_data_url %}
-              <img src="{{ slide.image_data_url }}" alt="{{ slide.title }}" class="slide-image">
+            {% if picture %}
+              <img src="{{ picture }}" alt="{{ slide.title }}" class="slide-image">
             {% else %}
               <div class="slide-image-missing">Illustration unavailable</div>
             {% endif %}
@@ -177,7 +199,7 @@
     </section>
 
     <footer class="lesson-footer">
-      <p>Made with curiosity for curious minds 🦉 — <a href="{{ url_for('home') }}">Ask Lil Owl</a> · <a href="/privacy">Privacy policy</a></p>
+      <p>Made with curiosity for curious minds 🦉 — <a href="{{ url_for('home') }}">Ask Lil Owl</a> · <a href="/privacy">Privacy policy</a> · <a href="/terms">Terms</a></p>
     </footer>
   </main>
 

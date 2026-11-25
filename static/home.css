@@ -18,7 +18,8 @@ body.cinema-home { margin: 0; background: #141414; color: #F1EFE8; font-family: 
 .cine-hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, rgba(20,20,20,.95) 0%, rgba(20,20,20,.7) 38%, rgba(20,20,20,0) 70%); }
 .cine-hero-copy { position: absolute; z-index: 1; left: 48px; bottom: 48px; width: min(460px, calc(100% - 96px)); display: flex; flex-direction: column; gap: 12px; }
 .cine-kicker { margin: 0; font-size: 14px; font-weight: 700; color: #FAC775; }
-.cine-hero h1 { margin: 0; font-family: 'Baloo 2', sans-serif; font-size: 54px; line-height: 1; font-weight: 700; color: #F1EFE8; }
+.cine-hero h1.cine-kicker { font-family: Nunito, system-ui, sans-serif; font-size: 14px; line-height: 1.2; }
+.cine-hero h2.cine-feature-title { margin: 0; font-family: 'Baloo 2', sans-serif; font-size: 54px; line-height: 1; font-weight: 700; color: #F1EFE8; }
 .cine-hero p.cine-summary { margin: 0; font-size: 17px; line-height: 1.5; color: #D3D1C7; }
 .cinema-home a.cine-play { align-self: flex-start; display: flex; align-items: center; gap: 8px; min-height: 44px; box-sizing: border-box; margin-top: 6px; background: #F1EFE8; color: #2C2C2A; text-decoration: none; font-weight: 700; font-size: 17px; padding: 10px 26px; border-radius: 8px; }
 .cinema-home a.cine-play:hover, .cinema-home a.cine-play:focus-visible { background: #fff; }
@@ -108,7 +109,7 @@ body.cinema-home { margin: 0; background: #141414; color: #F1EFE8; font-family: 
   .cine-hero { margin: 4px 16px 0; height: 340px; }
   .cine-hero-copy { left: 20px; bottom: 20px; width: calc(100% - 40px); }
   .cine-hero::after { background: linear-gradient(0deg, rgba(20,20,20,.95) 0%, rgba(20,20,20,.6) 55%, rgba(20,20,20,0) 100%); }
-  .cine-hero h1 { font-size: 36px; }
+  .cine-hero h2.cine-feature-title { font-size: 36px; }
   .cine-hero p.cine-summary { font-size: 15px; }
   .cine-row-head { margin: 0 16px 6px; }
   .cine-rail { padding: 8px 16px; scroll-padding-left: 16px; }
@@ -127,7 +128,7 @@ body.cinema-home { margin: 0; background: #141414; color: #F1EFE8; font-family: 
   .cine-nav { font-size: 14px; gap: 16px; }
   .cine-hero { margin: 0 24px; height: 210px; height: min(210px, 56svh); }
   .cine-hero-copy { left: 24px; bottom: 14px; gap: 5px; width: min(420px, calc(100% - 48px)); }
-  .cine-hero h1 { font-size: 30px; }
+  .cine-hero h2.cine-feature-title { font-size: 30px; }
   .cine-hero p.cine-summary { display: none; }
   .cinema-home a.cine-play { margin-top: 2px; padding: 6px 20px; font-size: 16px; }
   .cine-rows { gap: 16px; padding: 12px 0 24px; }

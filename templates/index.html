@@ -4,7 +4,23 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Ask Lil Owl — Learn Anything!</title>
+  <meta name="description" content="Illustrated, narrated lessons for curious kids, used with a parent. Watch the library free. The first 3 questions are free.">
+  <link rel="canonical" href="https://www.asklilowl.com/">
+  <meta property="og:title" content="Ask Lil Owl — illustrated lessons for curious kids">
+  <meta property="og:description" content="Illustrated, narrated lessons for curious kids, used with a parent. Watch the library free. The first 3 questions are free.">
+  <meta property="og:url" content="https://www.asklilowl.com/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Ask Lil Owl">
+  <meta property="og:image" content="https://www.asklilowl.com/static/brand/og-share.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Ask Lil Owl, an owl reading a book">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Ask Lil Owl — illustrated lessons for curious kids">
+  <meta name="twitter:description" content="Illustrated, narrated lessons for curious kids, used with a parent. Watch the library free. The first 3 questions are free.">
+  <meta name="twitter:image" content="https://www.asklilowl.com/static/brand/og-share.png">
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='brand/apple-touch-icon.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='library.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='home.css') }}">
@@ -295,8 +311,9 @@
       <img class="cine-logo-owl" src="{{ url_for('static', filename='brand/owl-cutout.png') }}" alt="">
       <span class="cine-wordmark"><img src="{{ url_for('static', filename='brand/wordmark.png') }}" alt="AskLilOwl"></span>
     </a>
-    <nav class="cine-nav" aria-label="Lesson topics">
+    <nav class="cine-nav" aria-label="Primary">
       <a href="{{ url_for('home') }}" aria-current="page">Home</a>
+      <a href="{{ url_for('explore') }}">Explore</a>
       {% for row in rows %}<a href="#{{ row.id }}">{{ row.title }}</a>{% endfor %}
     </nav>
     {% if cards %}<span class="cine-count">{{ cards|length }} lessons</span>{% endif %}
@@ -307,8 +324,9 @@
     <section class="cine-hero" aria-label="Featured lesson">
       <img src="{{ url_for('explore_thumbnail', slug=spotlight.slug) }}" alt="">
       <div class="cine-hero-copy">
+        <h1 class="cine-kicker">Ask Lil Owl</h1>
         <p class="cine-kicker">Featured lesson · {{ spotlight.category }}</p>
-        <h1>{{ spotlight.title }}</h1>
+        <h2 class="cine-feature-title">{{ spotlight.title }}</h2>
         <p class="cine-summary">{{ spotlight.summary }}</p>
         <a class="cine-play" href="{{ url_for('explore_lesson', slug=spotlight.slug) }}"><span aria-hidden="true">▶</span> Play</a>
       </div>
@@ -336,8 +354,8 @@
     </div>
     {% else %}
     <section class="cine-empty">
-      <h1>New lessons are on the way</h1>
-      <p>Ask Lil Owl anything and get your own picture lesson.</p>
+      <h1>Ask Lil Owl</h1>
+      <p>Illustrated lessons for curious kids. New lessons are on the way.</p>
     </section>
     {% endif %}
     {% if subscribe_result == '1' %}
@@ -348,6 +366,7 @@
     {% if billing_test_mode %}<p class="cine-notice" role="note">Payments are in Stripe test mode. No real money is charged.</p>{% endif %}
     <footer class="cine-footer">
       <a href="{{ url_for('privacy') }}">Privacy policy</a>
+      <a href="{{ url_for('terms') }}">Terms</a>
       {% if billing_portal_url() %}<a href="{{ billing_portal_url() }}" rel="noopener">Manage subscription</a>{% endif %}
       <a href="mailto:{{ privacy_contact_email }}">Contact</a>
       <span>Made for curious minds</span>
@@ -363,7 +382,7 @@
           <label for="askerEmail">Grown-up's email</label>
           <input type="email" name="email" id="askerEmail" placeholder="parent@example.com" required autocomplete="email" maxlength="254">
           <p class="asker-note">No password needed.{% if email_verification %} We'll email a 6-digit code to confirm it.{% endif %} We remember it on this device. Your first {{ free_questions }} lessons are free.</p>
-          <label class="asker-consent"><input type="checkbox" name="parent_consent" value="yes" id="askerConsent" required> <span>I'm a parent or guardian, I'll stay with my child while they use AskLilOwl, and I agree to the <a href="{{ url_for('privacy') }}" target="_blank" rel="noopener">privacy policy</a>.</span></label>
+          <label class="asker-consent"><input type="checkbox" name="parent_consent" value="yes" id="askerConsent" required> <span>I'm a parent or guardian, I'll stay with my child while they use AskLilOwl, and I agree to the <a href="{{ url_for('privacy') }}" target="_blank" rel="noopener">privacy policy</a> and <a href="{{ url_for('terms') }}" target="_blank" rel="noopener">terms</a>.</span></label>
         </div>
         <p class="asker-saved" id="askerSaved" hidden>Asking as <strong id="askerSavedEmail"></strong> · <button type="button" id="askerChange">Change</button></p>
         <div class="asker-verify" id="askerVerify" hidden>

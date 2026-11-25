@@ -6,7 +6,20 @@
   <title>Explore lessons — Ask Lil Owl</title>
   <meta name="description" content="Explore illustrated, kid-friendly lessons about science, nature, inventions, and more.">
   <link rel="canonical" href="https://www.asklilowl.com/explore">
+  <meta property="og:title" content="Explore lessons — Ask Lil Owl">
+  <meta property="og:description" content="Explore illustrated, kid-friendly lessons about science, nature, inventions, and more.">
+  <meta property="og:url" content="https://www.asklilowl.com/explore">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Ask Lil Owl">
+  <meta property="og:image" content="https://www.asklilowl.com/static/brand/og-share.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Explore lessons — Ask Lil Owl">
+  <meta name="twitter:description" content="Explore illustrated, kid-friendly lessons about science, nature, inventions, and more.">
+  <meta name="twitter:image" content="https://www.asklilowl.com/static/brand/og-share.png">
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='brand/apple-touch-icon.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='library.css') }}">
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
@@ -85,7 +98,7 @@
       {% endif %}
     </div>
   </main>
-  <footer class="library-footer library-shell"><span>Made for curious minds 🦉</span><span><a href="{{ url_for('privacy') }}">Privacy policy</a> · <a href="mailto:{{ privacy_contact_email }}">Contact</a> · <a href="{{ url_for('home') }}">Ask Lil Owl</a></span></footer>
+  <footer class="library-footer library-shell"><span>Made for curious minds 🦉</span><span><a href="{{ url_for('privacy') }}">Privacy policy</a> · <a href="{{ url_for('terms') }}">Terms</a> · <a href="mailto:{{ privacy_contact_email }}">Contact</a> · <a href="{{ url_for('home') }}">Ask Lil Owl</a></span></footer>
   <script>
     const search = document.getElementById('lessonSearch');
     const cards = [...document.querySelectorAll('[data-library-card]')];

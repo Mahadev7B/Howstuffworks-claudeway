@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Terms of use — AskLilOwl</title>
+  <meta name="description" content="The rules for using AskLilOwl with a child: free lessons, parent email, and Stripe subscriptions.">
+  <link rel="canonical" href="https://www.asklilowl.com/terms">
+  <meta property="og:title" content="Terms of use — Ask Lil Owl">
+  <meta property="og:description" content="The rules for using AskLilOwl with a child: free lessons, parent email, and Stripe subscriptions.">
+  <meta property="og:url" content="https://www.asklilowl.com/terms">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Ask Lil Owl">
+  <meta property="og:image" content="https://www.asklilowl.com/static/brand/og-share.png">
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='brand/apple-touch-icon.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='cinema-theme.css') }}">
+  <style>
+    .policy { max-width: 760px; margin: 0 auto; padding: 1.5rem 1.25rem 4rem; line-height: 1.65; }
+    .policy-brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; margin-bottom: 1.5rem; }
+    .policy-brand img:first-child { width: 44px; height: 45px; }
+    .policy-brand img:last-child { width: 122px; height: 25px; box-sizing: content-box; background: #fff; border-radius: 10px; padding: 6px 10px; }
+    .policy h1 { font-family: 'Baloo 2', sans-serif; font-size: 2.4rem; line-height: 1.1; margin: 0 0 0.25rem; }
+    .policy h2 { font-family: 'Baloo 2', sans-serif; font-size: 1.45rem; margin: 2.2rem 0 0.5rem; color: #FAC775; }
+    .policy p, .policy li { color: #D3D1C7; }
+    .policy strong { color: #F1EFE8; }
+    .policy ul { padding-left: 1.3rem; }
+    .policy li { margin-bottom: 0.35rem; }
+    .policy .updated { color: #B4B2A9; margin-bottom: 1.5rem; }
+    .policy .summary { background: #2C2C2A; border-radius: 14px; padding: 1rem 1.25rem; }
+    .policy .summary p { margin: 0; color: #F1EFE8; }
+  </style>
+</head>
+<body class="cinema-page">
+  <main class="policy">
+    <a class="policy-brand" href="{{ url_for('home') }}">
+      <img src="{{ url_for('static', filename='brand/owl-cutout.png') }}" alt="">
+      <img src="{{ url_for('static', filename='brand/wordmark.png') }}" alt="AskLilOwl home">
+    </a>
+    <h1>Terms of use</h1>
+    <p class="updated">Last updated {{ updated }}</p>
+
+    <div class="summary">
+      <p><strong>In short:</strong> AskLilOwl is for a child and a parent or guardian together. Watching published lessons is free and needs no email. Asking a new question needs a parent's email and agreement. The first {{ free_questions }} different questions on that email are free. More new questions need an admin to add free lessons, or a subscription when the question box offers one. The <a href="{{ url_for('privacy') }}">privacy policy</a> explains what we store.</p>
+    </div>
+
+    <h2>Who these terms are for</h2>
+    <p>These terms are between you and AskLilOwl, the people who run asklilowl.com. If you use the site with a child, you agree to these terms and the <a href="{{ url_for('privacy') }}">privacy policy</a> for that use. You can write to us at <a href="mailto:{{ contact_email }}">{{ contact_email }}</a>.</p>
+
+    <h2>A parent stays with the child</h2>
+    <p>AskLilOwl is meant to be used by a child together with a parent or guardian. A parent should be present the whole time a child is watching or asking. The parent gives the email, agrees to these terms and the privacy policy, and decides whether to pay.</p>
+
+    <h2>What the site does</h2>
+    <p>AskLilOwl shows short illustrated lessons with narration. Some lessons are published in the library for anyone to watch. Others are made when a parent asks a question. Lesson text, pictures, and spoken audio are produced with automated tools. They can be wrong or incomplete. They are not school instruction, medical advice, or safety advice. Please use your own judgment before a child copies anything a lesson describes.</p>
+
+    <h2>Watching and asking</h2>
+    <ul>
+      <li>Anyone can watch a published lesson without an account and without paying. Opening those lessons does not use up the free questions.</li>
+      <li>To ask a question, a parent or guardian enters their email and agrees to the privacy policy and these terms. There is no password.</li>
+      <li>When email sending is turned on, we may send a one-time code to confirm the address. We don't send marketing.</li>
+      <li>The first {{ free_questions }} different questions on that email are free. Asking one of those again does not use another. The first time that email opens a lesson someone else already asked, it does use one of the {{ free_questions }}.</li>
+      <li>After those free questions, new questions stop. The parent can answer a short waitlist question and can ask us to review a request for 2 more free lessons. We add those only after a person reviews the request.</li>
+      <li>A subscription, when the question box offers it, is $4.99 a month through Stripe and lets that email keep asking new questions. The price charged is the price shown at checkout.</li>
+    </ul>
+
+    <h2>Payments</h2>
+    <p>Stripe handles subscription payments on Stripe's own page. AskLilOwl never sees or stores card numbers. We keep Stripe's customer and subscription reference numbers and whether the subscription is active, as described in the privacy policy.</p>
+    <p>A subscription renews each month until it is cancelled. A parent can cancel from the "Manage subscription" link when it is shown, or by emailing us. If a payment fails, Stripe may mark the subscription inactive, and new questions can stop until it is active again. If a charge looks wrong, email us and we will look at it with you.</p>
+
+    <h2>The parent's email</h2>
+    <p>The email is how we tell families apart, count free questions, and link a subscription. The privacy policy explains what we store, the cookie that keeps one email on a device, and how to ask us to delete it. Please don't type a child's name, a school, an address, or other personal details into a question or a comment.</p>
+
+    <h2>Using the site fairly</h2>
+    <p>Don't misuse AskLilOwl. That includes trying to break or overload the site, scraping lessons in bulk, or asking for sexual content involving children or for help hurting someone. We can refuse a question or stop an email that misuses the site.</p>
+    <p>The microphone button uses the browser's own speech recognition. We don't record voices. The browser or device maker may process the audio under its own terms.</p>
+
+    <h2>Lessons and the AskLilOwl name</h2>
+    <p>The AskLilOwl name, the owl, and the published lessons are ours. You may watch them with your child and use the share button to send a lesson to someone else. Don't copy the site or the lessons to run your own product.</p>
+    <p>A lesson made from a question may be saved and shown again to someone who asks the same question, without the asker's email attached. The privacy policy says this too.</p>
+
+    <h2>The site can change</h2>
+    <p>We may change lessons, the price, how many free questions an email gets, or these terms. If we change these terms, we will update this page and the date at the top. If you keep using AskLilOwl after that, you agree to the new terms. We may also pause or stop the site.</p>
+    <p>Lessons can contain mistakes, and the site will not always be available.</p>
+
+    <h2>Problems</h2>
+    <p>Email <a href="mailto:{{ contact_email }}">{{ contact_email }}</a> and we will try to sort it out. For personal information, follow the privacy policy.</p>
+
+    <p class="mt-4"><a href="{{ url_for('privacy') }}">Privacy policy</a> · <a href="{{ url_for('home') }}">← Back to AskLilOwl</a></p>
+  </main>
+</body>
+</html>

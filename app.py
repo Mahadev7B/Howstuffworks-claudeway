@@ -1,11 +1,11 @@
-"""HowStuffWorks - Claudeway
+"""Ask Lil Owl.
 
-A Flask app that turns any 'How does X work?' question into a kid-friendly
-4-slide illustrated lesson with voiceover.
+A Flask app that turns a child's question into a short illustrated lesson
+with narration. Published lessons live at /explore. Parents ask new questions
+from the homepage.
 
-Powered by Claude (single API call per lesson).
-Images: Claude-generated SVG (free).
-Voiceover: browser Web Speech API (free).
+Lesson text: Anthropic. Pictures: fal.ai Flux, or Matplotlib when Flux is off.
+Voiceover: OpenAI text-to-speech, or the browser's speech synthesis.
 """
 import base64
 import hashlib
@@ -32,6 +32,7 @@ from flask import (
     session,
     url_for,
 )
+from flask.sessions import SecureCookieSessionInterface
 from itsdangerous import BadSignature, URLSafeSerializer
 
 from lesson_platform import (
@@ -81,8 +82,23 @@ register_private_api(app)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
+class _ProxyAwareSessionInterface(SecureCookieSessionInterface):
+    """Mark the admin cookie Secure when Render or Cloudflare says the visit is HTTPS."""
+
+    def get_cookie_secure(self, app):
+        proto = (request.headers.get("X-Forwarded-Proto") or "").split(",")[0].strip().lower()
+        if proto == "https" or request.is_secure:
+            return True
+        return bool(app.config.get("SESSION_COOKIE_SECURE"))
+
+
 settings = load_settings()
 app.secret_key = settings.flask_secret_key
+app.session_interface = _ProxyAwareSessionInterface()
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+)
 from datetime import timedelta as _td
 app.permanent_session_lifetime = _td(days=7)
 db_enabled = init_db()
@@ -459,7 +475,14 @@ def _attach_slide_images(lesson: dict, ctx: dict | None = None) -> None:
 
 
 def _client_ip() -> str | None:
-    """The visitor's IP address, used in memory only and never stored or logged."""
+    """The visitor's IP address, used in memory only and never stored or logged.
+
+    Cloudflare sets CF-Connecting-IP itself. The left side of X-Forwarded-For
+    can be whatever the browser sent, so it is only a fallback for local runs.
+    """
+    cloudflare = (request.headers.get("CF-Connecting-IP") or "").strip()
+    if cloudflare:
+        return cloudflare
     forwarded = request.headers.get("X-Forwarded-For") or ""
     first = forwarded.split(",")[0].strip()
     return first or request.remote_addr
@@ -467,9 +490,7 @@ def _client_ip() -> str | None:
 
 def _client_context() -> dict:
     """Approximate location and device details. The IP address is used for the lookup, then dropped."""
-    _, city, region, country = extract_and_lookup(
-        request.headers.get("X-Forwarded-For"), request.remote_addr
-    )
+    _, city, region, country = extract_and_lookup(_client_ip(), None)
     return {
         "city": city,
         "region": region,
@@ -576,7 +597,7 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
             error=str(exc),
             **ctx,
         )
-        return None, str(exc)
+        return None, "We couldn't make that lesson just now. Please try again."
 
     meta = data.get("meta", {})
     cost = meta.get("estimated_cost_usd", 0.0)
@@ -675,12 +696,29 @@ def explore():
                            featured=featured, spotlight=spotlight)
 
 
+def _point_slides_at_image_urls(lesson: dict, slug: str) -> None:
+    """Swap inlined slide pictures for cacheable URLs before the page is rendered.
+
+    The bytes stay in the published lesson. The version query changes when the
+    picture changes, so a long cache lifetime doesn't keep a replaced illustration.
+    """
+    for index, slide in enumerate(lesson.get("slides") or []):
+        data_url = slide.get("image_data_url")
+        if not isinstance(data_url, str) or not data_url.startswith("data:"):
+            continue
+        version = hashlib.sha256(data_url.encode("utf-8")).hexdigest()[:12]
+        slide["image_src"] = url_for("explore_slide_image", slug=slug, index=index, v=version)
+        slide.pop("image_data_url", None)
+
+
 @app.get("/explore/<slug>")
 def explore_lesson(slug: str):
     publication = library.get_published_lesson(slug)
     if publication is None:
         abort(404)
-    return render_template("share.html", lesson=library.with_publication_scripts(publication["lesson"]),
+    lesson = library.with_publication_scripts(publication["lesson"])
+    _point_slides_at_image_urls(lesson, slug)
+    return render_template("share.html", lesson=lesson,
                            question=publication["summary"], slug=slug,
                            published=True, publication=publication,
                            cube_animation_data=private_cube_animation(slug, publication["lesson"]),
@@ -694,6 +732,20 @@ def explore_thumbnail(slug: str):
         abort(404)
     return Response(result[0], mimetype=result[1],
                     headers={"Cache-Control": "no-store"})
+
+
+@app.get("/explore/<slug>/slide/<int:index>")
+def explore_slide_image(slug: str, index: int):
+    """Serve one published slide illustration instead of embedding it in the HTML."""
+    result = library.get_published_slide_image(slug, index)
+    if result is None:
+        abort(404)
+    body, mime = result
+    etag = '"' + hashlib.sha256(body).hexdigest()[:16] + '"'
+    headers = {"Cache-Control": "public, max-age=604800", "ETag": etag}
+    if etag in request.if_none_match:
+        return Response(status=304, headers=headers)
+    return Response(body, mimetype=mime, headers=headers)
 
 
 @app.get("/explore/<slug>/audio/<int:slide_index>.mp3")
@@ -712,7 +764,8 @@ def sitemap():
         cards = library.list_published_cards()
     except RuntimeError:
         cards = []
-    urls = ["https://www.asklilowl.com/", "https://www.asklilowl.com/explore", "https://www.asklilowl.com/privacy"]
+    urls = ["https://www.asklilowl.com/", "https://www.asklilowl.com/explore",
+            "https://www.asklilowl.com/privacy", "https://www.asklilowl.com/terms"]
     urls.extend("https://www.asklilowl.com/explore/" + card["slug"] for card in cards)
     body = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
     body += "".join("<url><loc>" + escape(url) + "</loc></url>" for url in urls) + "</urlset>"
@@ -725,14 +778,27 @@ def privacy():
                            free_questions=askers.FREE_QUESTIONS)
 
 
+@app.get("/terms")
+def terms():
+    return render_template("terms.html", contact_email=PRIVACY_CONTACT_EMAIL, updated=TERMS_UPDATED,
+                           free_questions=askers.FREE_QUESTIONS)
+
+
 @app.get("/robots.txt")
 def robots():
-    return Response("User-agent: *\nAllow: /\nSitemap: https://www.asklilowl.com/sitemap.xml\n",
-                    mimetype="text/plain")
+    return Response(
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /admin\n"
+        "Disallow: /debug\n"
+        "Sitemap: https://www.asklilowl.com/sitemap.xml\n",
+        mimetype="text/plain",
+    )
 
 
 PRIVACY_CONTACT_EMAIL = "Asklilowl@gmail.com"
 PRIVACY_UPDATED = "November 12, 2026"
+TERMS_UPDATED = "November 25, 2026"
 app.jinja_env.globals["privacy_contact_email"] = PRIVACY_CONTACT_EMAIL
 app.jinja_env.globals["billing_portal_url"] = billing.portal_url
 
@@ -741,7 +807,7 @@ DEVICE_EMAIL_MESSAGE = ("This device is already set up for another grown-up's em
                         "Please use that email to keep asking questions here.")
 DEVICE_COOKIE = "lilowl_device"
 DEVICE_COOKIE_MAX_AGE_S = 400 * 24 * 3600
-CONSENT_REQUIRED_MESSAGE = "A parent or guardian needs to agree to the privacy policy first."
+CONSENT_REQUIRED_MESSAGE = "A parent or guardian needs to agree to the privacy policy and terms first."
 VERIFY_REQUIRED_MESSAGE = "Please confirm the grown-up's email with the code we send to it."
 TRIAL_AVAILABLE_MESSAGE = (
     "You've used your {free} free questions. Start a free month: up to {daily} new questions every 24 hours "
@@ -822,6 +888,16 @@ def _set_device_cookie(response):
         response.set_cookie(DEVICE_COOKIE, _device_signer().dumps(email), max_age=DEVICE_COOKIE_MAX_AGE_S,
                             httponly=True, secure=request.is_secure or request.headers.get("X-Forwarded-Proto") == "https",
                             samesite="Lax")
+    return response
+
+
+@app.after_request
+def _security_headers(response):
+    """Clickjacking and content-type sniffing headers that don't change the pages."""
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'self'")
     return response
 
 
@@ -1127,12 +1203,16 @@ def api_quiz():
     lesson = payload.get("lesson")
     if not isinstance(lesson, dict) or not lesson.get("slides"):
         return jsonify({"ok": False, "error": "lesson is required"}), 400
+    if today_spend_usd() >= settings.daily_budget_usd:
+        return jsonify({"ok": False, "error": "Daily lesson budget reached. Please try again tomorrow."}), 503
+    if not ratelimit.allow("quiz", _client_ip(), 20):
+        return jsonify({"ok": False, "error": "Too many quizzes. Please try again later."}), 429
     try:
         quiz = generate_quiz(lesson, settings)
         return jsonify({"ok": True, "quiz": quiz})
-    except Exception as exc:
+    except Exception:
         logger.exception("Quiz generation failed")
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({"ok": False, "error": "Could not load quiz. Try again!"}), 500
 
 
 @app.route("/api/feedback", methods=["POST"])
@@ -1246,6 +1326,8 @@ def api_tts():
     spent = today_spend_usd()
     if spent >= settings.daily_budget_usd:
         return jsonify({"ok": False, "error": "Daily budget reached"}), 503
+    if not ratelimit.allow("tts", _client_ip(), 60):
+        return jsonify({"ok": False, "error": "Too many voice requests. Please try again later."}), 429
 
     started = time.time()
     try:
@@ -1262,7 +1344,7 @@ def api_tts():
             error=str(exc),
             **ctx,
         )
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({"ok": False, "error": "We couldn't read that aloud just now. Please try again."}), 500
 
     duration_ms = int((time.time() - started) * 1000)
     _tts_cache_put(text, audio_bytes)
@@ -1513,7 +1595,8 @@ def api_export_video_file(job_id: str):
 @app.route("/admin/clear-cache", methods=["POST"])
 def admin_clear_cache():
     secret = os.environ.get("ADMIN_SECRET", "")
-    if not secret or request.headers.get("X-Admin-Secret") != secret:
+    provided = request.headers.get("X-Admin-Secret") or ""
+    if not secret or not secrets.compare_digest(provided.encode(), secret.encode()):
         return jsonify({"ok": False, "error": "forbidden"}), 403
     if not db_enabled:
         return jsonify({"ok": False, "error": "DB not enabled"}), 503
@@ -1532,7 +1615,7 @@ def admin_clear_cache():
 @app.route("/admin/delete-cached-lesson", methods=["POST"])
 def admin_delete_cached_lesson():
     """Delete a single cached lesson by question text. Requires admin session."""
-    if not _admin_authed():
+    if not _admin_authed() or not _csrf_token_ok():
         return jsonify({"ok": False, "error": "forbidden"}), 403
     if not db_enabled:
         return jsonify({"ok": False, "error": "DB not enabled"}), 503
@@ -1598,12 +1681,17 @@ def _library_csrf_token() -> str:
     return token
 
 
-def _library_write_allowed() -> bool:
+def _csrf_token_ok() -> bool:
     expected = session.get("library_csrf")
     supplied = request.form.get("csrf_token", "")
+    if not supplied:
+        supplied = (request.get_json(silent=True) or {}).get("csrf_token") or request.headers.get("X-CSRF-Token") or ""
+    return bool(expected and supplied and secrets.compare_digest(str(expected), str(supplied)))
+
+
+def _library_write_allowed() -> bool:
     # Publishing must fail closed if the app still uses its known dev cookie key.
-    return bool(app.secret_key != "dev-secret-key" and _admin_authed() and expected and supplied and
-                secrets.compare_digest(expected, supplied))
+    return bool(app.secret_key != "dev-secret-key" and _admin_authed() and _csrf_token_ok())
 
 
 app.jinja_env.globals["publish_all_hold"] = library.PUBLISH_ALL_HOLD
@@ -1829,19 +1917,23 @@ def admin_login():
         if not expected:
             return render_template("admin_login.html",
                                    error="Admin not configured (ADMIN_PASSWORD missing)."), 503
-        if secrets.compare_digest(provided.encode(), expected.encode()):
-            session["admin"] = True
-            session.permanent = True
-            return redirect(url_for("admin_dashboard"))
-        return render_template("admin_login.html", error="Wrong password."), 401
+        if len(provided) > 200 or not secrets.compare_digest(provided.encode(), expected.encode()):
+            if not ratelimit.allow("admin-login", _client_ip(), 10):
+                return render_template("admin_login.html",
+                                       error="Too many tries. Please wait a while and try again."), 429
+            return render_template("admin_login.html", error="Wrong password."), 401
+        session.clear()
+        session["admin"] = True
+        session.permanent = True
+        return redirect(url_for("admin_dashboard"))
     if _admin_authed():
         return redirect(url_for("admin_dashboard"))
     return render_template("admin_login.html", error=None)
 
 
-@app.route("/admin/logout", methods=["POST", "GET"])
+@app.post("/admin/logout")
 def admin_logout():
-    session.pop("admin", None)
+    session.clear()
     return redirect(url_for("admin_login"))
 
 
@@ -1937,29 +2029,45 @@ def favicon():
     return send_from_directory(app.static_folder, "favicon.svg", mimetype="image/svg+xml")
 
 
+def _prefers_json_error() -> bool:
+    if request.path.startswith("/api/"):
+        return True
+    accepts = request.accept_mimetypes
+    json_q = accepts["application/json"]
+    html_q = accepts["text/html"]
+    return json_q > 0 and json_q > html_q
+
+
+@app.errorhandler(404)
+def page_not_found(_err):
+    if _prefers_json_error():
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    return render_template("error.html", question="", error="That page is not here."), 404
+
+
+@app.errorhandler(500)
+def server_error(_err):
+    if _prefers_json_error():
+        return jsonify({"ok": False, "error": "Something went wrong"}), 500
+    return render_template("error.html", question="",
+                           error="Something went wrong on our side. Please try again."), 500
+
+
 @app.route("/healthz")
 def healthz():
-    return {
-        "ok": True,
-        "model": settings.anthropic_model,
-        "db": db_enabled,
-        "tts": bool(settings.openai_api_key),
-        "image_provider": settings.image_provider,
-        "flux": settings.image_provider == "flux" and bool(settings.fal_api_key),
-        "today_spend_usd": round(today_spend_usd(), 4),
-        "daily_budget_usd": settings.daily_budget_usd,
-    }
+    """Render's health check. Public on purpose, so the body is only an OK."""
+    response = jsonify({"ok": True})
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route("/debug/status", methods=["GET"])
 def debug_status():
-    """Operational health snapshot — DB pool, write counters, cache sizes.
-
-    Public but contains no secrets or PII. Useful for diagnosing whether
-    telemetry writes are succeeding, whether the pool is starving, etc.
-    """
+    """Operational snapshot for a signed-in admin. Not a public health check."""
+    if not _admin_authed():
+        return jsonify({"ok": False, "error": "forbidden"}), 403
     import sys
-    return jsonify({
+    response = jsonify({
         "ok": True,
         "uptime_seconds": int(time.time() - _STARTED_AT),
         "git_commit": os.environ.get("RENDER_GIT_COMMIT", "unknown")[:8],
@@ -1982,6 +2090,8 @@ def debug_status():
             "daily_budget_usd": settings.daily_budget_usd,
         },
     })
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 if __name__ == "__main__":

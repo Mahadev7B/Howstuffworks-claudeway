@@ -122,7 +122,8 @@ def test_home_shows_every_lesson_in_topic_rows_behind_the_owl(site, monkeypatch)
     panel = html.split('id="askPanel"', 1)[1].split(">", 1)[0]
     assert "hidden" in panel
     assert html.index('id="askForm"') > html.index('id="askPanel"')
-    assert "Jupiter</h1>" in html
+    assert "Ask Lil Owl</h1>" in html
+    assert "Jupiter</h2>" in html
     assert "fetch('/api" not in html.split('<div class="loading"')[0]
 
 
