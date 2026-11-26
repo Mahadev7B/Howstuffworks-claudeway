@@ -125,36 +125,6 @@ def test_security_headers_are_present(site):
     assert headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
 
 
-def test_opening_a_cached_lesson_does_not_draw_missing_pictures(monkeypatch):
-    app_module = importlib.import_module("app")
-    question = "How do bees fly?"
-    lesson = {"title": "Bees", "slides": [
-        {"title": "Wings", "explanation": "They flap.", "fun_fact": "Fast.", "narration": "They flap."},
-    ]}
-    app_module._recent_put(question, lesson)
-
-    def boom(*args, **kwargs):
-        raise AssertionError("GET must not draw or save pictures")
-
-    monkeypatch.setattr(app_module, "_attach_slide_images", boom)
-    monkeypatch.setattr(app_module, "generate_image", boom)
-    monkeypatch.setattr(app_module, "save_cached_lesson", boom)
-    page = app_module.app.test_client().get("/lesson", query_string={"q": question})
-    assert page.status_code == 200
-    assert b"They flap." in page.data
-    assert b"Illustration unavailable" in page.data
-    app_module._RECENT_LESSONS.pop(app_module._recent_key(question), None)
-
-    fresh = dict(lesson)
-    fresh["_share_question"] = question
-    monkeypatch.setattr(app_module, "db_enabled", True)
-    monkeypatch.setattr(app_module, "get_lesson_by_slug", lambda slug: fresh)
-    shared = app_module.app.test_client().get("/s/share-bees")
-    assert shared.status_code == 200
-    assert b"Illustration unavailable" in shared.data
-    assert b"They flap." in shared.data
-
-
 def test_cloudflare_ip_wins_over_a_spoofed_forwarded_header():
     app_module = importlib.import_module("app")
     with app_module.app.test_request_context("/", headers={

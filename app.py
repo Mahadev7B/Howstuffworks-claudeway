@@ -540,6 +540,26 @@ def _keep_redrawn_pictures(question: str, lesson: dict, had_images: bool) -> Non
         logger.info("Saved redrawn pictures for an older lesson: %s", question[:80])
 
 
+def _fill_missing_slide_pictures(question: str, lesson: dict, ctx: dict) -> None:
+    """Draw only slides that have no picture, then store any that succeeded.
+
+    The saved row is also what a share link reads, so the next open of either
+    page does not pay for those pictures again. A slide that still has no
+    picture after this keeps the placeholder.
+    """
+    slides = [s for s in (lesson.get("slides") or []) if isinstance(s, dict)]
+    if not slides or all(s.get("image_data_url") for s in slides):
+        _recent_put(question, lesson)
+        return
+    before = sum(1 for s in slides if s.get("image_data_url"))
+    _attach_slide_images(lesson, ctx)
+    after = sum(1 for s in slides if s.get("image_data_url"))
+    if db_enabled and after > before:
+        save_cached_lesson(question, lesson)
+        logger.info("Saved redrawn pictures for %s", question[:80])
+    _recent_put(question, lesson)
+
+
 def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None, str | None]:
     """Serve from cache if possible; otherwise generate, record, and cache."""
     recent = _recent_get(question)
@@ -953,27 +973,21 @@ def _question_is_saved(question: str) -> bool:
     return _recent_get(question) is not None or (db_enabled and cached_lesson_exists(question))
 
 
-def _lesson_has_pictures(lesson: dict) -> bool:
-    slides = lesson.get("slides") or []
-    return bool(slides) and all(slide.get("image_data_url") for slide in slides)
-
-
 def _lookup_only(question: str, ctx: dict) -> dict | None:
-    """Return a cached lesson without calling Claude, Flux, or any other paid API.
+    """Return a cached lesson. Missing slide pictures are drawn and saved.
 
-    Checks the in-memory recent cache and the persisted DB cache. Missing
-    pictures stay missing: the page shows a placeholder and nothing new is saved.
+    Checks the in-memory recent cache and the persisted DB cache. Does not
+    write a new lesson. Slides that already have a picture are left alone.
     """
-    del ctx  # GET lookups must not use request context to generate pictures.
     recent = _recent_get(question)
     if recent is not None:
+        _fill_missing_slide_pictures(question, recent, ctx)
         return recent
     cached = get_cached_lesson(question, settings.lesson_cache_ttl_days) if db_enabled else None
     if cached is None:
         return None
     cached.setdefault("meta", {})["from_cache"] = True
-    if _lesson_has_pictures(cached):
-        _recent_put(question, cached)
+    _fill_missing_slide_pictures(question, cached, ctx)
     return cached
 
 
@@ -997,7 +1011,8 @@ def lesson():
 
     ctx = _client_context()
 
-    # GET = navigation (Back, refresh, share link). NEVER regenerate here.
+    # GET opens a saved lesson. It does not write new lesson text. If a slide
+    # has no picture, only that picture is drawn and saved.
     # If the lesson isn't cached, send the user back to the home screen with
     # the question pre-filled so they have to explicitly click Ask.
     if request.method == "GET":
@@ -1317,13 +1332,12 @@ def share_lesson(slug: str):
     if lesson_data is None:
         return render_template("error.html", question="", error="This share link has expired or doesn't exist."), 404
     question = lesson_data.pop("_share_question", "")
-    # Opening a share link never draws new pictures. A complete lesson can be
-    # remembered in memory; a lesson with missing art is served as stored.
     cached = _recent_get(question)
     if cached is not None:
         lesson_data = cached
-    elif _lesson_has_pictures(lesson_data):
-        _recent_put(question, lesson_data)
+    # Same fill as a saved lesson page: only missing pictures, then stored on
+    # this lesson's row so the share link and the question page stay in step.
+    _fill_missing_slide_pictures(question, lesson_data, _client_context())
     return render_template("share.html", question=question, lesson=lesson_data, slug=slug)
 
 
