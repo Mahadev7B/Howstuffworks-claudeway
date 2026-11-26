@@ -151,7 +151,8 @@ def _sweep_stale_memory(now_ts: float) -> None:
 def _sweep_stale_db(cur) -> None:
     cur.execute(
         "DELETE FROM asker_questions WHERE settled = false "
-        "AND created_at < NOW() - INTERVAL '10 minutes'"
+        "AND created_at < NOW() - make_interval(secs => %s)",
+        (RESERVATION_TTL_S,),
     )
 
 
@@ -219,8 +220,8 @@ def _db_snapshot(cur, email: str, qhash: str, now: datetime, ip_hash: str | None
         cur.execute(
             "SELECT COUNT(DISTINCT question_hash), BOOL_OR(question_hash = %s) "
             "FROM asker_questions WHERE ip_hash = %s "
-            "AND (settled OR created_at >= NOW() - INTERVAL '10 minutes')",
-            (qhash, ip_hash),
+            "AND (settled OR created_at >= NOW() - make_interval(secs => %s))",
+            (qhash, ip_hash, RESERVATION_TTL_S),
         )
         used, ip_repeat = cur.fetchone()
     else:

@@ -581,8 +581,10 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
         # Were images already baked into the cached lesson row?
         slides_before = cached.get("slides", [])
         had_images = bool(slides_before) and all(s.get("image_data_url") for s in slides_before)
-        # Cache may or may not have rendered images embedded; ensure they exist.
-        _attach_slide_images(cached, ctx)
+        # A saved lesson can still be missing pictures. Do not pay for Flux once
+        # the daily budget is used up; the free chart is enough.
+        over_budget = today_spend_usd() >= settings.daily_budget_usd
+        _attach_slide_images(cached, ctx, allow_paid=not over_budget)
         _keep_redrawn_pictures(question, cached, had_images)
         # If every slide is still missing an image the cached spec is broken — bust it.
         slides = cached.get("slides", [])

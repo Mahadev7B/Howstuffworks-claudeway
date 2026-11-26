@@ -1,6 +1,7 @@
 """The free-lesson reservation holds its lock until the insert commits.
 
-Skipped unless DATABASE_URL points at a Postgres this process can use.
+Skipped unless TEST_DATABASE_URL is a local database whose name contains 'test'.
+DATABASE_URL is never read.
 """
 
 import os
@@ -11,10 +12,11 @@ import psycopg
 import pytest
 
 from lesson_platform import askers, db
+from tests.pg_guard import local_test_database_url
 
 pytestmark = pytest.mark.skipif(
-    not os.environ.get("DATABASE_URL"),
-    reason="DATABASE_URL is not set",
+    not os.environ.get("TEST_DATABASE_URL"),
+    reason="TEST_DATABASE_URL is not set",
 )
 
 
@@ -50,9 +52,11 @@ def _prepare_empty_asker_tables(dsn: str) -> None:
 
 @pytest.fixture(scope="module")
 def pg():
-    dsn = os.environ["DATABASE_URL"]
+    dsn = local_test_database_url()
+    if dsn is None:
+        pytest.skip("TEST_DATABASE_URL is not set")
     _prepare_empty_asker_tables(dsn)
-    assert db.init_db()
+    assert db.init_db(dsn)
     yield dsn
     if db._pool is not None:
         db._pool.close()

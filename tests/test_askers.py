@@ -160,9 +160,10 @@ def test_failed_generation_does_not_use_a_free_question(site, monkeypatch):
         assert ask(site, f"After the failure {number}?").status_code == 200
 
 
-def test_a_stale_reservation_no_longer_uses_a_network_slot():
+def test_a_stale_reservation_no_longer_uses_a_network_slot(monkeypatch):
     import time
     askers = importlib.import_module("lesson_platform.askers")
+    monkeypatch.setattr(askers.db, "_pool", None)
     askers.reset_memory()
     ip = askers.ip_hash("203.0.113.9")
     old = time.time() - askers.RESERVATION_TTL_S - 5

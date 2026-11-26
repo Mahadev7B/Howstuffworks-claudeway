@@ -86,3 +86,58 @@ def test_admin_redraw_is_the_only_paid_picture_path_and_it_checks_budget(monkeyp
     drawn = client.post("/admin/missing-pictures", data={"question": question, "csrf_token": "good-token"})
     assert drawn.status_code == 302
     assert paid == ["batch"]
+
+
+def _cached_lesson():
+    return {
+        "title": "Bees",
+        "meta": {},
+        "slides": [
+            {"title": "Missing", "explanation": "Needs a picture.", "fun_fact": "New.",
+             "narration": "Needs a picture.", "image_prompt": "a friendly bee"},
+        ],
+    }
+
+
+def test_reposting_a_saved_lesson_does_not_pay_for_flux_past_the_budget(monkeypatch):
+    app_module = importlib.import_module("app")
+    app_module._RECENT_LESSONS.clear()
+    monkeypatch.setattr(app_module, "db_enabled", True)
+    monkeypatch.setattr(app_module, "get_cached_lesson", lambda *a, **k: _cached_lesson())
+    monkeypatch.setattr(app_module, "today_spend_usd", lambda: app_module.settings.daily_budget_usd)
+    monkeypatch.setattr(app_module.settings, "image_provider", "flux")
+    monkeypatch.setattr(app_module.settings, "fal_api_key", "test-key")
+    monkeypatch.setattr(app_module, "record_api_call", lambda **k: None)
+    monkeypatch.setattr(app_module, "delete_cached_lesson", lambda *a, **k: None)
+    monkeypatch.setattr(app_module, "save_cached_lesson", lambda *a, **k: None)
+    monkeypatch.setattr(app_module, "_render_with_matplotlib", lambda slide: slide.__setitem__(
+        "image_data_url", "data:image/png;base64,NEW") or True)
+    paid = []
+    monkeypatch.setattr(app_module, "generate_images_batch", lambda *a, **k: paid.append("batch"))
+    monkeypatch.setattr(app_module, "generate_image", lambda *a, **k: paid.append("one"))
+    data, err = app_module._track_lesson("/api/lesson", "How do bees fly?", {})
+    assert err is None and data is not None
+    assert paid == []
+
+
+def test_reposting_a_saved_lesson_may_use_flux_while_under_budget(monkeypatch):
+    app_module = importlib.import_module("app")
+    app_module._RECENT_LESSONS.clear()
+    monkeypatch.setattr(app_module, "db_enabled", True)
+    monkeypatch.setattr(app_module, "get_cached_lesson", lambda *a, **k: _cached_lesson())
+    monkeypatch.setattr(app_module, "today_spend_usd", lambda: 0)
+    monkeypatch.setattr(app_module.settings, "image_provider", "flux")
+    monkeypatch.setattr(app_module.settings, "fal_api_key", "test-key")
+    monkeypatch.setattr(app_module, "record_api_call", lambda **k: None)
+    monkeypatch.setattr(app_module, "save_cached_lesson", lambda *a, **k: None)
+    monkeypatch.setattr(app_module, "_compress_image", lambda raw: (raw, "image/png"))
+    paid = []
+
+    def batch(prompts, settings, negative=None):
+        paid.append("batch")
+        return [(b"png", "image/png", 0.01) for _ in prompts]
+
+    monkeypatch.setattr(app_module, "generate_images_batch", batch)
+    data, err = app_module._track_lesson("/api/lesson", "How do bees fly?", {})
+    assert err is None and data is not None
+    assert paid == ["batch"]
