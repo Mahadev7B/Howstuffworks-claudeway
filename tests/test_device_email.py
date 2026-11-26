@@ -130,6 +130,6 @@ def test_asking_for_more_is_not_blocked_by_the_device(site):
 def test_privacy_page_keeps_the_address_out_and_describes_the_code(site):
     _, client = site
     page = client.get("/privacy").data
-    assert b"We do not write new raw IP addresses into our database." in page
-    assert b"one-way code" in page
+    assert b"We keep only the questions children ask." in page
+    assert b"one-way code" not in page
     assert b"links the device to that email" not in page

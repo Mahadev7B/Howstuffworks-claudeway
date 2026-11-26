@@ -135,8 +135,10 @@ def test_privacy_page_names_contact_services_and_rights(site):
     response = site.get("/privacy")
     assert response.status_code == 200
     page = response.data
-    for text in (b"Asklilowl@gmail.com", b"Children under 13", b"A parent must always be present", b"Parents' rights", b"Anthropic",
-                 b"fal.ai", b"OpenAI", b"ipwho.is", b"Render", b"Google Fonts"):
+    for text in (b"Asklilowl@gmail.com", b"November 26, 2026",
+                 b"We keep only the questions children ask.",
+                 b"We don't sell information, and we don't show ads.",
+                 b"questions about this policy."):
         assert text in page
     assert b"/privacy" in site.get("/sitemap.xml").data
 

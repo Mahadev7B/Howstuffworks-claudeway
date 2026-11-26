@@ -118,7 +118,8 @@ def test_home_shows_subscribe_button_and_test_mode_note(site, monkeypatch):
     assert b"Thank you for subscribing" in client.get("/?subscribed=1").data
 
 
-def test_privacy_page_says_we_do_not_take_payments(site):
+def test_privacy_page_says_we_do_not_sell_information_or_show_ads(site):
     client, _ = site
     page = client.get("/privacy").data
-    assert b"We don't sell subscriptions or take payments on AskLilOwl right now." in page
+    assert b"We don't sell information, and we don't show ads." in page
+    assert b"Stripe" not in page
