@@ -69,13 +69,23 @@ def test_another_ip_gets_its_own_three(site):
     assert ask(client, "dad@example.com", "Question 3?", ip="198.51.100.7").status_code == 200
 
 
-def test_cloudflare_connecting_ip_beats_a_spoofed_forwarded_header(site):
+def test_a_supplied_connecting_header_does_not_replace_the_appended_address(site):
     _, client = site
     for number in range(3):
         assert ask(client, "mum@example.com", f"Question {number}?",
-                   ip="1.1.1.1, 8.8.8.8", cf="203.0.113.9").status_code == 200
-    assert ask(client, "dad@example.com", "Question 3?", ip="9.9.9.9", cf="203.0.113.9").status_code == 402
-    assert ask(client, "dad@example.com", "A new one?", ip="203.0.113.9", cf="198.51.100.7").status_code == 200
+                   ip="1.1.1.1, 203.0.113.9", cf="198.51.100.7").status_code == 200
+    assert ask(client, "dad@example.com", "Question 3?",
+               ip="9.9.9.9, 203.0.113.9", cf="198.51.100.7").status_code == 402
+    assert ask(client, "dad@example.com", "A new one?",
+               ip="203.0.113.9, 198.51.100.7", cf="203.0.113.9").status_code == 200
+
+
+def test_connecting_header_counts_only_when_forwarded_for_has_no_address(site):
+    _, client = site
+    for number in range(3):
+        assert ask(client, "mum@example.com", f"Question {number}?",
+                   ip="", cf="203.0.113.9").status_code == 200
+    assert ask(client, "dad@example.com", "Question 3?", ip="not-an-ip", cf="203.0.113.9").status_code == 402
 
 
 def test_the_proxy_appended_address_is_the_client(site):

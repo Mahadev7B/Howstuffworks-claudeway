@@ -105,14 +105,17 @@ def test_public_pages_send_framing_and_sniff_headers(site):
     assert "Disallow: /admin" in robots and "Disallow: /debug" in robots
 
 
-def test_forwarded_for_trusts_the_appended_address_and_cloudflare():
+def test_forwarded_for_trusts_the_address_render_appended():
     assert _client_ip("1.1.1.1, 203.0.113.9", "10.0.0.1") == "203.0.113.9"
     assert _client_ip("203.0.113.9, not-an-ip", None) == "203.0.113.9"
     assert _client_ip("", "127.0.0.1") == "127.0.0.1"
     assert _client_ip("javascript:alert(1)", "10.0.0.8") == "10.0.0.8"
-    # Cloudflare overwrites CF-Connecting-IP, so a spoofed X-Forwarded-For loses.
-    assert _client_ip("1.1.1.1, 8.8.8.8", "10.0.0.1", "203.0.113.9") == "203.0.113.9"
+    # A supplied CF-Connecting-IP must not replace the appended address.
+    assert _client_ip("1.1.1.1, 8.8.8.8", "10.0.0.1", "203.0.113.9") == "8.8.8.8"
     assert _client_ip("203.0.113.9", "10.0.0.1", "not-an-ip") == "203.0.113.9"
+    # The header is used only when X-Forwarded-For has no valid address.
+    assert _client_ip("", None, "203.0.113.9") == "203.0.113.9"
+    assert _client_ip("not-an-ip", "10.0.0.8", "198.51.100.7") == "198.51.100.7"
 
 
 def test_missing_flask_secret_does_not_use_the_published_dev_key(monkeypatch):

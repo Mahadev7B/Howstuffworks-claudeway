@@ -20,7 +20,6 @@ Website: asklilowl.com
 | Lesson text | Claude Haiku (Anthropic) | ~$0.007/new lesson |
 | Image generation | Flux Dev (fal.ai → AWS T4 spot) | per-image → fixed |
 | Text-to-speech | OpenAI Nova TTS → Kokoro TTS (GPU) | $0.02/lesson → $0 |
-| CDN / tunnel | Cloudflare | $0 |
 | Domain | asklilowl.com | ~$2/month |
 
 ---
@@ -52,7 +51,6 @@ Website: asklilowl.com
 ### Phase 3 — Profitable (500+ users)
 - Consider buying Ryzen AI Max box (one-time ~$1,900)
 - Eliminate AWS monthly bill — payback in ~5 months vs T4 24/7
-- Add Cloudflare Tunnel for home-to-internet routing
 - fal.ai as overflow for parallel request spikes
 
 ---

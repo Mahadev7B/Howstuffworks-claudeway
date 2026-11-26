@@ -41,7 +41,6 @@ from lesson_platform import (
     create_share_link,
     generate_quiz,
     delete_cached_lesson,
-    extract_and_lookup,
     generate_image,
     generate_images_batch,
     generate_lesson,
@@ -80,6 +79,8 @@ app = Flask(__name__)
 register_private_api(app)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
+from lesson_platform.privacy_log import install_address_redaction
+install_address_redaction()
 
 settings = load_settings()
 app.secret_key = settings.flask_secret_key
@@ -362,7 +363,7 @@ def _attach_slide_images(lesson: dict, ctx: dict | None = None) -> None:
     Flux slides are rendered in parallel for speed.
     """
     if ctx is None:
-        ctx = {"city": None, "region": None, "country": None, "user_agent": None}
+        ctx = {"country": None, "user_agent": None}
     use_flux = settings.image_provider == "flux" and bool(settings.fal_api_key)
     subject = lesson.get("subject", "")
     is_math = bool((lesson.get("meta") or {}).get("math")) or is_math_question(f"{lesson.get('title', '')} {subject}")
@@ -465,25 +466,40 @@ def _attach_slide_images(lesson: dict, ctx: dict | None = None) -> None:
     )
 
 
+def _forwarded_for_header() -> str | None:
+    """Every X-Forwarded-For value, in order. Render's appended address is the last valid one."""
+    values = [value.strip() for value in request.headers.getlist("X-Forwarded-For") if value and value.strip()]
+    return ", ".join(values) or None
+
+
 def _client_ip() -> str | None:
-    """The visitor IP. Used in memory or as a one-way hash, never stored raw."""
+    """The visitor address. Used in memory for a country and a one-way hash, then dropped."""
     from lesson_platform.geo import _client_ip as trusted_client_ip
     return trusted_client_ip(
-        request.headers.get("X-Forwarded-For"),
+        _forwarded_for_header(),
         request.remote_addr,
         request.headers.get("CF-Connecting-IP"),
     )
 
 
+def _country_before_hash(address: str | None) -> str | None:
+    """Derive a country before any hash of this address. The address is not kept on the request."""
+    if hasattr(g, "_address_country"):
+        return g._address_country
+    from lesson_platform.geo import country_code
+    country = country_code(address)
+    g._address_country = country
+    return country
+
+
 def _client_context() -> dict:
-    """Approximate location and device details. The IP address is used for the lookup, then dropped."""
-    _, city, region, country = extract_and_lookup(
-        request.headers.get("X-Forwarded-For"), request.remote_addr,
-        request.headers.get("CF-Connecting-IP"),
-    )
+    """Device details for a lesson record. The address is not returned or logged."""
+    address = _client_ip()
+    try:
+        country = _country_before_hash(address)
+    finally:
+        address = None
     return {
-        "city": city,
-        "region": region,
         "country": country,
         "user_agent": request.headers.get("User-Agent"),
     }
@@ -733,7 +749,8 @@ def sitemap():
 @app.get("/privacy")
 def privacy():
     return render_template("privacy.html", contact_email=PRIVACY_CONTACT_EMAIL, updated=PRIVACY_UPDATED,
-                           free_questions=askers.FREE_QUESTIONS)
+                           free_questions=askers.FREE_QUESTIONS,
+                           window_hours=askers.free_lesson_window_hours())
 
 
 @app.get("/robots.txt")
@@ -744,7 +761,7 @@ def robots():
 
 
 PRIVACY_CONTACT_EMAIL = "Asklilowl@gmail.com"
-PRIVACY_UPDATED = "November 12, 2026"
+PRIVACY_UPDATED = "November 26, 2026"
 app.jinja_env.globals["privacy_contact_email"] = PRIVACY_CONTACT_EMAIL
 app.jinja_env.globals["billing_portal_url"] = billing.portal_url
 
@@ -846,8 +863,13 @@ def _set_device_cookie(response):
 
 
 def _lesson_ip_hash() -> str | None:
-    """One-way code for this request's client IP. The address itself is not kept."""
-    return askers.ip_hash(_client_ip())
+    """One-way code for this request's client address. Country is derived first; the address is not kept."""
+    address = _client_ip()
+    try:
+        _country_before_hash(address)
+        return askers.ip_hash(address)
+    finally:
+        address = None
 
 
 def _asker_gate(raw_email: str | None, question: str, consent=None, token=None) -> tuple[str | None, dict | None, tuple[str, str, int] | None]:
