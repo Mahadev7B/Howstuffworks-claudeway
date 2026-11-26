@@ -94,6 +94,7 @@ The JSON field `git_commit` is the deployed commit. `POST /admin/clear-cache` us
 
 - Build command: `pip install -r requirements.txt`
 - Start command: `gunicorn app:app --bind 0.0.0.0:$PORT --timeout 180`
+- `gunicorn.conf.py` is picked up by that start command, and by the command in `render.yaml`, because neither passes `--config`. It sets the access-log format so the line has no client address and no query string. The Render start command does not need to change. Do not add `--access-logformat`.
 - Environment variables: `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (optional), `FLASK_SECRET_KEY`
 
 ## Roadmap ideas

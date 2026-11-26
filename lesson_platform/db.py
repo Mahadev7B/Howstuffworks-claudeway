@@ -56,7 +56,13 @@ def _record_write_success(label: str) -> None:
 def _record_write_failure(label: str, exc: Exception) -> None:
     _write_stats["writes_failed"] += 1
     _write_stats["last_failure_at"] = datetime.utcnow().isoformat() + "Z"
-    _write_stats["last_failure_reason"] = f"{label}: {type(exc).__name__}: {str(exc)[:200]}"
+    # Exception text can echo a question or prompt, so the status report keeps only the type.
+    _write_stats["last_failure_reason"] = f"{label}: {type(exc).__name__}"
+
+
+def _log_write_failure(message: str, exc: Exception) -> None:
+    """Log a storage failure without the exception text, which can echo a question."""
+    logger.error("%s (%s)", message, type(exc).__name__)
 
 
 def get_write_stats() -> dict:
@@ -317,7 +323,7 @@ def _do_save_feedback(params: tuple) -> None:
             cur.execute(sql, params)
         _record_write_success("save_feedback")
     except Exception as exc:
-        logger.exception("Failed to save feedback")
+        _log_write_failure("Failed to save feedback", exc)
         _record_write_failure("save_feedback", exc)
     finally:
         try:
@@ -376,7 +382,7 @@ def _do_record_api_call(params: tuple) -> None:
             )
         _record_write_success("record_api_call")
     except Exception as exc:
-        logger.exception("Failed to record api_call")
+        _log_write_failure("Failed to record api_call", exc)
         _record_write_failure("record_api_call", exc)
     finally:
         try:
@@ -452,6 +458,11 @@ def _normalize_question(q: str) -> str:
 
 def question_hash(question: str) -> str:
     return hashlib.sha256(_normalize_question(question).encode("utf-8")).hexdigest()
+
+
+def lesson_log_id(question: str) -> str:
+    """Cache key for a question. Safe to write in a log; it is not the question text."""
+    return question_hash(question or "")
 
 
 def get_cached_lesson(question: str, ttl_days: int = 30) -> dict[str, Any] | None:
@@ -548,8 +559,8 @@ def get_lesson_from_calls(question: str) -> dict[str, Any] | None:
             )
             row = cur.fetchone()
             return row[0] if row else None
-    except Exception:
-        logger.exception("get_lesson_from_calls failed — skipping")
+    except Exception as exc:
+        _log_write_failure("get_lesson_from_calls failed — skipping", exc)
         return None
     finally:
         try:
@@ -558,7 +569,7 @@ def get_lesson_from_calls(question: str) -> dict[str, Any] | None:
             pass
 
 
-def _do_delete_cached_lesson(qhash: str, label: str) -> None:
+def _do_delete_cached_lesson(qhash: str) -> None:
     conn = _direct_connect()
     if conn is None:
         return
@@ -568,7 +579,7 @@ def _do_delete_cached_lesson(qhash: str, label: str) -> None:
                 "DELETE FROM cached_lessons WHERE question_hash = %s",
                 (qhash,),
             )
-        logger.info("Deleted stale cache entry for: %s", label)
+        logger.info("Deleted stale cache entry for lesson %s", qhash)
         _record_write_success("delete_cached_lesson")
     except Exception as exc:
         logger.exception("Cache delete failed — skipping")
@@ -584,7 +595,7 @@ def delete_cached_lesson(question: str) -> None:
     """Remove a cached lesson so it will be regenerated on next request. Fire-and-forget."""
     if _pool is None:
         return
-    _bg(_do_delete_cached_lesson, question_hash(question), question[:80])
+    _bg(_do_delete_cached_lesson, question_hash(question))
 
 
 def _do_save_cached_lesson(qhash: str, question: str, lesson: dict[str, Any]) -> None:
@@ -605,7 +616,7 @@ def _do_save_cached_lesson(qhash: str, question: str, lesson: dict[str, Any]) ->
             )
         _record_write_success("save_cached_lesson")
     except Exception as exc:
-        logger.exception("Cache write failed — skipping")
+        _log_write_failure("Cache write failed — skipping", exc)
         _record_write_failure("save_cached_lesson", exc)
     finally:
         try:
@@ -822,8 +833,9 @@ def ip_calls_last_hour(ip: str | None, endpoints: tuple[str, ...]) -> int:
             count = int(row[0]) if row else 0
             _IP_RATE_CACHE[cache_key] = (now, count)
             return count
-    except Exception:
-        logger.exception("IP rate-limit query failed — skipping")
+    except Exception as exc:
+        # The query is bound to the client address, so the driver message is not logged.
+        logger.error("IP rate-limit query failed — skipping (%s)", type(exc).__name__)
         return cached[1] if cached is not None else 0
     finally:
         try:

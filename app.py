@@ -59,7 +59,9 @@ from lesson_platform import (
     synthesize,
     today_spend_usd,
 )
-from lesson_platform.db import cached_lesson_exists, get_pool_stats, get_saved_tts, get_write_stats, save_tts
+from lesson_platform.db import (
+    cached_lesson_exists, get_pool_stats, get_saved_tts, get_write_stats, lesson_log_id, save_tts,
+)
 from lesson_platform import spam_log
 from lesson_platform.math_check import is_math_question
 from lesson_platform.guardrails import refusal_reason
@@ -186,6 +188,17 @@ FEEDBACK_HOURLY_LIMIT = 10  # per device, counted in memory only
 
 # Sentinel returned by _guardrail_check when the rate limit is the reason
 RATE_LIMIT_ERROR = "rate_limit"
+LESSON_GENERATION_ERROR = "Could not make that lesson just now. Please try again."
+
+
+def _prompt_log_id(prompt: str) -> str:
+    """Short hash for a picture prompt. The prompt text is never written to a log."""
+    return hashlib.sha256((prompt or "").encode("utf-8")).hexdigest()[:16]
+
+
+def _error_type(exc: BaseException) -> str:
+    return type(exc).__name__
+
 
 # Phrases that cause Flux to attempt rendering text, producing garbled results.
 # Arrows and diagrams are fine visually — only text/word rendering is the issue.
@@ -258,13 +271,14 @@ def _sanitize_flux_prompt(prompt: str, slide_title: str, subject: str, math: boo
         kept = [c for c in clauses if not (_MATH_WRITING.search(c) or _has_unsafe_banned_word(c))]
         scene = " ".join(kept).strip().rstrip(",.; ")
         if len(scene.split()) < 10:
-            logger.warning("Math picture prompt had little left after cleaning — using a safe scene: %s", prompt[:120])
+            logger.warning("Math picture prompt had little left after cleaning — using a safe scene (%s)",
+                           _prompt_log_id(prompt))
             scene = _SAFE_MATH_SCENE
         elif kept != clauses:
-            logger.info("Math picture prompt cleaned: %s", prompt[:120])
+            logger.info("Math picture prompt cleaned (%s)", _prompt_log_id(prompt))
         return f"{scene}, {_FLUX_STYLE_SUFFIX}"
     if _has_unsafe_banned_word(prompt):
-        logger.warning("Flux prompt contained banned words — rewriting: %s", prompt[:120])
+        logger.warning("Flux prompt contained banned words — rewriting (%s)", _prompt_log_id(prompt))
         return (
             f"A cheerful illustrated scene showing {subject}, {slide_title.lower()}, "
             f"bright and colorful, simple composition, "
@@ -309,14 +323,14 @@ def _render_with_flux(slide: dict, ctx: dict) -> bool:
         img_bytes, mime, cost = generate_image(prompt, settings, negative_prompt)
     except Exception as exc:  # noqa: BLE001
         duration_ms = int((time.time() - started) * 1000)
-        logger.warning("Flux gen failed for slide %s: %s", slide.get("number"), exc)
+        logger.warning("Flux gen failed for slide %s (%s)", slide.get("number"), _error_type(exc))
         record_api_call(
             endpoint="/internal/flux",
             question=prompt[:500],
             model=settings.flux_model,
             duration_ms=duration_ms,
             success=False,
-            error=str(exc),
+            error=_error_type(exc),
             **ctx,
         )
         return False
@@ -345,7 +359,7 @@ def _render_with_matplotlib(slide: dict) -> bool:
     try:
         img_bytes, mime = render_spec(spec)
     except Exception as exc:  # noqa: BLE001
-        logger.exception("Matplotlib render failed: %s", exc)
+        logger.error("Matplotlib render failed for slide %s (%s)", slide.get("number"), _error_type(exc))
         return False
     b64 = base64.b64encode(img_bytes).decode("ascii")
     slide["image_data_url"] = f"data:{mime};base64,{b64}"
@@ -419,14 +433,14 @@ def _attach_slide_images(lesson: dict, ctx: dict | None = None) -> None:
                 batch_ok = True
             except Exception as exc:
                 duration_ms = int((time.time() - started_batch) * 1000)
-                logger.warning("Flux batch failed, falling back to per-slide: %s", exc)
+                logger.warning("Flux batch failed, falling back to per-slide (%s)", _error_type(exc))
                 record_api_call(
                     endpoint="/internal/flux",
                     question=batch_prompts[0][:500],
                     model=settings.flux_model,
                     duration_ms=duration_ms,
                     success=False,
-                    error=str(exc),
+                    error=_error_type(exc),
                     **ctx,
                 )
 
@@ -527,20 +541,20 @@ def _keep_redrawn_pictures(question: str, lesson: dict, had_images: bool) -> Non
     slides = lesson.get("slides", [])
     if db_enabled and not had_images and slides and all(s.get("image_data_url") for s in slides):
         save_cached_lesson(question, lesson)
-        logger.info("Saved redrawn pictures for an older lesson: %s", question[:80])
+        logger.info("Saved redrawn pictures for an older lesson %s", lesson_log_id(question))
 
 
 def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None, str | None]:
     """Serve from cache if possible; otherwise generate, record, and cache."""
     recent = _recent_get(question)
     if recent is not None:
-        logger.info("Recent in-memory cache hit: %s", question[:80])
+        logger.info("Recent in-memory cache hit lesson=%s", lesson_log_id(question))
         return recent, None
 
     cached = get_cached_lesson(question, settings.lesson_cache_ttl_days) if db_enabled else None
     if cached is not None:
         cached.setdefault("meta", {})["from_cache"] = True
-        logger.info("Cache hit for question: %s", question)
+        logger.info("Cache hit lesson=%s", lesson_log_id(question))
         # Were images already baked into the cached lesson row?
         slides_before = cached.get("slides", [])
         had_images = bool(slides_before) and all(s.get("image_data_url") for s in slides_before)
@@ -550,7 +564,7 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
         # If every slide is still missing an image the cached spec is broken — bust it.
         slides = cached.get("slides", [])
         if slides and not any(s.get("image_data_url") for s in slides):
-            logger.warning("Cached lesson has no renderable images — busting cache: %s", question)
+            logger.warning("Cached lesson has no renderable images — busting cache lesson=%s", lesson_log_id(question))
             delete_cached_lesson(question)
             cached = None
         else:
@@ -577,17 +591,17 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
         data = generate_lesson(question, settings)
     except Exception as exc:  # noqa: BLE001
         duration_ms = int((time.time() - started) * 1000)
-        logger.exception("Lesson generation failed (%s)", endpoint)
+        logger.error("Lesson generation failed (%s) lesson=%s (%s)", endpoint, lesson_log_id(question), _error_type(exc))
         record_api_call(
             endpoint=endpoint,
             question=question,
             model=settings.anthropic_model,
             duration_ms=duration_ms,
             success=False,
-            error=str(exc),
+            error=_error_type(exc),
             **ctx,
         )
-        return None, str(exc)
+        return None, LESSON_GENERATION_ERROR
 
     meta = data.get("meta", {})
     cost = meta.get("estimated_cost_usd", 0.0)
@@ -617,7 +631,7 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
     logger.info("Flux render %dms | total request %dms", render_ms, total_ms)
     if (data.get("meta") or {}).get("math_problems"):
         # Arithmetic still wrong after a retry: show it this once, but don't save it for the next child.
-        logger.warning("Not saving lesson with arithmetic mistakes: %s", question[:80])
+        logger.warning("Not saving lesson with arithmetic mistakes lesson=%s", lesson_log_id(question))
         return data, None
     _recent_put(question, data)
     # Always persist to DB immediately — so thumbs-up and redeploys never
@@ -902,7 +916,7 @@ def _lookup_only(question: str, ctx: dict) -> dict | None:
     _keep_redrawn_pictures(question, cached, had_images)
     slides = cached.get("slides", [])
     if slides and not any(s.get("image_data_url") for s in slides):
-        logger.warning("Cached lesson has no renderable images — busting cache: %s", question)
+        logger.warning("Cached lesson has no renderable images — busting cache lesson=%s", lesson_log_id(question))
         delete_cached_lesson(question)
         return None
     # Refresh the in-memory cache so a follow-up Back/refresh stays instant
@@ -936,7 +950,7 @@ def lesson():
     if request.method == "GET":
         cached = _lookup_only(question, ctx)
         if cached is None:
-            logger.info("GET /lesson cache miss — redirecting to home: %s", question[:80])
+            logger.info("GET /lesson cache miss — redirecting to home lesson=%s", lesson_log_id(question))
             return redirect(url_for("home", q=question))
         resp = app.make_response(render_template("lesson.html", question=question, lesson=cached))
         # Browser-cache the rendered page for 10 minutes so a Refresh hits the
@@ -1160,8 +1174,8 @@ def api_quiz():
     try:
         quiz = generate_quiz(lesson, settings)
         return jsonify({"ok": True, "quiz": quiz})
-    except Exception:
-        logger.exception("Quiz generation failed")
+    except Exception as exc:
+        logger.error("Quiz generation failed (%s)", _error_type(exc))
         return jsonify({"ok": False, "error": "Could not make a quiz just now."}), 500
 
 
@@ -1192,7 +1206,7 @@ def api_feedback():
         if lesson_data:
             save_cached_lesson(question, lesson_data)
         pin_cached_lesson(question)
-        logger.info("Pinned thumbs-up lesson: %s", question[:80])
+        logger.info("Pinned thumbs-up lesson %s", lesson_log_id(question))
 
     record_api_call(
         endpoint="/api/feedback",
@@ -1284,14 +1298,14 @@ def api_tts():
         audio_bytes, cost = synthesize(text, settings)
     except Exception as exc:  # noqa: BLE001
         duration_ms = int((time.time() - started) * 1000)
-        logger.exception("TTS synthesis failed")
+        logger.error("TTS synthesis failed (%s)", _error_type(exc))
         record_api_call(
             endpoint="/api/tts",
             question=text[:500],
             model=settings.openai_tts_model,
             duration_ms=duration_ms,
             success=False,
-            error=str(exc),
+            error=_error_type(exc),
             **ctx,
         )
         return jsonify({"ok": False, "error": "Could not make the audio just now."}), 500
@@ -1344,9 +1358,9 @@ def _run_video_export(job_id: str, lesson: dict, audio_clips: list[bytes], prese
         job["filename"] = f"lil-owl-{secrets.token_hex(4)}.mp4"
         logger.info("Video export done: %s -> %s", job_id, out_path)
     except Exception as exc:
-        logger.exception("Video export failed for job %s", job_id)
+        logger.error("Video export failed for job %s (%s)", job_id, _error_type(exc))
         job["status"] = "error"
-        job["error"] = str(exc)
+        job["error"] = "Could not make the video just now."
 
 
 @app.route("/api/export-video", methods=["POST"])
@@ -1582,10 +1596,10 @@ def admin_delete_cached_lesson():
         with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute("DELETE FROM cached_lessons WHERE question_hash = %s", (qhash,))
             deleted = cur.rowcount
-        logger.info("Admin deleted cached lesson: %s (found=%s)", question[:80], deleted > 0)
+        logger.info("Admin deleted cached lesson %s (found=%s)", qhash, deleted > 0)
         return jsonify({"ok": True, "deleted": deleted > 0})
-    except Exception:
-        logger.exception("Admin delete-cached-lesson failed")
+    except Exception as exc:
+        logger.error("Admin delete-cached-lesson failed (%s)", _error_type(exc))
         return jsonify({"ok": False, "error": "could not delete that lesson"}), 500
 
 
@@ -1745,8 +1759,8 @@ def admin_import_publication():
         return str(exc), 503
     except ValueError as exc:
         return str(exc), 400
-    except Exception:
-        logger.exception("Private lesson import failed")
+    except Exception as exc:
+        logger.error("Private lesson import failed (%s)", _error_type(exc))
         return "Import outcome is unconfirmed. Check the lesson list before retrying the identical package.", 503
     return redirect(url_for("admin_publication_preview", slug=result["slug"]), code=303)
 

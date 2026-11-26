@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from lesson_platform.db import lesson_log_id
 from lesson_platform.geo import extract_and_lookup
 
 logger = logging.getLogger(__name__)
@@ -53,8 +54,9 @@ def _write(entry: dict, forwarded_for: str | None, remote_addr: str | None) -> N
             f.write(line)
     except OSError:
         logger.exception("Could not note a refused question")
-    logger.warning("Refused question (%s) from device %s, %s, %s: %r", entry["reason"], entry["device"],
-                   entry["place"], (entry["user_agent"] or "-")[:120], entry["question"][:200])
+    logger.warning("Refused question (%s) lesson=%s from device %s, %s, %s", entry["reason"],
+                   lesson_log_id(entry.get("question") or ""), entry["device"], entry["place"],
+                   (entry["user_agent"] or "-")[:120])
 
 
 def record(*, endpoint: str, question: str, reason: str, ip: str | None, forwarded_for: str | None,

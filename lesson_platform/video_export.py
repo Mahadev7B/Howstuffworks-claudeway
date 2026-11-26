@@ -110,7 +110,7 @@ def _render_slide_frame(slide: dict, width: int, height: int) -> bytes:
             slide_img = slide_img.crop((left, top, left + width, top + img_h))
             img.paste(slide_img, (0, 0))
         except Exception as e:
-            logger.warning("Could not render slide image: %s", e)
+            logger.warning("Could not render slide image (%s)", type(e).__name__)
             # Gradient placeholder
             for row in range(img_h):
                 t = row / img_h
