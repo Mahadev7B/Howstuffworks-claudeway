@@ -480,6 +480,12 @@
         }
       });
 
+      function escQuiz(value) {
+        return String(value == null ? '' : value).replace(/[&<>"']/g, (ch) => ({
+          '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        }[ch]));
+      }
+
       function renderQuiz(quiz) {
         const questions = quiz.questions || [];
         let score = 0;
@@ -502,10 +508,10 @@
           const block = document.createElement('div');
           block.className = 'quiz-q';
           block.innerHTML = `
-            <p class="quiz-question"><strong>Q${qi + 1}.</strong> ${q.question}</p>
+            <p class="quiz-question"><strong>Q${qi + 1}.</strong> ${escQuiz(q.question)}</p>
             <div class="quiz-options">
               ${q.options.map((opt, oi) =>
-                `<button class="quiz-opt" data-qi="${qi}" data-oi="${oi}">${opt}</button>`
+                `<button class="quiz-opt" data-qi="${qi}" data-oi="${oi}">${escQuiz(opt)}</button>`
               ).join('')}
             </div>
             <p class="quiz-explain" hidden></p>`;

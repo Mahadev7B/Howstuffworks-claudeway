@@ -13,6 +13,7 @@ import hmac
 import logging
 import os
 import re
+import secrets
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -51,12 +52,23 @@ def normalize_email(raw: str | None) -> str | None:
     return email
 
 
+# Used only when FLASK_SECRET_KEY is missing or still the published dev default.
+# It is not saved, so a restart gives each network a fresh set of free lessons.
+_PROCESS_IP_SECRET = secrets.token_bytes(32)
+
+
+def _ip_hmac_key() -> bytes:
+    secret = os.getenv("FLASK_SECRET_KEY", "").strip()
+    if secret and secret != "dev-secret-key":
+        return secret.encode("utf-8")
+    return _PROCESS_IP_SECRET
+
+
 def ip_hash(ip: str | None) -> str | None:
     """One-way code for a client IP. The address cannot be read back from it."""
     if not ip:
         return None
-    secret = os.getenv("FLASK_SECRET_KEY", "dev-secret-key").encode()
-    return hmac.new(secret, b"free-lesson-ip|" + ip.encode("utf-8"), hashlib.sha256).hexdigest()
+    return hmac.new(_ip_hmac_key(), b"free-lesson-ip|" + ip.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def _trial_state(started: datetime | None, now: datetime) -> tuple[str, datetime | None]:

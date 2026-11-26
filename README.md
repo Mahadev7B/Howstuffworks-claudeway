@@ -78,6 +78,18 @@ HowStuffWorks-Claudeway/
 └── README.md
 ```
 
+## Operator status
+
+`GET /healthz` returns `{"ok": true}` for the host health check.
+
+`GET /debug/status` is private. Sign in at `/admin`, or send the Render `ADMIN_SECRET` only as a header (never in the URL):
+
+```bash
+curl -sS -H "X-Admin-Secret: $ADMIN_SECRET" https://www.asklilowl.com/debug/status
+```
+
+The JSON field `git_commit` is the deployed commit. `POST /admin/clear-cache` uses the same header and deletes saved lessons.
+
 ## Deploying to Render
 
 - Build command: `pip install -r requirements.txt`

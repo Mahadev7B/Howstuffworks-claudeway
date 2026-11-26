@@ -85,6 +85,13 @@ settings = load_settings()
 app.secret_key = settings.flask_secret_key
 from datetime import timedelta as _td
 app.permanent_session_lifetime = _td(days=7)
+# HttpOnly and SameSite=Lax are explicit so a cross-site form cannot use the admin cookie.
+# Render sets RENDER=true; the cookie is Secure there and stays usable over http in local tests.
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.getenv("RENDER", "").strip().lower() == "true",
+)
 db_enabled = init_db()
 
 # App startup time, used by /debug/status to report uptime.
@@ -459,16 +466,20 @@ def _attach_slide_images(lesson: dict, ctx: dict | None = None) -> None:
 
 
 def _client_ip() -> str | None:
-    """The visitor's IP address, used in memory only and never stored or logged."""
-    forwarded = request.headers.get("X-Forwarded-For") or ""
-    first = forwarded.split(",")[0].strip()
-    return first or request.remote_addr
+    """The visitor IP. Used in memory or as a one-way hash, never stored raw."""
+    from lesson_platform.geo import _client_ip as trusted_client_ip
+    return trusted_client_ip(
+        request.headers.get("X-Forwarded-For"),
+        request.remote_addr,
+        request.headers.get("CF-Connecting-IP"),
+    )
 
 
 def _client_context() -> dict:
     """Approximate location and device details. The IP address is used for the lookup, then dropped."""
     _, city, region, country = extract_and_lookup(
-        request.headers.get("X-Forwarded-For"), request.remote_addr
+        request.headers.get("X-Forwarded-For"), request.remote_addr,
+        request.headers.get("CF-Connecting-IP"),
     )
     return {
         "city": city,
@@ -727,7 +738,8 @@ def privacy():
 
 @app.get("/robots.txt")
 def robots():
-    return Response("User-agent: *\nAllow: /\nSitemap: https://www.asklilowl.com/sitemap.xml\n",
+    return Response("User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /debug\n"
+                    "Sitemap: https://www.asklilowl.com/sitemap.xml\n",
                     mimetype="text/plain")
 
 
@@ -808,6 +820,19 @@ def _device_refusal(email: str | None) -> tuple[str, str, int] | None:
 def _link_device(email: str) -> None:
     """The device cookie is no longer set. The free-lesson cap uses a hash of the client IP."""
     return None
+
+
+@app.after_request
+def _security_headers(response):
+    """Headers that do not change how pages render. frame-ancestors matches PR #1's CSP choice."""
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'self'")
+    https = request.is_secure or request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip().lower() == "https"
+    if https or os.getenv("RENDER", "").strip().lower() == "true":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=15552000")
+    return response
 
 
 @app.after_request
@@ -1128,12 +1153,16 @@ def api_quiz():
     lesson = payload.get("lesson")
     if not isinstance(lesson, dict) or not lesson.get("slides"):
         return jsonify({"ok": False, "error": "lesson is required"}), 400
+    if today_spend_usd() >= settings.daily_budget_usd:
+        return jsonify({"ok": False, "error": "Daily budget reached"}), 503
+    if not ratelimit.allow("quiz", _client_ip(), settings.per_ip_hourly_limit):
+        return jsonify({"ok": False, "error": "Too many quizzes. Please try again later."}), 429
     try:
         quiz = generate_quiz(lesson, settings)
         return jsonify({"ok": True, "quiz": quiz})
-    except Exception as exc:
+    except Exception:
         logger.exception("Quiz generation failed")
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({"ok": False, "error": "Could not make a quiz just now."}), 500
 
 
 @app.route("/api/feedback", methods=["POST"])
@@ -1247,6 +1276,8 @@ def api_tts():
     spent = today_spend_usd()
     if spent >= settings.daily_budget_usd:
         return jsonify({"ok": False, "error": "Daily budget reached"}), 503
+    if not ratelimit.allow("tts", _client_ip(), 60):
+        return jsonify({"ok": False, "error": "Too many requests. Please try again later."}), 429
 
     started = time.time()
     try:
@@ -1263,7 +1294,7 @@ def api_tts():
             error=str(exc),
             **ctx,
         )
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({"ok": False, "error": "Could not make the audio just now."}), 500
 
     duration_ms = int((time.time() - started) * 1000)
     _tts_cache_put(text, audio_bytes)
@@ -1513,9 +1544,14 @@ def api_export_video_file(job_id: str):
 
 @app.route("/admin/clear-cache", methods=["POST"])
 def admin_clear_cache():
-    secret = os.environ.get("ADMIN_SECRET", "")
-    if not secret or request.headers.get("X-Admin-Secret") != secret:
+    """Wipe saved lessons. Header secret, not a browser session, so it has no CSRF token.
+
+    Send X-Admin-Secret. The value is the Render ADMIN_SECRET and must not go in the URL.
+    """
+    if not _admin_secret_ok():
         return jsonify({"ok": False, "error": "forbidden"}), 403
+    if not ratelimit.allow("admin-clear-cache", _client_ip(), 10):
+        return jsonify({"ok": False, "error": "too many tries"}), 429
     if not db_enabled:
         return jsonify({"ok": False, "error": "DB not enabled"}), 503
     from lesson_platform.db import _pool, _POOL_TIMEOUT_S
@@ -1525,15 +1561,15 @@ def admin_clear_cache():
             deleted = cur.rowcount
         logger.info("Admin cleared cache: %d rows deleted", deleted)
         return jsonify({"ok": True, "deleted": deleted})
-    except Exception as exc:
+    except Exception:
         logger.exception("Admin clear-cache failed")
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({"ok": False, "error": "could not clear the cache"}), 500
 
 
 @app.route("/admin/delete-cached-lesson", methods=["POST"])
 def admin_delete_cached_lesson():
-    """Delete a single cached lesson by question text. Requires admin session."""
-    if not _admin_authed():
+    """Delete a single cached lesson by question text. Requires admin session and CSRF."""
+    if not _library_write_allowed():
         return jsonify({"ok": False, "error": "forbidden"}), 403
     if not db_enabled:
         return jsonify({"ok": False, "error": "DB not enabled"}), 503
@@ -1548,9 +1584,9 @@ def admin_delete_cached_lesson():
             deleted = cur.rowcount
         logger.info("Admin deleted cached lesson: %s (found=%s)", question[:80], deleted > 0)
         return jsonify({"ok": True, "deleted": deleted > 0})
-    except Exception as exc:
+    except Exception:
         logger.exception("Admin delete-cached-lesson failed")
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({"ok": False, "error": "could not delete that lesson"}), 500
 
 
 @app.route("/admin/cached-lessons", methods=["GET"])
@@ -1575,9 +1611,9 @@ def admin_cached_lessons():
             rows = [{"question": r[0], "hits": r[1], "pinned": r[2],
                      "created": r[3], "last_hit": r[4]} for r in cur.fetchall()]
         return jsonify({"ok": True, "lessons": rows})
-    except Exception as exc:
+    except Exception:
         logger.exception("Admin cached-lessons list failed")
-        return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({"ok": False, "error": "could not list saved lessons"}), 500
 
 
 # ---------------------------------------------------------------------------
@@ -1599,12 +1635,31 @@ def _library_csrf_token() -> str:
     return token
 
 
+def _supplied_csrf() -> str:
+    supplied = request.form.get("csrf_token", "")
+    if supplied:
+        return supplied
+    data = request.get_json(silent=True)
+    if isinstance(data, dict):
+        return str(data.get("csrf_token") or "")
+    return ""
+
+
 def _library_write_allowed() -> bool:
     expected = session.get("library_csrf")
-    supplied = request.form.get("csrf_token", "")
+    supplied = _supplied_csrf()
     # Publishing must fail closed if the app still uses its known dev cookie key.
     return bool(app.secret_key != "dev-secret-key" and _admin_authed() and expected and supplied and
                 secrets.compare_digest(expected, supplied))
+
+
+def _admin_secret_ok() -> bool:
+    """Constant-time check of X-Admin-Secret. Empty secret never matches."""
+    expected = os.environ.get("ADMIN_SECRET", "")
+    provided = request.headers.get("X-Admin-Secret", "")
+    if not expected or not provided:
+        return False
+    return secrets.compare_digest(provided.encode(), expected.encode())
 
 
 app.jinja_env.globals["publish_all_hold"] = library.PUBLISH_ALL_HOLD
@@ -1830,19 +1885,23 @@ def admin_login():
         if not expected:
             return render_template("admin_login.html",
                                    error="Admin not configured (ADMIN_PASSWORD missing)."), 503
-        if secrets.compare_digest(provided.encode(), expected.encode()):
+        if provided and secrets.compare_digest(provided.encode(), expected.encode()):
+            session.clear()  # Drop any pre-login cookie before starting the admin session.
             session["admin"] = True
             session.permanent = True
             return redirect(url_for("admin_dashboard"))
+        if not ratelimit.allow("admin-login-fail", _client_ip(), 10):
+            return render_template("admin_login.html",
+                                   error="Too many tries. Please wait a while and try again."), 429
         return render_template("admin_login.html", error="Wrong password."), 401
     if _admin_authed():
         return redirect(url_for("admin_dashboard"))
     return render_template("admin_login.html", error=None)
 
 
-@app.route("/admin/logout", methods=["POST", "GET"])
+@app.post("/admin/logout")
 def admin_logout():
-    session.pop("admin", None)
+    session.clear()
     return redirect(url_for("admin_login"))
 
 
@@ -1940,25 +1999,28 @@ def favicon():
 
 @app.route("/healthz")
 def healthz():
-    return {
-        "ok": True,
-        "model": settings.anthropic_model,
-        "db": db_enabled,
-        "tts": bool(settings.openai_api_key),
-        "image_provider": settings.image_provider,
-        "flux": settings.image_provider == "flux" and bool(settings.fal_api_key),
-        "today_spend_usd": round(today_spend_usd(), 4),
-        "daily_budget_usd": settings.daily_budget_usd,
-    }
+    """Host health check. Render uses this path and only needs HTTP 200."""
+    return Response('{"ok": true}\n', mimetype="application/json",
+                    headers={"Cache-Control": "no-store"})
+
+
+def _operator_status_allowed() -> bool:
+    """Admin session or X-Admin-Secret. Documented for operators in the README."""
+    return _admin_authed() or _admin_secret_ok()
 
 
 @app.route("/debug/status", methods=["GET"])
 def debug_status():
-    """Operational health snapshot — DB pool, write counters, cache sizes.
+    """Operational snapshot for a signed-in admin or a request with X-Admin-Secret.
 
-    Public but contains no secrets or PII. Useful for diagnosing whether
-    telemetry writes are succeeding, whether the pool is starving, etc.
+    Example, with the secret only in the header:
+
+        curl -sS -H "X-Admin-Secret: $ADMIN_SECRET" https://www.asklilowl.com/debug/status
+
+    The JSON field git_commit is the deployed commit. Do not put the secret in the URL.
     """
+    if not _operator_status_allowed():
+        return jsonify({"ok": False, "error": "forbidden"}), 403
     import sys
     return jsonify({
         "ok": True,

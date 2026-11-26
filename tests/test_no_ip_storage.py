@@ -8,7 +8,8 @@ from lesson_platform import db, ratelimit
 
 def test_client_context_keeps_location_but_not_the_address(monkeypatch):
     app_module = importlib.import_module("app")
-    monkeypatch.setattr(app_module, "extract_and_lookup", lambda fwd, remote: ("203.0.113.9", "Austin", "Texas", "United States"))
+    monkeypatch.setattr(app_module, "extract_and_lookup",
+                        lambda fwd, remote, cf=None: ("203.0.113.9", "Austin", "Texas", "United States"))
     with app_module.app.test_request_context("/", headers={"X-Forwarded-For": "203.0.113.9"}):
         ctx = app_module._client_context()
     assert "ip_address" not in ctx

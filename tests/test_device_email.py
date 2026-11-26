@@ -32,9 +32,12 @@ def site(monkeypatch):
     ratelimit.reset()
 
 
-def ask(client, email, question="Why?", ip="203.0.113.9"):
+def ask(client, email, question="Why?", ip="203.0.113.9", cf=None):
+    headers = {"X-Forwarded-For": ip, "X-Forwarded-Proto": "https"}
+    if cf:
+        headers["CF-Connecting-IP"] = cf
     return client.post("/api/lesson", json={"question": question, "email": email, "parent_consent": True},
-                       headers={"X-Forwarded-For": ip, "X-Forwarded-Proto": "https"})
+                       headers=headers)
 
 
 def test_a_second_email_is_allowed_and_no_device_cookie_is_set(site):
@@ -66,12 +69,22 @@ def test_another_ip_gets_its_own_three(site):
     assert ask(client, "dad@example.com", "Question 3?", ip="198.51.100.7").status_code == 200
 
 
-def test_the_first_forwarded_address_is_the_client(site):
+def test_cloudflare_connecting_ip_beats_a_spoofed_forwarded_header(site):
     _, client = site
     for number in range(3):
-        assert ask(client, "mum@example.com", f"Question {number}?", ip="203.0.113.9, 10.1.1.1").status_code == 200
-    assert ask(client, "mum@example.com", "Question 3?", ip="203.0.113.9, 198.51.100.7").status_code == 402
-    assert ask(client, "mum@example.com", "A new one?", ip="198.51.100.7, 203.0.113.9").status_code == 200
+        assert ask(client, "mum@example.com", f"Question {number}?",
+                   ip="1.1.1.1, 8.8.8.8", cf="203.0.113.9").status_code == 200
+    assert ask(client, "dad@example.com", "Question 3?", ip="9.9.9.9", cf="203.0.113.9").status_code == 402
+    assert ask(client, "dad@example.com", "A new one?", ip="203.0.113.9", cf="198.51.100.7").status_code == 200
+
+
+def test_the_proxy_appended_address_is_the_client(site):
+    _, client = site
+    # The leftmost address is visitor-supplied. Render appends the real client at the end.
+    for number in range(3):
+        assert ask(client, "mum@example.com", f"Question {number}?", ip="198.51.100.7, 203.0.113.9").status_code == 200
+    assert ask(client, "dad@example.com", "Question 3?", ip="1.2.3.4, 203.0.113.9").status_code == 402
+    assert ask(client, "dad@example.com", "A new one?", ip="203.0.113.9, 198.51.100.7").status_code == 200
 
 
 def test_the_same_question_counts_once_for_the_ip(site):
