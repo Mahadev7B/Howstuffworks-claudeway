@@ -776,8 +776,8 @@ def _email_refusal(email: str | None, consent, token) -> tuple[str, str, int] | 
 
 
 def _device_lock_on() -> bool:
-    """While emails aren't confirmed with a code, each device may use only one email for free lessons."""
-    return os.getenv("DEVICE_EMAIL_LOCK", "on").strip().lower() != "off" and not verification.required()
+    """One email per device is no longer enforced. Free lessons are counted per network."""
+    return False
 
 
 def _device_signer() -> URLSafeSerializer:
@@ -801,18 +801,13 @@ def _mask_email(email: str) -> str:
 
 
 def _device_refusal(email: str | None) -> tuple[str, str, int] | None:
-    if email is None or not _device_lock_on():
-        return None
-    linked = _device_email()
-    if linked and linked != email:
-        return ("device_email", DEVICE_EMAIL_MESSAGE.format(email=_mask_email(linked)), 403)
+    """Any email may ask. The free-lesson cap is per network, not per device cookie."""
     return None
 
 
 def _link_device(email: str) -> None:
-    """Remember, on this device, the email that just got a lesson (the cookie is set after the response)."""
-    if _device_lock_on() and _device_email() is None:
-        g.link_device_email = email
+    """The device cookie is no longer set. The free-lesson cap uses a hash of the client IP."""
+    return None
 
 
 @app.after_request
@@ -825,14 +820,20 @@ def _set_device_cookie(response):
     return response
 
 
+def _lesson_ip_hash() -> str | None:
+    """One-way code for this request's client IP. The address itself is not kept."""
+    return askers.ip_hash(_client_ip())
+
+
 def _asker_gate(raw_email: str | None, question: str, consent=None, token=None) -> tuple[str | None, dict | None, tuple[str, str, int] | None]:
     """Return (email, allowance, refusal). Refusal is (code, message, HTTP status)."""
     email = askers.normalize_email(raw_email)
-    refusal = _email_refusal(email, consent, token) or _device_refusal(email)
+    refusal = _email_refusal(email, consent, token)
     if refusal is not None:
         return email, None, refusal
     try:
-        allowance = askers.allowance(email, question, is_saved=lambda: _question_is_saved(question))
+        allowance = askers.allowance(email, question, is_saved=lambda: _question_is_saved(question),
+                                     ip_hash=_lesson_ip_hash())
     except askers.AskerUnavailable:
         return email, None, ("asker_unavailable", ASKER_UNAVAILABLE_MESSAGE, 503)
     reason = allowance["reason"]
@@ -922,7 +923,7 @@ def lesson():
     if verification.required():
         return render_template("error.html", question=question,
                                error="Please turn on JavaScript so we can confirm the grown-up's email."), 400
-    email, _, refusal = _asker_gate(request.form.get("email"), question, request.form.get("parent_consent"))
+    email, allowance, refusal = _asker_gate(request.form.get("email"), question, request.form.get("parent_consent"))
     if refusal is not None:
         return render_template("error.html", question=question, error=refusal[1]), refusal[2]
     data, err = _track_lesson("/lesson", question, ctx)
@@ -931,8 +932,8 @@ def lesson():
             friendly = "Too many questions. Please try again later."
             return render_template("error.html", question=question, error=friendly), 429
         return render_template("error.html", question=question, error=err), 500
-    askers.record_question(email, question, generated=bool(getattr(g, "lesson_generated", False)))
-    _link_device(email)
+    askers.record_question(email, question, generated=bool(getattr(g, "lesson_generated", False)),
+                           ip_hash=None if allowance and allowance.get("subscribed") else _lesson_ip_hash())
     resp = app.make_response(render_template("lesson.html", question=question, lesson=data))
     resp.headers["Cache-Control"] = "private, max-age=600"
     return resp
@@ -977,8 +978,8 @@ def api_lesson():
             }), 429
         return jsonify({"ok": False, "error": err}), 500
     generated = bool(getattr(g, "lesson_generated", False))
-    askers.record_question(email, question, generated=generated)
-    _link_device(email)
+    askers.record_question(email, question, generated=generated,
+                           ip_hash=None if allowance.get("subscribed") else _lesson_ip_hash())
     reply = {"ok": True, "lesson": data, "subscribed": allowance["subscribed"], "free_left": None, "new_left_today": None,
              "free_limit": allowance["free_limit"], "waitlist_choice": allowance.get("waitlist_choice")}
     if allowance["subscribed"]:
@@ -995,7 +996,7 @@ def api_more_lessons():
     """A parent who used their free lessons asks to try a few more; the admin reviews it."""
     payload = request.get_json(silent=True) or {}
     email = askers.normalize_email(payload.get("email"))
-    refusal = _email_refusal(email, payload.get("parent_consent"), payload.get("email_token")) or _device_refusal(email)
+    refusal = _email_refusal(email, payload.get("parent_consent"), payload.get("email_token"))
     if refusal is not None:
         return jsonify({"ok": False, "code": refusal[0], "error": refusal[1]}), refusal[2]
     if not ratelimit.allow("more-lessons", _client_ip(), 10):

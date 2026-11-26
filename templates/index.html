@@ -362,7 +362,7 @@
         <div class="asker-email" id="askerEmailRow">
           <label for="askerEmail">Grown-up's email</label>
           <input type="email" name="email" id="askerEmail" placeholder="parent@example.com" required autocomplete="email" maxlength="254">
-          <p class="asker-note">No password needed.{% if email_verification %} We'll email a 6-digit code to confirm it.{% endif %} We remember it on this device. Your first {{ free_questions }} lessons are free.</p>
+          <p class="asker-note">No password needed.{% if email_verification %} We'll email a 6-digit code to confirm it.{% endif %} We remember it on this device. Your first {{ free_questions }} lessons are free on a network.</p>
           <label class="asker-consent"><input type="checkbox" name="parent_consent" value="yes" id="askerConsent" required> <span>I'm a parent or guardian, I'll stay with my child while they use AskLilOwl, and I agree to the <a href="{{ url_for('privacy') }}" target="_blank" rel="noopener">privacy policy</a>.</span></label>
         </div>
         <p class="asker-saved" id="askerSaved" hidden>Asking as <strong id="askerSavedEmail"></strong> · <button type="button" id="askerChange">Change</button></p>

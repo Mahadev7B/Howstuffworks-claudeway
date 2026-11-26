@@ -1,6 +1,6 @@
 """Who is asking: an email per asker, a few free questions, a free month, then a subscription.
 
-* The first FREE_QUESTIONS different questions are free.
+* The first FREE_QUESTIONS different questions from one client IP are free, whichever email asks.
 * Then a parent can start one free month: up to TRIAL_DAILY_NEW new lessons in
   any 24 hours (a rolling window, so time zones don't matter) for TRIAL_DAYS days. Questions someone already asked (a saved copy) and
   the family's own repeats never count.
@@ -8,7 +8,10 @@
 
 Without a database (local previews and tests) everything lives in memory.
 """
+import hashlib
+import hmac
 import logging
+import os
 import re
 import threading
 import time
@@ -29,6 +32,7 @@ _ACTIVE = ("active", "trialing")  # Same as billing.ACTIVE_STATES.
 
 _memory_lock = threading.Lock()
 _memory_asked: dict[str, dict[str, tuple[float, bool]]] = {}  # email -> {question hash: (time, newly made)}
+_memory_ip: dict[str, dict[str, tuple[float, bool]]] = {}  # ip hash -> {question hash: (time, newly made)}
 _memory_status: dict[str, str] = {}
 _memory_trial: dict[str, float] = {}
 _memory_waitlist: dict[str, str] = {}
@@ -47,6 +51,14 @@ def normalize_email(raw: str | None) -> str | None:
     return email
 
 
+def ip_hash(ip: str | None) -> str | None:
+    """One-way code for a client IP. The address cannot be read back from it."""
+    if not ip:
+        return None
+    secret = os.getenv("FLASK_SECRET_KEY", "dev-secret-key").encode()
+    return hmac.new(secret, b"free-lesson-ip|" + ip.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 def _trial_state(started: datetime | None, now: datetime) -> tuple[str, datetime | None]:
     if started is None:
         return "none", None
@@ -54,8 +66,12 @@ def _trial_state(started: datetime | None, now: datetime) -> tuple[str, datetime
     return ("active" if now < ends else "ended"), ends
 
 
-def allowance(email: str, question: str, is_saved=None) -> dict:
+def allowance(email: str, question: str, is_saved=None, ip_hash: str | None = None) -> dict:
     """Decide whether this email may ask this question now, and why.
+
+    The 3 free lessons are shared by everyone on the same client IP (`ip_hash` is
+    a one-way code, never the address). A repeat of a question this email or this
+    IP already asked, and a lesson saved from an earlier ask, stay free.
 
     `is_saved` is an optional callable that says whether a saved lesson already
     exists for the question; it's only consulted when the daily limit is reached.
@@ -66,12 +82,14 @@ def allowance(email: str, question: str, is_saved=None) -> dict:
     if db._pool is None:
         with _memory_lock:
             asked = _memory_asked.get(email, {})
+            by_ip = _memory_ip.get(ip_hash, {}) if ip_hash else {}
             status = _memory_status.get(email, "none")
             started_ts = _memory_trial.get(email)
             choice = _memory_waitlist.get(email)
             bonus = _memory_bonus.get(email, 0)
             requested = email in _memory_requests
-            used, repeat = len(asked), qhash in asked
+            used = len(by_ip)
+            repeat = qhash in asked or qhash in by_ip
             # Only lessons made during the free month count toward its 24-hour limit.
             since = max(window_start.timestamp(), started_ts or 0)
             recent = [ts for ts, generated in asked.values() if generated and ts >= since]
@@ -87,18 +105,27 @@ def allowance(email: str, question: str, is_saved=None) -> dict:
                 status, started, choice, bonus, requested = row if row else ("none", None, None, 0, False)
                 since = max(window_start, started) if started else window_start
                 cur.execute(
-                    "SELECT COUNT(*), COUNT(*) FILTER (WHERE question_hash = %s), "
+                    "SELECT COUNT(*), BOOL_OR(question_hash = %s), "
                     "COUNT(*) FILTER (WHERE generated AND created_at >= %s), "
                     "MIN(created_at) FILTER (WHERE generated AND created_at >= %s) "
                     "FROM asker_questions WHERE email = %s",
                     (qhash, since, since, email),
                 )
-                used, repeat, new_today, oldest = cur.fetchone()
-                repeat = bool(repeat)
+                _email_used, email_repeat, new_today, oldest = cur.fetchone()
+                if ip_hash:
+                    cur.execute(
+                        "SELECT COUNT(DISTINCT question_hash), BOOL_OR(question_hash = %s) "
+                        "FROM asker_questions WHERE ip_hash = %s",
+                        (qhash, ip_hash),
+                    )
+                    used, ip_repeat = cur.fetchone()
+                else:
+                    used, ip_repeat = 0, False
+                repeat = bool(email_repeat or ip_repeat)
         except Exception as exc:
             logger.exception("Asker allowance check failed")
             raise AskerUnavailable(str(exc)) from exc
-    used, new_today = int(used), int(new_today)
+    used, new_today = int(used or 0), int(new_today or 0)
     free_limit = FREE_QUESTIONS + int(bonus or 0)
     subscribed = status in _ACTIVE
     trial, trial_ends = _trial_state(started, now)
@@ -143,12 +170,21 @@ def allowance(email: str, question: str, is_saved=None) -> dict:
     }
 
 
-def record_question(email: str, question: str, generated: bool = True) -> None:
-    """Count a question that was answered. `generated` is False when a saved copy was reused."""
+def record_question(email: str, question: str, generated: bool = True, ip_hash: str | None = None) -> None:
+    """Count a question that was answered. `generated` is False when a saved copy was reused.
+
+    `ip_hash` is the one-way code for the client IP. Pass None for a subscriber so
+    their lessons do not use up that network's free ones.
+    """
     qhash = db.question_hash(question)
     if db._pool is None:
         with _memory_lock:
-            _memory_asked.setdefault(email, {}).setdefault(qhash, (time.time(), generated))
+            email_asked = _memory_asked.setdefault(email, {})
+            if qhash in email_asked:
+                return  # A replay keeps its original network slot.
+            email_asked[qhash] = (time.time(), generated)
+            if ip_hash:
+                _memory_ip.setdefault(ip_hash, {}).setdefault(qhash, (time.time(), generated))
         return
     try:
         with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
@@ -159,9 +195,10 @@ def record_question(email: str, question: str, generated: bool = True) -> None:
                 (email,),
             )
             cur.execute(
-                "INSERT INTO asker_questions (email, question_hash, question, generated) VALUES (%s, %s, %s, %s) "
+                "INSERT INTO asker_questions (email, question_hash, question, generated, ip_hash) "
+                "VALUES (%s, %s, %s, %s, %s) "
                 "ON CONFLICT (email, question_hash) DO NOTHING",
-                (email, qhash, question[:500], generated),
+                (email, qhash, question[:500], generated, ip_hash),
             )
     except Exception:
         logger.exception("Failed to record asker question")
@@ -268,6 +305,14 @@ def delete_asker(email: str) -> bool:
     if db._pool is None:
         with _memory_lock:
             existed = email in _memory_asked or email in _memory_status or email in _memory_trial
+            hashes = set(_memory_asked.get(email, {}))
+            still_used = set()
+            for other, asked in _memory_asked.items():
+                if other != email:
+                    still_used.update(asked)
+            for asked in _memory_ip.values():
+                for qhash in hashes - still_used:
+                    asked.pop(qhash, None)
             _memory_waitlist.pop(email, None)
             _memory_bonus.pop(email, None)
             _memory_requests.pop(email, None)
@@ -288,6 +333,7 @@ def reset_memory() -> None:
     """Test helper: forget in-memory askers."""
     with _memory_lock:
         _memory_asked.clear()
+        _memory_ip.clear()
         _memory_status.clear()
         _memory_trial.clear()
         _memory_waitlist.clear()
