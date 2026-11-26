@@ -830,6 +830,58 @@ def ip_calls_last_hour(ip: str | None, endpoints: tuple[str, ...]) -> int:
             pass
 
 
+# Counts slides whose picture is missing without sending the picture bytes to Python.
+# A present picture is a non-empty JSON string. Comparing jsonb avoids turning the
+# base64 into text just to see whether it is empty.
+_MISSING_PICTURES_SQL = """
+SELECT c.question,
+       COALESCE(c.lesson->>'title', '') AS title,
+       c.share_slug,
+       to_char(c.created_at AT TIME ZONE %s, 'YYYY-MM-DD HH24:MI') AS created,
+       counts.slide_count,
+       counts.missing
+FROM cached_lessons AS c
+CROSS JOIN LATERAL (
+    SELECT COUNT(*)::int AS slide_count,
+           COUNT(*) FILTER (
+               WHERE NOT COALESCE(
+                   jsonb_typeof(slide->'image_data_url') = 'string'
+                   AND slide->'image_data_url' <> '""'::jsonb,
+                   false)
+           )::int AS missing
+    FROM jsonb_array_elements(
+        CASE WHEN jsonb_typeof(c.lesson->'slides') = 'array'
+             THEN c.lesson->'slides' ELSE '[]'::jsonb END
+    ) AS slide
+) AS counts
+WHERE counts.missing > 0
+ORDER BY c.created_at DESC
+"""
+
+
+def list_cached_lessons_missing_pictures() -> list[dict[str, Any]]:
+    """Saved parent-asked lessons that are missing at least one slide picture.
+
+    The rows are question, title, share slug, created time, slide count, and
+    how many slides have no picture. The picture data itself is not returned.
+    """
+    if _pool is None:
+        return []
+    with _pool.connection(timeout=_ADMIN_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        cur.execute(_MISSING_PICTURES_SQL, (ADMIN_TZ,))
+        return [
+            {
+                "question": row[0],
+                "title": row[1] or "",
+                "share_slug": row[2] or "",
+                "created": row[3] or "",
+                "slide_count": int(row[4] or 0),
+                "missing": int(row[5] or 0),
+            }
+            for row in cur.fetchall()
+        ]
+
+
 # ---------------------------------------------------------------------------
 # Admin dashboard queries — read-only, fail-safe (return empty/zero on error)
 # ---------------------------------------------------------------------------

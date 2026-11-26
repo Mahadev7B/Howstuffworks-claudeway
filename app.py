@@ -1959,6 +1959,82 @@ def admin_logout():
     return redirect(url_for("admin_login"))
 
 
+_SHARE_SLUG = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _memory_lessons_missing_pictures() -> list[dict]:
+    """Lessons held in this process, without copying their picture data."""
+    from datetime import datetime, timezone
+    try:
+        from zoneinfo import ZoneInfo
+        zone = ZoneInfo(os.environ.get("ADMIN_TZ", "America/New_York"))
+    except Exception:
+        zone = timezone.utc
+    rows = []
+    for question, (stored_at, lesson) in list(_RECENT_LESSONS.items()):
+        if not isinstance(lesson, dict):
+            continue
+        slides = lesson.get("slides")
+        if not isinstance(slides, list) or not slides:
+            continue
+        missing = 0
+        for slide in slides:
+            picture = slide.get("image_data_url") if isinstance(slide, dict) else None
+            if not isinstance(picture, str) or not picture:
+                missing += 1
+        if not missing:
+            continue
+        created = datetime.fromtimestamp(stored_at, zone).strftime("%Y-%m-%d %H:%M")
+        title = lesson.get("title") if isinstance(lesson.get("title"), str) else ""
+        rows.append({
+            "question": question,
+            "title": title,
+            "share_slug": "",
+            "created": created,
+            "slide_count": len(slides),
+            "missing": missing,
+            "_stored_at": stored_at,
+        })
+    rows.sort(key=lambda row: row["_stored_at"], reverse=True)
+    for row in rows:
+        row.pop("_stored_at", None)
+    return rows
+
+
+def _with_share_links(rows: list[dict]) -> list[dict]:
+    for row in rows:
+        slug = row.get("share_slug") or ""
+        row["share_path"] = url_for("share_lesson", slug=slug) if _SHARE_SLUG.fullmatch(slug) else ""
+    return rows
+
+
+@app.get("/admin/missing-pictures")
+def admin_missing_pictures():
+    """Read-only list of saved lessons that are missing one or more pictures."""
+    if not _admin_authed():
+        return redirect(url_for("admin_login"))
+    from lesson_platform.db import _pool, list_cached_lessons_missing_pictures
+    error = None
+    if _pool is not None:
+        source = "database"
+        try:
+            rows = list_cached_lessons_missing_pictures()
+        except Exception:
+            logger.exception("Could not list lessons missing pictures")
+            rows = []
+            error = "The database list could not be read."
+    else:
+        source = "memory"
+        rows = _memory_lessons_missing_pictures()
+    return render_template(
+        "admin_missing_pictures.html",
+        rows=_with_share_links(rows),
+        total=len(rows),
+        source=source,
+        error=error,
+    )
+
+
 @app.route("/admin", methods=["GET"])
 def admin_dashboard():
     if not _admin_authed():
