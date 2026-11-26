@@ -123,7 +123,7 @@
     </div>
 
     <h2 class="h5 mt-5 mb-1" id="emails">Emails</h2>
-    <p class="section-note mb-3">Grown-ups' emails given before asking a question. Each email can ask {{ free_questions }} different questions. Asking one of those again doesn't use another. The first time this email opens a lesson another family already made, it does use one of the {{ free_questions }}. After those are used, lessons that were already made still open, and a brand-new question waits for approval or a subscription. Questions asked before emails were required aren't linked to anyone.</p>
+    <p class="section-note mb-3">Grown-ups' emails given before asking a question. One network shares {{ free_questions }} free lessons, whichever email asks. Asking a question that network already asked doesn't use another. A subscription doesn't use the network's free lessons. Questions asked before emails were required aren't linked to anyone.</p>
     {% if not ak.available %}
       <div class="alert alert-warning">The email list couldn't be loaded just now. Reload the page to try again.</div>
     {% endif %}
@@ -571,10 +571,10 @@
           btn.disabled = true;
           btn.textContent = '…';
           try {
-            const csrf = document.querySelector('meta[name="csrf-token"]');
+            const csrf = (document.querySelector('input[name="csrf_token"]') || {}).value || '';
             const result = await (await fetch('/admin/delete-cached-lesson', {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ question, csrf_token: csrf ? csrf.content : '' }),
+              body: JSON.stringify({ question, csrf_token: csrf }),
             })).json();
             if (!result.ok) throw new Error(result.error || 'failed');
             btn.closest('tr').remove();

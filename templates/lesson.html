@@ -374,9 +374,9 @@
         const n = parseInt(left, 10);
         const usual = (parseInt(limit, 10) || {{ free_questions|default(3) }}) === {{ free_questions|default(3) }};
         const lessonsLeft = n === 1 ? '1 free lesson left.' : n + ' free lessons left.';
-        const intro = Number.isNaN(n) ? 'Your first {{ free_questions|default(3) }} lessons are free.'
+        const intro = Number.isNaN(n) ? 'Your first {{ free_questions|default(3) }} lessons are free on a network.'
           : (n === 0 ? "That was your last free lesson for now."
-             : (usual ? 'Your first {{ free_questions|default(3) }} lessons are free. You have ' + n + ' left.'
+             : (usual ? 'Your first {{ free_questions|default(3) }} lessons are free on a network. You have ' + n + ' left.'
                       : 'You have ' + lessonsLeft));
         const box = document.getElementById('waitlistBox');
         if (window.Waitlist.render(box, { intro })) {
@@ -481,6 +481,12 @@
         }
       });
 
+      function escQuiz(value) {
+        return String(value == null ? '' : value).replace(/[&<>"']/g, (ch) => ({
+          '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+        }[ch]));
+      }
+
       function renderQuiz(quiz) {
         const questions = quiz.questions || [];
         let score = 0;
@@ -503,10 +509,10 @@
           const block = document.createElement('div');
           block.className = 'quiz-q';
           block.innerHTML = `
-            <p class="quiz-question"><strong>Q${qi + 1}.</strong> ${q.question}</p>
+            <p class="quiz-question"><strong>Q${qi + 1}.</strong> ${escQuiz(q.question)}</p>
             <div class="quiz-options">
               ${q.options.map((opt, oi) =>
-                `<button class="quiz-opt" data-qi="${qi}" data-oi="${oi}">${opt}</button>`
+                `<button class="quiz-opt" data-qi="${qi}" data-oi="${oi}">${escQuiz(opt)}</button>`
               ).join('')}
             </div>
             <p class="quiz-explain" hidden></p>`;

@@ -27,11 +27,15 @@ def site(monkeypatch):
 def test_healthz_is_only_an_ok(site):
     response = site.get("/healthz")
     assert response.status_code == 200
+    assert response.get_data(as_text=True) == '{"ok": true}\n'
     assert response.get_json() == {"ok": True}
-    assert "no-store" in response.headers["Cache-Control"]
+    assert response.headers["Cache-Control"] == "no-store"
+    assert b"model" not in response.data
+    assert b"budget" not in response.data
+    assert b"flux" not in response.data
 
 
-def test_debug_status_requires_admin(site):
+def test_debug_status_requires_admin(site, monkeypatch):
     hidden = site.get("/debug/status")
     assert hidden.status_code == 403
     assert hidden.get_json() == {"ok": False, "error": "forbidden"}
@@ -42,6 +46,13 @@ def test_debug_status_requires_admin(site):
     assert shown.status_code == 200
     assert "anthropic_model" in shown.get_json()["settings"]
     assert "no-store" in shown.headers["Cache-Control"]
+    with site.session_transaction() as sess:
+        sess.clear()
+    monkeypatch.setenv("ADMIN_SECRET", "s3cret-value")
+    assert site.get("/debug/status", headers={"X-Admin-Secret": "nope"}).status_code == 403
+    opened = site.get("/debug/status", headers={"X-Admin-Secret": "s3cret-value"})
+    assert opened.status_code == 200
+    assert opened.get_json()["ok"] is True
 
 
 def test_robots_hides_admin_and_debug(site):
@@ -81,7 +92,7 @@ def test_slide_image_is_cacheable_and_hides_drafts(site):
     assert image.status_code == 200
     assert image.mimetype == "image/png"
     assert image.data == b"h"
-    assert "public" in image.headers["Cache-Control"]
+    assert image.headers["Cache-Control"] == "public, max-age=604800"
     assert site.get("/explore/sky-blue/slide/3").status_code == 404
     assert site.get("/explore/missing/slide/0").status_code == 404
 
@@ -118,11 +129,14 @@ def test_server_error_page_hides_the_exception():
 
 
 def test_security_headers_are_present(site):
-    headers = site.get("/").headers
-    assert headers["X-Content-Type-Options"] == "nosniff"
-    assert headers["X-Frame-Options"] == "SAMEORIGIN"
-    assert "frame-ancestors" in headers["Content-Security-Policy"]
-    assert headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
+    for path, status in (("/", 200), ("/this-page-is-not-real", 404)):
+        page = site.get(path, headers={"X-Forwarded-Proto": "https"})
+        assert page.status_code == status
+        assert page.headers["X-Content-Type-Options"] == "nosniff"
+        assert page.headers["X-Frame-Options"] == "SAMEORIGIN"
+        assert "frame-ancestors 'self'" in page.headers["Content-Security-Policy"]
+        assert page.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
+        assert "max-age=15552000" in page.headers["Strict-Transport-Security"]
 
 
 def test_cloudflare_ip_wins_over_a_spoofed_forwarded_header():

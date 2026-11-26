@@ -4,7 +4,7 @@ Illustrated, narrated lessons for curious kids, used with a parent nearby.
 
 Live site: [https://www.asklilowl.com](https://www.asklilowl.com)
 
-Published lessons are free to watch. Asking a new question needs a parent's email. The first 3 different questions on that email are free. A $4.99 monthly Stripe subscription, when the question box offers it, lets that email keep asking.
+Published lessons are free to watch. Asking a new question needs a parent's email. The first 3 different questions from one network are free, whichever email asks. A $4.99 monthly Stripe subscription, when the question box offers it, lets that email keep asking. A subscriber's lessons do not use the network's free ones.
 
 ## Stack
 
@@ -50,9 +50,21 @@ Useful environment variables, all optional except the Anthropic key when you wan
 pytest
 ```
 
+## Operator status
+
+`GET /healthz` returns `{"ok": true}` with `Cache-Control: no-store` for the host health check. It does not include model names, spend, or provider flags.
+
+`GET /debug/status` is private. Sign in at `/admin`, or send the Render `ADMIN_SECRET` only as a header (never in the URL). Either one is enough:
+
+```bash
+curl -sS -H "X-Admin-Secret: $ADMIN_SECRET" https://www.asklilowl.com/debug/status
+```
+
+The JSON field `git_commit` is the deployed commit. `POST /admin/clear-cache` uses the same header and deletes saved lessons.
+
 ## Deploying
 
-`render.yaml` is the Render service. Its health check is `GET /healthz`, which returns `{"ok": true}` and nothing else. `GET /debug/status` is the detailed snapshot and requires an admin login.
+`render.yaml` is the Render service. Its health check is `GET /healthz`, which returns `{"ok": true}` and nothing else.
 
 ## Project layout
 

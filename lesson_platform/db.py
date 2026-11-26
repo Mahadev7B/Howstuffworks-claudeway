@@ -249,6 +249,8 @@ CREATE TABLE IF NOT EXISTS asker_questions (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (email, question_hash)
 );
+ALTER TABLE asker_questions ADD COLUMN IF NOT EXISTS ip_hash TEXT;
+CREATE INDEX IF NOT EXISTS asker_questions_ip_hash_idx ON asker_questions (ip_hash);
 """
 
 

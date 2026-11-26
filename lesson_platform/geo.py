@@ -10,14 +10,32 @@ logger = logging.getLogger(__name__)
 _TIMEOUT_S = 2.0
 
 
-def _client_ip(forwarded_for: str | None, remote_addr: str | None) -> str | None:
-    """Pick the leftmost IP from X-Forwarded-For, else remote_addr."""
-    if forwarded_for:
-        for part in forwarded_for.split(","):
-            ip = part.strip()
-            if ip:
-                return ip
-    return remote_addr or None
+def _looks_like_ip(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
+
+
+def _client_ip(forwarded_for: str | None, remote_addr: str | None,
+               cf_connecting_ip: str | None = None) -> str | None:
+    """The visitor address, not a client-supplied earlier hop.
+
+    Cloudflare overwrites CF-Connecting-IP, so that wins when the request came
+    through Cloudflare. Otherwise the rightmost valid X-Forwarded-For entry is
+    the one Render appended. The leftmost entry is whatever the visitor sent.
+    """
+    cf = (cf_connecting_ip or "").strip()
+    if _looks_like_ip(cf):
+        return cf
+    parts = [part.strip() for part in (forwarded_for or "").split(",") if part.strip()]
+    for candidate in reversed(parts):
+        if _looks_like_ip(candidate):
+            return candidate
+    if remote_addr and _looks_like_ip(remote_addr):
+        return remote_addr
+    return None
 
 
 def _is_public(ip: str) -> bool:
@@ -47,9 +65,9 @@ def lookup(ip: str | None) -> tuple[Optional[str], Optional[str], Optional[str]]
 
 
 def extract_and_lookup(
-    forwarded_for: str | None, remote_addr: str | None
+    forwarded_for: str | None, remote_addr: str | None, cf_connecting_ip: str | None = None,
 ) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
     """Returns (ip, city, region, country)."""
-    ip = _client_ip(forwarded_for, remote_addr)
+    ip = _client_ip(forwarded_for, remote_addr, cf_connecting_ip)
     city, region, country = lookup(ip)
     return (ip, city, region, country)

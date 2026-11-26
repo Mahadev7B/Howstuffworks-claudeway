@@ -1,6 +1,6 @@
 """Who is asking: an email per asker, a few free questions, a free month, then a subscription.
 
-* The first FREE_QUESTIONS different questions are free.
+* The first FREE_QUESTIONS different questions from one client IP are free, whichever email asks.
 * Then a parent can start one free month: up to TRIAL_DAILY_NEW new lessons in
   any 24 hours (a rolling window, so time zones don't matter) for TRIAL_DAYS days. Questions someone already asked (a saved copy) and
   the family's own repeats never count.
@@ -8,8 +8,12 @@
 
 Without a database (local previews and tests) everything lives in memory.
 """
+import hashlib
+import hmac
 import logging
+import os
 import re
+import secrets
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -29,6 +33,7 @@ _ACTIVE = ("active", "trialing")  # Same as billing.ACTIVE_STATES.
 
 _memory_lock = threading.Lock()
 _memory_asked: dict[str, dict[str, tuple[float, bool]]] = {}  # email -> {question hash: (time, newly made)}
+_memory_ip: dict[str, dict[str, tuple[float, bool]]] = {}  # ip hash -> {question hash: (time, newly made)}
 _memory_status: dict[str, str] = {}
 _memory_trial: dict[str, float] = {}
 _memory_waitlist: dict[str, str] = {}
@@ -47,6 +52,25 @@ def normalize_email(raw: str | None) -> str | None:
     return email
 
 
+# Used only when FLASK_SECRET_KEY is missing or still the published dev default.
+# It is not saved, so a restart gives each network a fresh set of free lessons.
+_PROCESS_IP_SECRET = secrets.token_bytes(32)
+
+
+def _ip_hmac_key() -> bytes:
+    secret = os.getenv("FLASK_SECRET_KEY", "").strip()
+    if secret and secret != "dev-secret-key":
+        return secret.encode("utf-8")
+    return _PROCESS_IP_SECRET
+
+
+def ip_hash(ip: str | None) -> str | None:
+    """One-way code for a client IP. The address cannot be read back from it."""
+    if not ip:
+        return None
+    return hmac.new(_ip_hmac_key(), b"free-lesson-ip|" + ip.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 def _trial_state(started: datetime | None, now: datetime) -> tuple[str, datetime | None]:
     if started is None:
         return "none", None
@@ -56,7 +80,7 @@ def _trial_state(started: datetime | None, now: datetime) -> tuple[str, datetime
 
 def _decide(status, started, choice, bonus, requested, used, repeat, new_today, oldest, now, saved: bool) -> dict:
     """Turn one consistent snapshot into the same allowance dict the routes already use."""
-    used, new_today = int(used), int(new_today)
+    used, new_today = int(used or 0), int(new_today or 0)
     free_limit = FREE_QUESTIONS + int(bonus or 0)
     subscribed = status in _ACTIVE
     trial, trial_ends = _trial_state(started, now)
@@ -102,14 +126,17 @@ def _decide(status, started, choice, bonus, requested, used, repeat, new_today, 
     }
 
 
-def _memory_snapshot(email: str, qhash: str, now: datetime):
+def _memory_snapshot(email: str, qhash: str, now: datetime, ip_hash: str | None):
+    """Caller must hold _memory_lock. `used` is this network's count, not the email's."""
     asked = _memory_asked.get(email, {})
+    by_ip = _memory_ip.get(ip_hash, {}) if ip_hash else {}
     status = _memory_status.get(email, "none")
     started_ts = _memory_trial.get(email)
     choice = _memory_waitlist.get(email)
     bonus = _memory_bonus.get(email, 0)
     requested = email in _memory_requests
-    used, repeat = len(asked), qhash in asked
+    used = len(by_ip)
+    repeat = qhash in asked or qhash in by_ip
     window_start = (now - timedelta(seconds=WINDOW_S)).timestamp()
     # Only lessons made during the free month count toward its 24-hour limit.
     since = max(window_start, started_ts or 0)
@@ -120,7 +147,15 @@ def _memory_snapshot(email: str, qhash: str, now: datetime):
     return status, started, choice, bonus, requested, used, repeat, new_today, oldest
 
 
-def _db_snapshot(cur, email: str, qhash: str, now: datetime, lock: bool):
+def _network_lock_key(ip_hash: str) -> int:
+    """A signed bigint for pg_advisory_xact_lock, taken from the IP code."""
+    return int(ip_hash[:15], 16)
+
+
+def _db_snapshot(cur, email: str, qhash: str, now: datetime, ip_hash: str | None, lock: bool):
+    """Read one allowance snapshot. When locking, the network lock is taken before the email row."""
+    if lock and ip_hash:
+        cur.execute("SELECT pg_advisory_xact_lock(%s)", (_network_lock_key(ip_hash),))
     if lock:
         cur.execute(
             "INSERT INTO askers (email, consented_at) VALUES (%s, NOW()) "
@@ -143,18 +178,39 @@ def _db_snapshot(cur, email: str, qhash: str, now: datetime, lock: bool):
     window_start = now - timedelta(seconds=WINDOW_S)
     since = max(window_start, started) if started else window_start
     cur.execute(
-        "SELECT COUNT(*), COUNT(*) FILTER (WHERE question_hash = %s), "
+        "SELECT COUNT(*), BOOL_OR(question_hash = %s), "
         "COUNT(*) FILTER (WHERE generated AND created_at >= %s), "
         "MIN(created_at) FILTER (WHERE generated AND created_at >= %s) "
         "FROM asker_questions WHERE email = %s",
         (qhash, since, since, email),
     )
-    used, repeat, new_today, oldest = cur.fetchone()
-    return status, started, choice, bonus, requested, used, repeat, new_today, oldest
+    _email_used, email_repeat, new_today, oldest = cur.fetchone()
+    if ip_hash:
+        cur.execute(
+            "SELECT COUNT(DISTINCT question_hash), BOOL_OR(question_hash = %s) "
+            "FROM asker_questions WHERE ip_hash = %s",
+            (qhash, ip_hash),
+        )
+        used, ip_repeat = cur.fetchone()
+    else:
+        used, ip_repeat = 0, False
+    repeat = bool(email_repeat or ip_repeat)
+    return status, started, choice, bonus, requested, int(used or 0), repeat, int(new_today or 0), oldest
 
 
-def allowance(email: str, question: str, is_saved=None) -> dict:
+def _stored_ip(decision: dict, ip_hash: str | None) -> str | None:
+    """Subscribers do not consume the network's free lessons."""
+    if decision.get("subscribed"):
+        return None
+    return ip_hash
+
+
+def allowance(email: str, question: str, is_saved=None, ip_hash: str | None = None) -> dict:
     """Decide whether this email may ask this question now, and why.
+
+    The 3 free lessons are shared by everyone on the same client IP (`ip_hash` is
+    a one-way code, never the address). A repeat of a question this email or this
+    IP already asked, and a lesson saved from an earlier ask, stay free.
 
     `is_saved` is an optional callable that says whether a saved lesson already
     exists for the question; it's only consulted when the daily limit is reached.
@@ -165,61 +221,64 @@ def allowance(email: str, question: str, is_saved=None) -> dict:
     saved = bool(is_saved()) if is_saved is not None else False
     if db._pool is None:
         with _memory_lock:
-            snapshot = _memory_snapshot(email, qhash, now)
+            snapshot = _memory_snapshot(email, qhash, now, ip_hash)
     else:
         try:
             with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
-                snapshot = _db_snapshot(cur, email, qhash, now, lock=False)
+                snapshot = _db_snapshot(cur, email, qhash, now, ip_hash, lock=False)
         except Exception as exc:
             logger.exception("Asker allowance check failed")
             raise AskerUnavailable(str(exc)) from exc
     return _decide(*snapshot, now, saved)
 
 
-def claim_question(email: str, question: str, is_saved=None) -> tuple[dict, bool]:
+def claim_question(email: str, question: str, is_saved=None, ip_hash: str | None = None) -> tuple[dict, bool]:
     """Decide and, when this question newly counts, record it before returning.
 
     The insert happens in the same locked step as the count, so two requests
-    cannot both take the last free question. Returns (allowance, reserved).
-    `reserved` is True only when this call inserted the question. The allowance
-    numbers are from before that insert, matching a check that then records.
+    cannot both take the last free question. The lock covers the network, not
+    only this email: everyone on that IP shares the three lessons. Returns
+    (allowance, reserved). `reserved` is True only when this call inserted the
+    question. The allowance numbers are from before that insert.
     """
     qhash = db.question_hash(question)
     now = datetime.now(timezone.utc)
     saved = bool(is_saved()) if is_saved is not None else False
     if db._pool is None:
         with _memory_lock:
-            decision = _decide(*_memory_snapshot(email, qhash, now), now, saved)
+            decision = _decide(*_memory_snapshot(email, qhash, now, ip_hash), now, saved)
             reserved = False
             if decision["allowed"] and not decision["repeat"]:
                 _memory_asked.setdefault(email, {})[qhash] = (time.time(), False)
+                stored_ip = _stored_ip(decision, ip_hash)
+                if stored_ip:
+                    _memory_ip.setdefault(stored_ip, {})[qhash] = (time.time(), False)
                 reserved = True
             return decision, reserved
     try:
         with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
-            decision = _decide(*_db_snapshot(cur, email, qhash, now, lock=True), now, saved)
+            decision = _decide(*_db_snapshot(cur, email, qhash, now, ip_hash, lock=True), now, saved)
             reserved = False
-            if decision["allowed"]:
+            if decision["allowed"] and not decision["repeat"]:
                 cur.execute(
                     "UPDATE askers SET last_question_at = NOW(), "
                     "consented_at = COALESCE(consented_at, NOW()) WHERE email = %s",
                     (email,),
                 )
-                if not decision["repeat"]:
-                    cur.execute(
-                        "INSERT INTO asker_questions (email, question_hash, question, generated) "
-                        "VALUES (%s, %s, %s, false) "
-                        "ON CONFLICT (email, question_hash) DO NOTHING RETURNING question_hash",
-                        (email, qhash, question[:500]),
-                    )
-                    reserved = cur.fetchone() is not None
+                cur.execute(
+                    "INSERT INTO asker_questions (email, question_hash, question, generated, ip_hash) "
+                    "VALUES (%s, %s, %s, false, %s) "
+                    "ON CONFLICT (email, question_hash) DO NOTHING RETURNING question_hash",
+                    (email, qhash, question[:500], _stored_ip(decision, ip_hash)),
+                )
+                reserved = cur.fetchone() is not None
             return decision, reserved
     except Exception as exc:
         logger.exception("Asker allowance check failed")
         raise AskerUnavailable(str(exc)) from exc
 
 
-def finish_question(email: str, question: str, generated: bool) -> None:
+def finish_question(email: str, question: str, ip_hash: str | None, generated: bool) -> None:
     """Record whether a reserved question was newly made or a saved copy."""
     qhash = db.question_hash(question)
     if db._pool is None:
@@ -227,6 +286,8 @@ def finish_question(email: str, question: str, generated: bool) -> None:
             slot = _memory_asked.get(email, {}).get(qhash)
             if slot is not None:
                 _memory_asked[email][qhash] = (slot[0], bool(generated))
+            if ip_hash and qhash in _memory_ip.get(ip_hash, {}):
+                _memory_ip[ip_hash][qhash] = (_memory_ip[ip_hash][qhash][0], bool(generated))
         return
     try:
         with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
@@ -238,7 +299,7 @@ def finish_question(email: str, question: str, generated: bool) -> None:
         logger.exception("Failed to finish asker question")
 
 
-def release_question(email: str, question: str) -> None:
+def release_question(email: str, question: str, ip_hash: str | None = None) -> None:
     """Drop a reservation when the lesson was not actually made."""
     qhash = db.question_hash(question)
     if db._pool is None:
@@ -246,6 +307,10 @@ def release_question(email: str, question: str) -> None:
             asked = _memory_asked.get(email)
             if asked is not None:
                 asked.pop(qhash, None)
+            still_used = any(qhash in rows for rows in _memory_asked.values())
+            if not still_used:
+                for bucket in _memory_ip.values():
+                    bucket.pop(qhash, None)
         return
     try:
         with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
@@ -257,12 +322,22 @@ def release_question(email: str, question: str) -> None:
         logger.exception("Failed to release asker question")
 
 
-def record_question(email: str, question: str, generated: bool = True) -> None:
-    """Count a question that was answered. `generated` is False when a saved copy was reused."""
+def record_question(email: str, question: str, generated: bool = True, ip_hash: str | None = None) -> None:
+    """Count a question that was answered. `generated` is False when a saved copy was reused.
+
+    `ip_hash` is the one-way code for the client IP. Pass None for a subscriber so
+    their lessons do not use up that network's free ones. A question already reserved
+    by claim_question is left as it is; finish_question sets whether it was newly made.
+    """
     qhash = db.question_hash(question)
     if db._pool is None:
         with _memory_lock:
-            _memory_asked.setdefault(email, {}).setdefault(qhash, (time.time(), generated))
+            email_asked = _memory_asked.setdefault(email, {})
+            if qhash in email_asked:
+                return  # A replay keeps its original network slot.
+            email_asked[qhash] = (time.time(), generated)
+            if ip_hash:
+                _memory_ip.setdefault(ip_hash, {}).setdefault(qhash, (time.time(), generated))
         return
     try:
         with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
@@ -273,9 +348,10 @@ def record_question(email: str, question: str, generated: bool = True) -> None:
                 (email,),
             )
             cur.execute(
-                "INSERT INTO asker_questions (email, question_hash, question, generated) VALUES (%s, %s, %s, %s) "
+                "INSERT INTO asker_questions (email, question_hash, question, generated, ip_hash) "
+                "VALUES (%s, %s, %s, %s, %s) "
                 "ON CONFLICT (email, question_hash) DO NOTHING",
-                (email, qhash, question[:500], generated),
+                (email, qhash, question[:500], generated, ip_hash),
             )
     except Exception:
         logger.exception("Failed to record asker question")
@@ -382,6 +458,14 @@ def delete_asker(email: str) -> bool:
     if db._pool is None:
         with _memory_lock:
             existed = email in _memory_asked or email in _memory_status or email in _memory_trial
+            hashes = set(_memory_asked.get(email, {}))
+            still_used = set()
+            for other, asked in _memory_asked.items():
+                if other != email:
+                    still_used.update(asked)
+            for asked in _memory_ip.values():
+                for qhash in hashes - still_used:
+                    asked.pop(qhash, None)
             _memory_waitlist.pop(email, None)
             _memory_bonus.pop(email, None)
             _memory_requests.pop(email, None)
@@ -402,6 +486,7 @@ def reset_memory() -> None:
     """Test helper: forget in-memory askers."""
     with _memory_lock:
         _memory_asked.clear()
+        _memory_ip.clear()
         _memory_status.clear()
         _memory_trial.clear()
         _memory_waitlist.clear()
