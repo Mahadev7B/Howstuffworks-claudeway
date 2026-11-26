@@ -35,64 +35,20 @@
     <h1>Privacy policy</h1>
     <p class="updated">Last updated {{ updated }}</p>
 
-    <div class="summary">
-      <p><strong>In short:</strong> AskLilOwl is made for children to use with a parent or guardian, never on their own. Watching lessons needs no sign-up. To ask a new question, a parent or guardian gives their email and agrees to this policy. We store that email, the questions that are typed, the lessons we create, a scrambled code of the network's internet address used to count free lessons, and an estimated city, region and country. Parents can ask us at any time what we hold by writing to <a href="mailto:{{ contact_email }}">{{ contact_email }}</a>. Please don't type names, schools, addresses or other personal details into questions or feedback.</p>
-    </div>
+    <p>AskLilOwl is a website of illustrated, narrated lessons for curious kids. It is made for children to use with a parent or guardian, never on their own.</p>
 
-    <h2>Who we are</h2>
-    <p>AskLilOwl runs asklilowl.com, a website of illustrated, narrated lessons for curious kids. You can reach us about privacy at <a href="mailto:{{ contact_email }}">{{ contact_email }}</a>.</p>
+    <h2>What we keep</h2>
+    <p>We keep only the questions children ask. We save each question with the lesson we make for it, so that when another child asks the same question, we can show the same lesson again instead of making a new one.</p>
+    <p>Please don't let your child type names, schools, addresses or other personal details into a question.</p>
 
-    <h2>Information we collect</h2>
-    <p>When anyone watches a lesson, we don't ask for any personal information and we don't use advertising or tracking cookies.</p>
-    <p>When someone asks their own question, we collect:</p>
-    <ul>
-      <li><strong>A parent's or guardian's email address</strong>, given with their agreement to this policy. We use it to remember the lessons they asked for, to store the answer to our optional waitlist question, and to respond when a parent contacts us or asks to see their information. We don't send marketing newsletters. If a parent joins the waitlist, we may email them when subscriptions open.</li>
-      <li><strong>The question as it was typed or spoken</strong>, so we can make the lesson, show it again later, and count free lessons. We store questions as they were typed, including any personal details a child includes. Please don't type names, addresses, schools or other personal details into questions or feedback. We do not currently block or remove those details automatically. Questions may also appear in our system logs as they were typed. A question our system refuses is kept for a short time in a separate file, with a short daily device code rather than an internet address.</li>
-      <li><strong>A scrambled one-way code of the network's internet (IP) address</strong> (an HMAC hash mixed with a secret). We store that code with the question record to count the {{ free_questions }} free lessons for that network. We do not write new raw IP addresses into our database. Some older feedback and activity records may still hold a raw IP address from before this change; we have not yet removed those leftover addresses.</li>
-      <li><strong>Estimated location and device type.</strong> We currently use a location service (ipwho.is) to estimate country, region and city; we are removing this. We send the visitor's IP address to ipwho.is for that lookup. This lookup happens when someone asks a question, gives feedback, plays a lesson's narration for the first time, opens some share links, or downloads a lesson. We store the country, region and city, and the kind of device and browser, with feedback and activity records.</li>
-    </ul>
-    <p>Every browser sends an IP address when it visits. We use it in memory to make the scrambled code and to request the location estimate. The site's application access log records an internal address from our host, not the visitor's internet address.</p>
-    <p>If someone uses the feedback buttons, we keep the rating, any comment typed, the question for that lesson, a random code for that visit, and the same estimated location and device type.</p>
-    <p>On your device, the website keeps the parent's email, the parent's agreement to this policy and the waitlist answer in the browser's storage so they don't have to be entered again. Pressing "Change" in the question box removes the email and agreement; clearing the browser's data removes all of them. Clearing that storage does not reset the free lessons, because those are counted for the network, not for the browser.</p>
-    <p>Anyone on a lesson page can create a share link or download the lesson as a video. Anyone with that link or file can see the lesson, including the question it answers. A share link can't be turned off from the site today; write to us and we'll remove it.</p>
-    <p>The microphone button uses your browser's own speech recognition. AskLilOwl doesn't record or keep voices, but your browser or device maker (for example Apple or Google) may process the audio under their own privacy policy.</p>
+    <h2>What we don't do</h2>
+    <p>We don't sell information, and we don't show ads.</p>
 
-    <h2>A parent must always be present</h2>
-    <p>AskLilOwl is meant to be used by a child together with a parent or guardian. Children should not use the site on their own, and a parent or guardian should be present the whole time a child is watching lessons or asking questions. The parent, not the child, gives the email, agrees to this policy, and is responsible for how the site is used.</p>
+    <h2>Questions</h2>
+    <p>Parents can write to <a href="mailto:{{ contact_email }}">{{ contact_email }}</a> at any time with questions about this policy.</p>
 
-    <h2>Children under 13</h2>
-    <p>Children can watch lessons without giving any personal information. Asking a new question needs a parent or guardian to give their email and agree to this policy first. We don't knowingly ask a child for their own name, email, address or phone number. If you believe a child has given us personal information without a parent's agreement, write to <a href="mailto:{{ contact_email }}">{{ contact_email }}</a> and we will act on it promptly.</p>
-
-    <h2>Services that help run AskLilOwl</h2>
-    <p>We don't sell personal information or share it for advertising. These services process information so the site can work:</p>
-    <ul>
-      <li><strong>Anthropic</strong> receives the question, as it was typed, to write the lesson, and the lesson text to write its quiz.</li>
-      <li><strong>fal.ai</strong>, when that setting is on, receives picture descriptions written from the lesson to draw its illustrations. Otherwise pictures are drawn on our own servers.</li>
-      <li><strong>OpenAI</strong> receives lesson text to read new lessons aloud.</li>
-      <li><strong>ipwho.is</strong> receives the visitor's internet address to estimate country, region and city. We are removing this.</li>
-      <li><strong>Render</strong> hosts the website and our database.</li>
-      <li><strong>Our email provider (Gmail)</strong> sends the emails we write to parents.</li>
-      <li><strong>Google Fonts</strong> supplies the lettering, so browsers download fonts from Google.</li>
-    </ul>
-    <p>We don't sell subscriptions or take payments on AskLilOwl right now. After the free lessons are used, we may ask an optional question about a future plan. Answering does not sign you up or charge you.</p>
-
-    <h2>How long we keep information</h2>
-    <p>We keep parent emails, the questions linked to them, the scrambled network code stored with those questions, waitlist answers, estimated city, region and country, and device type for as long as they're needed to run the service. We do not currently delete the scrambled network code on a short timer.</p>
-    <p>Lessons made from questions may be kept and shown again to anyone who asks the same question, without information about who asked.</p>
-
-    <h2>Parents' rights</h2>
-    <p>A parent or guardian can, at any time:</p>
-    <ul>
-      <li>ask to see the information we hold about their family, and</li>
-      <li>tell us to stop collecting it, by no longer using the question box.</li>
-    </ul>
-    <p>Write to <a href="mailto:{{ contact_email }}">{{ contact_email }}</a> from the email address you used. We may ask a question to make sure the request really comes from you.</p>
-
-    <h2>Keeping information safe</h2>
-    <p>Information is sent over encrypted connections and stored with the providers listed above. On our side, only AskLilOwl's administrator can see emails and activity records. If someone creates a share link or downloads a lesson, anyone with that link or file can see the lesson.</p>
-
-    <h2>Changes to this policy</h2>
-    <p>If we change how we use information, we'll update this page and the date at the top. For important changes affecting children's information, we'll ask parents for agreement again.</p>
+    <h2>Changes</h2>
+    <p>If we change this policy, we'll update this page and the date at the top.</p>
 
     <p class="mt-4"><a href="{{ url_for('home') }}">← Back to AskLilOwl</a></p>
   </main>
