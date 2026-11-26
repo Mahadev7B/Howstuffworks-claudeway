@@ -20,7 +20,7 @@ def site(monkeypatch):
     monkeypatch.setattr(app_module, "pin_cached_lesson", lambda q: None)
     monkeypatch.setattr(app_module, "save_cached_lesson", lambda q, d: None)
     monkeypatch.setattr(app_module, "record_api_call", lambda **kw: None)
-    monkeypatch.setattr(app_module, "_client_context", lambda: {"city": None, "region": "Texas", "country": "United States", "user_agent": "test"})
+    monkeypatch.setattr(app_module, "_client_context", lambda: {"country": None, "user_agent": "test"})
     client = app_module.app.test_client()
     client.saved = saved
     yield client
@@ -44,8 +44,7 @@ def test_comment_without_a_thumb_is_saved(site):
     response = send(site, comment="Please add more space lessons", client_id="visit-0001")
     assert response.status_code == 200
     assert site.saved == [{"question": "Why is the sky blue?", "rating": None, "comment": "Please add more space lessons",
-                           "client_id": "visit-0001", "city": None, "region": "Texas", "country": "United States",
-                           "user_agent": "test"}]
+                           "client_id": "visit-0001", "country": None, "user_agent": "test"}]
 
 
 @pytest.mark.parametrize("body", [{}, {"rating": "maybe"}, {"comment": "   "}, {"rating": "sideways", "comment": "x"}])

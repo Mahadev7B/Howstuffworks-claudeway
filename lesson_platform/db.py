@@ -299,16 +299,21 @@ def enabled() -> bool:
     return _pool is not None
 
 
+# City, region, and country are not written. client_id is a visit id, so a country
+# on this row could be tied to a device. Older rows are left as they are.
+_INSERT_FEEDBACK = """
+    INSERT INTO feedback
+      (question, rating, comment, ip_address, user_agent, client_id)
+    VALUES (%s, %s, %s, %s, %s, %s)
+    ON CONFLICT (client_id) DO UPDATE SET
+      rating  = COALESCE(EXCLUDED.rating, feedback.rating),
+      comment = COALESCE(EXCLUDED.comment, feedback.comment)
+"""
+
+
 def _do_save_feedback(params: tuple) -> None:
     # One entry per lesson visit: a thumb and a later comment update the same row.
-    sql = """
-        INSERT INTO feedback
-          (question, rating, comment, ip_address, city, region, country, user_agent, client_id)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (client_id) DO UPDATE SET
-          rating  = COALESCE(EXCLUDED.rating, feedback.rating),
-          comment = COALESCE(EXCLUDED.comment, feedback.comment)
-    """
+    sql = _INSERT_FEEDBACK
     conn = _direct_connect()
     if conn is None:
         return
@@ -344,18 +349,30 @@ def save_feedback(
         raise ValueError("rating must be 'up', 'down' or None")
     if rating is None and not comment:
         raise ValueError("a rating or a comment is required")
+    # Accepted and discarded. Feedback shares a row with client_id, so it gets
+    # no address, city, region, or country.
+    del ip_address, city, region, country
     params = (
         question[:500],
         rating,
         (comment or "")[:2000] or None,
-        None,  # IP addresses are never stored.
-        (city or "")[:128] or None,
-        (region or "")[:128] or None,
-        (country or "")[:128] or None,
+        None,
         (user_agent or "")[:500] or None,
         client_id,
     )
     _bg(_do_save_feedback, params)
+
+
+# Lesson telemetry. Country may be stored here. The address, its hash, an email,
+# and city or region are not columns in this insert. Existing city/region values
+# on older rows are not updated.
+_INSERT_API_CALL = """
+    INSERT INTO api_calls
+      (endpoint, question, model, input_tokens, output_tokens,
+       input_chars, output_chars, cost_usd, duration_ms, success, error,
+       ip_address, country, user_agent, lesson)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+"""
 
 
 def _do_record_api_call(params: tuple) -> None:
@@ -364,16 +381,7 @@ def _do_record_api_call(params: tuple) -> None:
         return
     try:
         with conn, conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO api_calls
-                  (endpoint, question, model, input_tokens, output_tokens,
-                   input_chars, output_chars, cost_usd, duration_ms, success, error,
-                   ip_address, city, region, country, user_agent, lesson)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                params,
-            )
+            cur.execute(_INSERT_API_CALL, params)
         _record_write_success("record_api_call")
     except Exception as exc:
         logger.exception("Failed to record api_call")
@@ -409,6 +417,8 @@ def record_api_call(
     returns immediately so lesson generation is never delayed by DB latency."""
     if _pool is None:
         return
+    # The address, city, and region are accepted so older callers still run, then discarded.
+    del ip_address, city, region
     # Strip image_data_url before storing — base64 images are ~1MB each and
     # can be regenerated from Flux. Storing them blocks the connection for
     # several seconds and exhausts the pool under concurrent load.
@@ -433,9 +443,7 @@ def record_api_call(
         duration_ms,
         success,
         (error or "")[:1000] or None,
-        None,  # IP addresses are never stored.
-        (city or "")[:128] or None,
-        (region or "")[:128] or None,
+        None,
         (country or "")[:128] or None,
         (user_agent or "")[:500] or None,
         Jsonb(lesson_slim) if lesson_slim is not None else None,

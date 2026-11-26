@@ -1,0 +1,40 @@
+Source URL: https://www.arin.net/reference/research/statistics/nro_stats/
+Fetched: 2026-11-26
+The text below is the usage policy as published at that URL on the fetch date.
+----- verbatim text below -----
+
+Extended Delegation Statistics
+ARIN publishes extended delegation statistics files in accordance with the Number Resource Organization's (NRO) standardized format for each Regional Internet Registry to report the status of Internet number resources within their regions.
+The delegated-extended file contains a daily updated report of the distribution of Internet number resources:
+- IPv4 address ranges
+- IPv6 address ranges
+- Autonomous System Numbers (ASNs)
+Note:
+This report does not include reallocation or reassignment data.
+File Availability
+Extended statistics files (filenames containing "delegated-arin-extended-YYYYMMDD") are available for use via HTTPS at https://ftp.arin.net/pub/stats/arin/.
+For a detailed description of the file and interpretation of this content, a Readme file is available.
+Archives for previous years are also available via HTTPS.
+
+----- second source, verbatim excerpt -----
+Source URL: https://ftp.arin.net/pub/stats/arin/README
+
+2.3 File availability:
+
+    Data will be available by FTP, and additionally by any other
+    access method the RIR chooses. This may include alternative
+    URLs, but these will reflect the common naming model. Data will
+    be publicly visible and will not require access control (world-
+    readable).
+
+    Examples:
+
+        http://www.apnic.net/stats/<registry>/delegated-<registry>-latest
+        rsync www.apnic.net::/stats/<registry>/delegated-<registry>-latest
+        ftp://ftp.apnic.net/pub/stats/<registry>/delegated-<registry>-latest
+
+    (The use of a standard prefix in a URL such as /pub/ in FTP
+    servers is not considered obligatory, and does not define the
+    URL for use in HTTP or other access methods. The defined URL
+    base is /stats/<registry>/ across all application-specific
+    access methods.)

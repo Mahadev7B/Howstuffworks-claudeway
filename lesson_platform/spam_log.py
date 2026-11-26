@@ -17,8 +17,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from lesson_platform.geo import extract_and_lookup
-
 logger = logging.getLogger(__name__)
 
 _PATH = Path(os.getenv("REFUSED_LOG_PATH") or Path(tempfile.gettempdir()) / "asklilowl-refused.jsonl")
@@ -39,12 +37,13 @@ def device_tag(ip: str | None) -> str:
     return hmac.new(key, f"{ip}|{day}".encode(), hashlib.sha256).hexdigest()[:6]
 
 
-def _write(entry: dict, forwarded_for: str | None, remote_addr: str | None) -> None:
-    try:
-        _, city, region, country = extract_and_lookup(forwarded_for, remote_addr)
-    except Exception:
-        city = region = country = None
-    entry["place"] = ", ".join(part for part in (city, region, country) if part) or "—"
+def _write(entry: dict) -> None:
+    # No city, region, country, or address. The device tag is already on the entry,
+    # and a country beside that tag could be tied back to a network.
+    entry["place"] = "—"
+    entry.pop("city", None)
+    entry.pop("region", None)
+    entry.pop("country", None)
     line = json.dumps(entry, ensure_ascii=False) + "\n"
     try:
         if _PATH.exists() and _PATH.stat().st_size > _MAX_BYTES:
@@ -59,11 +58,12 @@ def _write(entry: dict, forwarded_for: str | None, remote_addr: str | None) -> N
 
 def record(*, endpoint: str, question: str, reason: str, ip: str | None, forwarded_for: str | None,
            remote_addr: str | None, user_agent: str | None) -> None:
-    """Note one refused question. Returns at once; the location lookup happens in the background."""
+    """Note one refused question. The address is hashed into a device tag and then dropped."""
+    del forwarded_for, remote_addr
     entry = {"at": time.time(), "endpoint": endpoint[:50], "reason": reason, "question": question[:300],
-             "user_agent": (user_agent or "")[:300], "device": device_tag(ip)}
+             "user_agent": (user_agent or "")[:300], "device": device_tag(ip), "place": "—"}
     try:
-        _submit(_write, entry, forwarded_for, remote_addr)
+        _submit(_write, entry)
     except Exception:
         logger.exception("Could not schedule a refused-question note")
 

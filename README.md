@@ -90,6 +90,14 @@ curl -sS -H "X-Admin-Secret: $ADMIN_SECRET" https://www.asklilowl.com/debug/stat
 
 The JSON field `git_commit` is the deployed commit. `POST /admin/clear-cache` uses the same header and deletes saved lessons.
 
+## Country and the free-lesson window
+
+The site runs on Render. The visitor address is the rightmost valid `X-Forwarded-For` value Render appends. It is used in memory to make a one-way code for the free-lesson limit, then dropped. It is not stored or logged.
+
+`FREE_LESSON_WINDOW_HOURS` (default 6) is the only setting for that limit. The count and the purge both use it. The purge runs inside the web process, at most once every 15 minutes, and only clears the code. It does not delete lessons or emails.
+
+No country table is bundled, and the server does not call a location service. See `data/geo/README.md` for why, including the registry terms and the accuracy limits of registration data. New lesson rows do not get a city or a state. A country column remains on lesson telemetry for a future permitted table; it is not written on the parent, email, or free-lesson tables.
+
 ## Deploying to Render
 
 - Build command: `pip install -r requirements.txt`

@@ -49,10 +49,10 @@
       <li><strong>A parent's or guardian's email address</strong>, given with their agreement to this policy. We send a one-time code to it to confirm the address belongs to the parent, and we use it to remember the lessons they asked for, the answer to our subscription waitlist question, and to link a subscription to the family. We only email confirmation codes and messages about the waitlist or a subscription; we don't send marketing.</li>
       <li><strong>If a parent subscribes</strong>, we keep Stripe's customer and subscription reference numbers and whether the subscription is active. We never receive card details.</li>
       <li><strong>The question</strong> that was typed or spoken, so we can make the lesson and show it again later.</li>
-      <li><strong>Approximate location and device type</strong>: the city, region and country, and the kind of device and browser. We use these to keep the site running and understand how it is used.</li>
+      <li><strong>Device type</strong>: the kind of device and browser. New records do not include a city, a state, or a region. We do not send the network address to anyone else.</li>
     </ul>
-    <p><strong>We don't store internet (IP) addresses.</strong> Every browser sends one when it visits. We use it for a moment to work out the approximate location and to limit how many questions one network can ask in an hour. To count the {{ free_questions }} free lessons for that network, we keep only a one-way code of the address (a hash mixed with a server secret). The address itself is discarded and cannot be read back from the code.</p>
-    <p><strong>If someone uses the feedback buttons</strong>, we keep the rating, any comment typed, and the same approximate location and device type.</p>
+    <p><strong>We don't store internet (IP) addresses.</strong> Every browser sends one when it visits. We use it for a moment to limit how many questions one network can ask, then we drop it. To count the {{ free_questions }} free lessons for that network, we keep only a one-way code of the address (a hash mixed with a server secret) for {{ window_hours }} hours. After that the code is removed. The address itself is discarded and cannot be read back from the code. Removing the code does not delete lessons or the parent's email. The code is not stored on the same record as a country.</p>
+    <p><strong>If someone uses the feedback buttons</strong>, we keep the rating, any comment typed, and the device type. We do not keep a city, a state, or a country with that feedback.</p>
     <p><strong>On your device</strong>, the website remembers the parent's email in the browser's storage so it doesn't have to be typed again. Pressing "Change" in the question box, or clearing the browser's data, removes it. Clearing that storage does not reset the free lessons, because those are counted for the network, not for the browser.</p>
     <p><strong>The microphone button</strong> uses your browser's own speech recognition. AskLilOwl doesn't record or keep voices, but your browser or device maker (for example Apple or Google) may process the audio under their own privacy policy.</p>
     <p>Please don't type names, addresses, schools or other personal details into questions or feedback.</p>
@@ -69,7 +69,6 @@
       <li><strong>Anthropic</strong> receives the question to write the lesson.</li>
       <li><strong>fal.ai</strong> receives picture descriptions written from the lesson to draw its illustrations.</li>
       <li><strong>OpenAI</strong> receives lesson text to read new lessons aloud.</li>
-      <li><strong>ipwho.is</strong> receives the internet address for a moment to work out the approximate location; we don't keep the address.</li>
       <li><strong>Stripe</strong> handles subscription payments. Parents pay on Stripe's own page, so AskLilOwl never sees or stores card numbers. Stripe receives the parent's email and payment details under its own privacy policy.</li>
       <li><strong>Render</strong> hosts the website and our database.</li>
       <li><strong>Google Fonts</strong> supplies the lettering, so browsers download fonts from Google.</li>

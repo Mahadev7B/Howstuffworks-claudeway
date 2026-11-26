@@ -1,6 +1,8 @@
 """Who is asking: an email per asker, a few free questions, a free month, then a subscription.
 
-* The first FREE_QUESTIONS different questions from one client IP are free, whichever email asks.
+* The first FREE_QUESTIONS different questions from one client IP are free inside
+  FREE_LESSON_WINDOW_HOURS (default 6), whichever email asks. Older network
+  hashes are removed; the questions and emails stay.
 * Then a parent can start one free month: up to TRIAL_DAILY_NEW new lessons in
   any 24 hours (a rolling window, so time zones don't matter) for TRIAL_DAYS days. Questions someone already asked (a saved copy) and
   the family's own repeats never count.
@@ -39,6 +41,67 @@ _memory_trial: dict[str, float] = {}
 _memory_waitlist: dict[str, str] = {}
 _memory_bonus: dict[str, int] = {}
 _memory_requests: dict[str, float] = {}
+# Network hashes older than the free-lesson window are cleared at most this often.
+_PURGE_MIN_INTERVAL_S = 15 * 60
+_last_purge_at = 0.0
+
+
+def free_lesson_window_hours() -> int:
+    """Hours a network hash counts toward the free lessons. One setting for the count and the purge."""
+    raw = os.getenv("FREE_LESSON_WINDOW_HOURS", "6").strip()
+    try:
+        hours = int(raw)
+    except ValueError:
+        return 6
+    return hours if hours >= 1 else 6
+
+
+def _window_cutoff_ts(now: float | None = None) -> float:
+    moment = time.time() if now is None else now
+    return moment - free_lesson_window_hours() * 3600
+
+
+_HASH_OLDER_THAN_WINDOW_SQL = "created_at < NOW() - (%s * INTERVAL '1 hour')"
+_HASH_INSIDE_WINDOW_SQL = "created_at >= NOW() - (%s * INTERVAL '1 hour')"
+
+
+def _purge_memory_ip_hashes(now: float | None = None) -> None:
+    """Forget network hashes outside the window. Email question history is left in place."""
+    cutoff = _window_cutoff_ts(now)
+    for digest in list(_memory_ip):
+        kept = {question: pair for question, pair in _memory_ip[digest].items() if pair[0] >= cutoff}
+        if kept:
+            _memory_ip[digest] = kept
+        else:
+            del _memory_ip[digest]
+
+
+def _purge_db_ip_hashes() -> None:
+    """Null network hashes outside the window. Does not delete rows or touch any other column."""
+    hours = free_lesson_window_hours()
+    with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE asker_questions SET ip_hash = NULL "
+            f"WHERE ip_hash IS NOT NULL AND {_HASH_OLDER_THAN_WINDOW_SQL}",
+            (hours,),
+        )
+
+
+def maybe_purge_ip_hashes() -> None:
+    """Opportunistic purge. Runs at most once every 15 minutes, in this process."""
+    global _last_purge_at
+    now = time.monotonic()
+    if now - _last_purge_at < _PURGE_MIN_INTERVAL_S:
+        return
+    _last_purge_at = now
+    if db._pool is None:
+        with _memory_lock:
+            _purge_memory_ip_hashes()
+        return
+    try:
+        _purge_db_ip_hashes()
+    except Exception:
+        logger.exception("Could not remove expired network hashes")
 
 
 class AskerUnavailable(RuntimeError):
@@ -81,20 +144,24 @@ def _trial_state(started: datetime | None, now: datetime) -> tuple[str, datetime
 def allowance(email: str, question: str, is_saved=None, ip_hash: str | None = None) -> dict:
     """Decide whether this email may ask this question now, and why.
 
-    The 3 free lessons are shared by everyone on the same client IP (`ip_hash` is
-    a one-way code, never the address). A repeat of a question this email or this
-    IP already asked, and a lesson saved from an earlier ask, stay free.
+    The 3 free lessons are shared by everyone on the same client IP inside
+    free_lesson_window_hours() (`ip_hash` is a one-way code, never the address).
+    A repeat of a question this email already asked, a repeat this IP asked
+    inside the window, and a lesson saved from an earlier ask, stay free.
 
     `is_saved` is an optional callable that says whether a saved lesson already
     exists for the question; it's only consulted when the daily limit is reached.
     """
+    maybe_purge_ip_hashes()
     qhash = db.question_hash(question)
     now = datetime.now(timezone.utc)
     window_start = now - timedelta(seconds=WINDOW_S)
+    ip_cutoff = _window_cutoff_ts()
     if db._pool is None:
         with _memory_lock:
             asked = _memory_asked.get(email, {})
-            by_ip = _memory_ip.get(ip_hash, {}) if ip_hash else {}
+            by_ip_all = _memory_ip.get(ip_hash, {}) if ip_hash else {}
+            by_ip = {question_id: pair for question_id, pair in by_ip_all.items() if pair[0] >= ip_cutoff}
             status = _memory_status.get(email, "none")
             started_ts = _memory_trial.get(email)
             choice = _memory_waitlist.get(email)
@@ -127,8 +194,8 @@ def allowance(email: str, question: str, is_saved=None, ip_hash: str | None = No
                 if ip_hash:
                     cur.execute(
                         "SELECT COUNT(DISTINCT question_hash), BOOL_OR(question_hash = %s) "
-                        "FROM asker_questions WHERE ip_hash = %s",
-                        (qhash, ip_hash),
+                        "FROM asker_questions WHERE ip_hash = %s AND " + _HASH_INSIDE_WINDOW_SQL,
+                        (qhash, ip_hash, free_lesson_window_hours()),
                     )
                     used, ip_repeat = cur.fetchone()
                 else:
@@ -188,6 +255,7 @@ def record_question(email: str, question: str, generated: bool = True, ip_hash: 
     `ip_hash` is the one-way code for the client IP. Pass None for a subscriber so
     their lessons do not use up that network's free ones.
     """
+    maybe_purge_ip_hashes()
     qhash = db.question_hash(question)
     if db._pool is None:
         with _memory_lock:
@@ -343,6 +411,8 @@ def delete_asker(email: str) -> bool:
 
 def reset_memory() -> None:
     """Test helper: forget in-memory askers."""
+    global _last_purge_at
+    _last_purge_at = 0.0
     with _memory_lock:
         _memory_asked.clear()
         _memory_ip.clear()

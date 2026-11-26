@@ -1,0 +1,19 @@
+Source URL: https://ftp.lacnic.net/pub/stats/lacnic/disclaimer.txt
+Fetched: 2026-11-26
+The text below is the usage policy as published at that URL on the fetch date.
+----- verbatim text below -----
+
+[EN]
+The files are freely available for download and use on the condition  
+that LACNIC will not be held responsible for any loss or damage  
+arising from the use of the information contained in these reports.
+
+[PT]
+Os arquivos estão disponíveis gratuitamente para copia sob as
+condições de que o LACNIC não será responsabilizado por qualquer perda
+ou dano proveniente do uso da informação contidas nesses relatórios.
+
+[SP]
+Los archivos están disponibles gratuitamente para la copia con la condición
+de que LACNIC no será responsabilizado por cualquier pérdida o daño
+proveniente del uso de la información contenida en estos reportes.
