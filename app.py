@@ -744,7 +744,7 @@ def robots():
 
 
 PRIVACY_CONTACT_EMAIL = "Asklilowl@gmail.com"
-PRIVACY_UPDATED = "November 12, 2026"
+PRIVACY_UPDATED = "November 26, 2026"
 app.jinja_env.globals["privacy_contact_email"] = PRIVACY_CONTACT_EMAIL
 app.jinja_env.globals["billing_portal_url"] = billing.portal_url
 
