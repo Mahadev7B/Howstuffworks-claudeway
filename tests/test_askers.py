@@ -160,6 +160,27 @@ def test_failed_generation_does_not_use_a_free_question(site, monkeypatch):
         assert ask(site, f"After the failure {number}?").status_code == 200
 
 
+def test_a_stale_reservation_no_longer_uses_a_network_slot():
+    import time
+    askers = importlib.import_module("lesson_platform.askers")
+    askers.reset_memory()
+    ip = askers.ip_hash("203.0.113.9")
+    old = time.time() - askers.RESERVATION_TTL_S - 5
+    qhash = askers.db.question_hash("How do old magnets work?")
+    with askers._memory_lock:
+        askers._memory_asked["gone@example.com"] = {qhash: (old, None)}
+        askers._memory_ip[ip] = {qhash: (old, None)}
+    fresh = time.time()
+    held = askers.db.question_hash("How do fresh magnets work?")
+    with askers._memory_lock:
+        askers._memory_asked["here@example.com"] = {held: (fresh, None)}
+        askers._memory_ip[ip][held] = (fresh, None)
+    open_slot = askers.allowance("next@example.com", "How do birds fly?", ip_hash=ip)
+    assert open_slot["used"] == 1
+    assert open_slot["reason"] == "free"
+    askers.reset_memory()
+
+
 def test_database_trouble_refuses_instead_of_generating(site, monkeypatch):
     app_module = importlib.import_module("app")
 

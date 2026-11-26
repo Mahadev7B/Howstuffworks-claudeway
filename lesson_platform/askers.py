@@ -28,6 +28,12 @@ TRIAL_DAILY_NEW = 5
 WAITLIST_INSTEAD_OF_TRIAL = True
 WAITLIST_CHOICES = ("subscribe", "browsing", "price")
 WINDOW_S = 24 * 3600
+# A reservation whose worker died should stop counting. Ten minutes is longer
+# than lesson generation, and short enough that a stuck row does not hold a slot.
+RESERVATION_TTL_S = 10 * 60
+# Bound how long a claim may wait on the network lock or sit on a pool connection.
+_LOCK_TIMEOUT = "2s"
+_STATEMENT_TIMEOUT = "5s"
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _ACTIVE = ("active", "trialing")  # Same as billing.ACTIVE_STATES.
 
@@ -126,8 +132,32 @@ def _decide(status, started, choice, bonus, requested, used, repeat, new_today, 
     }
 
 
+def _slot_is_live(slot: tuple, now_ts: float) -> bool:
+    """A reservation (generated is None) older than the TTL no longer counts."""
+    generated = slot[1] if len(slot) > 1 else True
+    if generated is None and now_ts - slot[0] >= RESERVATION_TTL_S:
+        return False
+    return True
+
+
+def _sweep_stale_memory(now_ts: float) -> None:
+    """Caller must hold _memory_lock. Drop reservations whose worker did not finish."""
+    for bucket in list(_memory_asked.values()) + list(_memory_ip.values()):
+        for qhash, slot in list(bucket.items()):
+            if not _slot_is_live(slot, now_ts):
+                bucket.pop(qhash, None)
+
+
+def _sweep_stale_db(cur) -> None:
+    cur.execute(
+        "DELETE FROM asker_questions WHERE settled = false "
+        "AND created_at < NOW() - INTERVAL '10 minutes'"
+    )
+
+
 def _memory_snapshot(email: str, qhash: str, now: datetime, ip_hash: str | None):
     """Caller must hold _memory_lock. `used` is this network's count, not the email's."""
+    _sweep_stale_memory(now.timestamp())
     asked = _memory_asked.get(email, {})
     by_ip = _memory_ip.get(ip_hash, {}) if ip_hash else {}
     status = _memory_status.get(email, "none")
@@ -188,7 +218,8 @@ def _db_snapshot(cur, email: str, qhash: str, now: datetime, ip_hash: str | None
     if ip_hash:
         cur.execute(
             "SELECT COUNT(DISTINCT question_hash), BOOL_OR(question_hash = %s) "
-            "FROM asker_questions WHERE ip_hash = %s",
+            "FROM asker_questions WHERE ip_hash = %s "
+            "AND (settled OR created_at >= NOW() - INTERVAL '10 minutes')",
             (qhash, ip_hash),
         )
         used, ip_repeat = cur.fetchone()
@@ -225,6 +256,7 @@ def allowance(email: str, question: str, is_saved=None, ip_hash: str | None = No
     else:
         try:
             with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+                _sweep_stale_db(cur)
                 snapshot = _db_snapshot(cur, email, qhash, now, ip_hash, lock=False)
         except Exception as exc:
             logger.exception("Asker allowance check failed")
@@ -249,14 +281,21 @@ def claim_question(email: str, question: str, is_saved=None, ip_hash: str | None
             decision = _decide(*_memory_snapshot(email, qhash, now, ip_hash), now, saved)
             reserved = False
             if decision["allowed"] and not decision["repeat"]:
-                _memory_asked.setdefault(email, {})[qhash] = (time.time(), False)
+                # None means reserved and not finished. False would look like a saved copy.
+                _memory_asked.setdefault(email, {})[qhash] = (time.time(), None)
                 stored_ip = _stored_ip(decision, ip_hash)
                 if stored_ip:
-                    _memory_ip.setdefault(stored_ip, {})[qhash] = (time.time(), False)
+                    _memory_ip.setdefault(stored_ip, {})[qhash] = (time.time(), None)
                 reserved = True
             return decision, reserved
     try:
-        with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        # The pool connection is autocommit, so the lock and the insert have to
+        # share one transaction. Otherwise each statement commits and releases
+        # pg_advisory_xact_lock before the next asker is counted.
+        with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.transaction(), conn.cursor() as cur:
+            cur.execute(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT}'")
+            cur.execute(f"SET LOCAL statement_timeout = '{_STATEMENT_TIMEOUT}'")
+            _sweep_stale_db(cur)
             decision = _decide(*_db_snapshot(cur, email, qhash, now, ip_hash, lock=True), now, saved)
             reserved = False
             if decision["allowed"] and not decision["repeat"]:
@@ -266,8 +305,9 @@ def claim_question(email: str, question: str, is_saved=None, ip_hash: str | None
                     (email,),
                 )
                 cur.execute(
-                    "INSERT INTO asker_questions (email, question_hash, question, generated, ip_hash) "
-                    "VALUES (%s, %s, %s, false, %s) "
+                    "INSERT INTO asker_questions "
+                    "(email, question_hash, question, generated, ip_hash, settled) "
+                    "VALUES (%s, %s, %s, false, %s, false) "
                     "ON CONFLICT (email, question_hash) DO NOTHING RETURNING question_hash",
                     (email, qhash, question[:500], _stored_ip(decision, ip_hash)),
                 )
@@ -292,7 +332,8 @@ def finish_question(email: str, question: str, ip_hash: str | None, generated: b
     try:
         with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute(
-                "UPDATE asker_questions SET generated = %s WHERE email = %s AND question_hash = %s",
+                "UPDATE asker_questions SET generated = %s, settled = true "
+                "WHERE email = %s AND question_hash = %s",
                 (bool(generated), email, qhash),
             )
     except Exception:
@@ -348,8 +389,9 @@ def record_question(email: str, question: str, generated: bool = True, ip_hash: 
                 (email,),
             )
             cur.execute(
-                "INSERT INTO asker_questions (email, question_hash, question, generated, ip_hash) "
-                "VALUES (%s, %s, %s, %s, %s) "
+                "INSERT INTO asker_questions "
+                "(email, question_hash, question, generated, ip_hash, settled) "
+                "VALUES (%s, %s, %s, %s, %s, true) "
                 "ON CONFLICT (email, question_hash) DO NOTHING",
                 (email, qhash, question[:500], generated, ip_hash),
             )

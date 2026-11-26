@@ -93,6 +93,9 @@ def test_slide_image_is_cacheable_and_hides_drafts(site):
     assert image.mimetype == "image/png"
     assert image.data == b"h"
     assert image.headers["Cache-Control"] == "public, max-age=604800"
+    again = site.get("/explore/sky-blue/slide/0", headers={"If-None-Match": image.headers["ETag"]})
+    assert again.status_code == 304
+    assert again.headers["ETag"] == image.headers["ETag"]
     assert site.get("/explore/sky-blue/slide/3").status_code == 404
     assert site.get("/explore/missing/slide/0").status_code == 404
 
@@ -103,6 +106,8 @@ def test_terms_page_is_linked_and_listed(site):
     text = page.get_data(as_text=True)
     assert "Terms of use" in text
     assert "first 3 different questions" in text
+    assert "on a network" in text
+    assert "on that email are free" not in text
     assert "$4.99" in text
     assert "Stripe" in text
     assert b"/terms" in site.get("/sitemap.xml").data

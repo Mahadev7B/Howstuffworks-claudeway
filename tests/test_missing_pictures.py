@@ -106,4 +106,4 @@ def test_database_list_uses_counts_only(admin, monkeypatch):
     assert "SELECT lesson" not in compact
     assert "->> 'image_data_url'" not in compact and "->>'image_data_url'" not in compact
     assert "image_data_url" in compact
-    assert client.post("/admin/missing-pictures").status_code == 405
+    assert client.post("/admin/missing-pictures").status_code == 403

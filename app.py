@@ -367,16 +367,20 @@ def _render_with_matplotlib(slide: dict) -> bool:
     return True
 
 
-def _attach_slide_images(lesson: dict, ctx: dict | None = None) -> None:
+def _attach_slide_images(lesson: dict, ctx: dict | None = None, *, allow_paid: bool = True) -> None:
     """Attach an `image_data_url` to each slide.
 
     Provider chosen by settings.image_provider. Falls back to matplotlib if
     Flux is unavailable or fails for a given slide. Mutates lesson in place.
     Flux slides are rendered in parallel for speed.
+
+    `allow_paid` is False on pages that only open a saved lesson. Those use the
+    free matplotlib fallback. Paid Flux runs when a parent asks, or when an
+    admin redraws from the missing-pictures page.
     """
     if ctx is None:
         ctx = {"city": None, "region": None, "country": None, "user_agent": None}
-    use_flux = settings.image_provider == "flux" and bool(settings.fal_api_key)
+    use_flux = allow_paid and settings.image_provider == "flux" and bool(settings.fal_api_key)
     subject = lesson.get("subject", "")
     is_math = bool((lesson.get("meta") or {}).get("math")) or is_math_question(f"{lesson.get('title', '')} {subject}")
     for s in lesson.get("slides", []):
@@ -555,7 +559,7 @@ def _fill_missing_slide_pictures(question: str, lesson: dict, ctx: dict) -> None
         _recent_put(question, lesson)
         return
     before = sum(1 for s in slides if s.get("image_data_url"))
-    _attach_slide_images(lesson, ctx)
+    _attach_slide_images(lesson, ctx, allow_paid=False)
     after = sum(1 for s in slides if s.get("image_data_url"))
     if db_enabled and after > before:
         save_cached_lesson(question, lesson)
@@ -766,7 +770,7 @@ def explore_slide_image(slug: str, index: int):
     body, mime = result
     etag = '"' + hashlib.sha256(body).hexdigest()[:16] + '"'
     headers = {"Cache-Control": "public, max-age=604800", "ETag": etag}
-    if etag in request.if_none_match:
+    if request.if_none_match.contains(etag.strip('"')):
         return Response(status=304, headers=headers)
     return Response(body, mimetype=mime, headers=headers)
 
@@ -2077,7 +2081,31 @@ def admin_missing_pictures():
         total=len(rows),
         source=source,
         error=error,
+        csrf_token=_library_csrf_token(),
     )
+
+
+@app.post("/admin/missing-pictures")
+def admin_redraw_missing_pictures():
+    """Draw missing pictures for one saved lesson. Admin session, CSRF, and the daily budget."""
+    if not _library_write_allowed():
+        abort(403)
+    if today_spend_usd() >= settings.daily_budget_usd:
+        return render_template("error.html", question="",
+                               error="The daily picture budget is used up, so no pictures were drawn."), 503
+    question = (request.form.get("question") or "").strip()
+    if not question:
+        abort(400)
+    lesson = _recent_get(question)
+    if lesson is None and db_enabled:
+        lesson = get_cached_lesson(question, settings.lesson_cache_ttl_days)
+    if not isinstance(lesson, dict):
+        abort(404)
+    _attach_slide_images(lesson, _client_context(), allow_paid=True)
+    if db_enabled:
+        save_cached_lesson(question, lesson)
+    _recent_put(question, lesson)
+    return redirect(url_for("admin_missing_pictures"))
 
 
 @app.route("/admin", methods=["GET"])

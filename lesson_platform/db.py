@@ -251,6 +251,7 @@ CREATE TABLE IF NOT EXISTS asker_questions (
 );
 ALTER TABLE asker_questions ADD COLUMN IF NOT EXISTS ip_hash TEXT;
 CREATE INDEX IF NOT EXISTS asker_questions_ip_hash_idx ON asker_questions (ip_hash);
+ALTER TABLE asker_questions ADD COLUMN IF NOT EXISTS settled BOOLEAN NOT NULL DEFAULT TRUE;
 """
 
 
