@@ -53,4 +53,4 @@ def test_rate_limit_message_does_not_log_the_address(monkeypatch, caplog):
 def test_privacy_page_says_addresses_are_not_stored():
     app_module = importlib.import_module("app")
     page = app_module.app.test_client().get("/privacy").data
-    assert b"We don't store internet (IP) addresses." in page
+    assert b"We do not write new raw IP addresses into our database." in page
