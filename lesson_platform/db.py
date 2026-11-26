@@ -224,7 +224,6 @@ ALTER TABLE askers ADD COLUMN IF NOT EXISTS waitlist_choice TEXT;
 ALTER TABLE askers ADD COLUMN IF NOT EXISTS bonus_lessons INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE askers ADD COLUMN IF NOT EXISTS more_requested_at TIMESTAMPTZ;
 ALTER TABLE askers ADD COLUMN IF NOT EXISTS waitlist_at TIMESTAMPTZ;
-ALTER TABLE asker_questions ADD COLUMN IF NOT EXISTS generated BOOLEAN NOT NULL DEFAULT true;
 CREATE TABLE IF NOT EXISTS tts_audio (
   text_hash  TEXT PRIMARY KEY,
   audio      BYTEA NOT NULL,
@@ -249,6 +248,7 @@ CREATE TABLE IF NOT EXISTS asker_questions (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (email, question_hash)
 );
+ALTER TABLE asker_questions ADD COLUMN IF NOT EXISTS generated BOOLEAN NOT NULL DEFAULT true;
 ALTER TABLE asker_questions ADD COLUMN IF NOT EXISTS ip_hash TEXT;
 CREATE INDEX IF NOT EXISTS asker_questions_ip_hash_idx ON asker_questions (ip_hash);
 """
