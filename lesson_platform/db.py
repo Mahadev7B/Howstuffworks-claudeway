@@ -6,7 +6,7 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Iterable, Mapping
 
 try:
     from zoneinfo import ZoneInfo  # Py 3.9+
@@ -1044,6 +1044,91 @@ def _admin_feedback(cur, limit: int) -> dict[str, Any]:
             "rows": rows, "available": True}
 
 
+# Lessons with no place recorded share one chart bucket, drawn after real places.
+UNKNOWN_LOCATION = "Unknown"
+
+
+def location_bucket(value: object) -> str:
+    """Label for a stored place. Null, blank, and whitespace-only values are Unknown."""
+    if value is None:
+        return UNKNOWN_LOCATION
+    text = str(value).strip()
+    return text or UNKNOWN_LOCATION
+
+
+def aggregate_lessons_by_location(rows: Iterable[Mapping[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Count lessons by country and by region.
+
+    Each row is one lesson, or a group with a ``count``. A missing key, null, or
+    blank place is Unknown. Named places stay in descending count; Unknown is last.
+    The counts in each list sum to the number of lessons.
+    """
+    country_counts: dict[str, int] = {}
+    region_counts: dict[tuple[str, str], int] = {}
+    for row in rows:
+        if "count" in row and row["count"] is not None:
+            count = int(row["count"])
+        else:
+            count = 1
+        country = location_bucket(row.get("country"))
+        region = location_bucket(row.get("region"))
+        country_counts[country] = country_counts.get(country, 0) + count
+        key = (country, region)
+        region_counts[key] = region_counts.get(key, 0) + count
+
+    named_countries = [(name, n) for name, n in country_counts.items() if name != UNKNOWN_LOCATION]
+    named_countries.sort(key=lambda item: (-item[1], item[0]))
+    lessons_by_country = [{"country": name, "count": n} for name, n in named_countries]
+    unknown_countries = country_counts.get(UNKNOWN_LOCATION, 0)
+    if unknown_countries:
+        lessons_by_country.append({"country": UNKNOWN_LOCATION, "count": unknown_countries})
+
+    named_regions: list[tuple[str, str, int]] = []
+    unknown_regions: list[tuple[str, str, int]] = []
+    for (country, region), n in region_counts.items():
+        bucket = unknown_regions if region == UNKNOWN_LOCATION else named_regions
+        bucket.append((country, region, n))
+    named_regions.sort(key=lambda item: (-item[2], item[1], item[0]))
+    unknown_regions.sort(key=lambda item: (-item[2], item[0], item[1]))
+    lessons_by_region = [
+        {"country": country, "region": region, "count": n}
+        for country, region, n in named_regions + unknown_regions
+    ]
+    return {
+        "lessons_by_country": lessons_by_country,
+        "lessons_by_region": lessons_by_region,
+    }
+
+
+def _location_filter_clause(column: str, value: str | None) -> tuple[str, list[Any]] | None:
+    """Match one chart bucket. Unknown also matches null and blank stored places."""
+    if column not in {"country", "region"}:
+        raise ValueError(column)
+    if not value:
+        return None
+    if value == UNKNOWN_LOCATION:
+        return (
+            f"COALESCE(NULLIF(BTRIM({column}), ''), %s) = %s",
+            [UNKNOWN_LOCATION, UNKNOWN_LOCATION],
+        )
+    return (f"{column} = %s", [value])
+
+
+def _admin_location_charts(cur, endpoints: list[str], xip_sql: str, xip_params: list) -> dict[str, list[dict[str, Any]]]:
+    """All-time lesson counts by country and region, including places that were never recorded."""
+    cur.execute(f"""
+        SELECT country, region, COUNT(*) AS n
+        FROM api_calls
+        WHERE {_REAL_LESSON_FILTER} {xip_sql}
+        GROUP BY country, region
+    """, (endpoints, *xip_params))
+    rows = [
+        {"country": country, "region": region, "count": int(count)}
+        for country, region, count in cur.fetchall()
+    ]
+    return aggregate_lessons_by_location(rows)
+
+
 def admin_askers_export() -> list[dict[str, Any]]:
     """Every asker for the admin CSV download. Empty when the DB is unavailable."""
     if _pool is None:
@@ -1322,28 +1407,12 @@ def admin_load_all(
                           "error": r[3]}
                          for r in cur.fetchall()]
 
-        # ── Lessons by country (all time) ─────────────────────────────────────
-        cur.execute(f"""
-            SELECT COALESCE(country, 'Unknown') AS c, COUNT(*) AS n
-            FROM api_calls
-            WHERE {_REAL_LESSON_FILTER} AND country IS NOT NULL {xip_sql}
-            GROUP BY c ORDER BY n DESC
-            LIMIT 30
-        """, (endpoints, *xip_params))
-        lessons_by_country = [{"country": r[0], "count": int(r[1])} for r in cur.fetchall()]
-
-        # ── Lessons by region/state (all time) ────────────────────────────────
-        cur.execute(f"""
-            SELECT COALESCE(country, 'Unknown') AS c,
-                   COALESCE(region, 'Unknown')  AS r,
-                   COUNT(*) AS n
-            FROM api_calls
-            WHERE {_REAL_LESSON_FILTER} AND region IS NOT NULL {xip_sql}
-            GROUP BY c, r ORDER BY n DESC
-            LIMIT 100
-        """, (endpoints, *xip_params))
-        lessons_by_region = [{"country": r[0], "region": r[1], "count": int(r[2])}
-                             for r in cur.fetchall()]
+        # ── Lessons by country and region (all time) ──────────────────────────
+        # Blank places stay in the result and are counted as Unknown. The old
+        # queries required country/region IS NOT NULL, so those lessons vanished.
+        location_charts = _admin_location_charts(cur, endpoints, xip_sql, xip_params)
+        lessons_by_country = location_charts["lessons_by_country"]
+        lessons_by_region = location_charts["lessons_by_region"]
 
         try:
             feedback_summary = _admin_feedback(cur, 100)
@@ -1391,12 +1460,11 @@ def admin_lessons_filtered(
         xip_sql, xip_params = _exclude_admin_ip_sql()
         clauses = [_REAL_LESSON_FILTER]
         params: list[Any] = [endpoints]
-        if country:
-            clauses.append("country = %s")
-            params.append(country)
-        if region:
-            clauses.append("region = %s")
-            params.append(region)
+        for column, selected in (("country", country), ("region", region)):
+            match = _location_filter_clause(column, selected)
+            if match:
+                clauses.append(match[0])
+                params.extend(match[1])
         if xip_sql:
             clauses.append(xip_sql[4:])  # strip leading "AND "
             params.extend(xip_params)
@@ -1418,8 +1486,8 @@ def admin_lessons_filtered(
             out.append({
                 "created_at": created_local,
                 "question": question,
-                "country": ctry or "—",
-                "region": rgn or "—",
+                "country": location_bucket(ctry),
+                "region": location_bucket(rgn),
                 "city": city or "—",
                 "cost": round(float(cost or 0), 5),
                 "duration_ms": int(dur_ms or 0),
