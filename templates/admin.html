@@ -460,10 +460,21 @@
       { label: 'One picture (s)', data: pbd.map(r => r.flux_ms == null ? null : r.flux_ms / 1000), borderColor: ORANGE, tension: 0.3 },
     ]);
 
-    const byCountry = DATA.lessons_by_country || [];
+    // Unknown stays last on both charts. The region chart is still the top 20
+    // named places, plus one Unknown bar so lessons with no region are not cut off.
+    const countryRows = DATA.lessons_by_country || [];
+    const byCountry = countryRows.filter(r => r.country !== 'Unknown').concat(countryRows.filter(r => r.country === 'Unknown'));
     doughnut('chartByCountry', byCountry.map(r => r.country), byCountry.map(r => r.count));
-    const byRegion = (DATA.lessons_by_region || []).slice(0, 20);
-    barChart('chartByRegion', byRegion.map(r => r.region + ' (' + r.country + ')'), [{ label: 'New lessons', data: byRegion.map(r => r.count), backgroundColor: ORANGE }]);
+    const regionRows = DATA.lessons_by_region || [];
+    const topRegions = regionRows.filter(r => r.region !== 'Unknown').slice(0, 20);
+    const unknownRegionCount = regionRows.filter(r => r.region === 'Unknown').reduce((sum, r) => sum + Number(r.count || 0), 0);
+    const regionLabels = topRegions.map(r => r.region + ' (' + r.country + ')');
+    const regionCounts = topRegions.map(r => r.count);
+    if (unknownRegionCount) {
+      regionLabels.push('Unknown');
+      regionCounts.push(unknownRegionCount);
+    }
+    barChart('chartByRegion', regionLabels, [{ label: 'New lessons', data: regionCounts, backgroundColor: ORANGE }]);
 
     // ── Email search ─────────────────────────────────────────────────────────
     const emailSearch = document.getElementById('emailSearch');
@@ -503,7 +514,10 @@
     [...new Set(byCountry.map(r => r.country))].forEach(c => addOption(countrySelect, c, c));
     countrySelect.addEventListener('change', () => {
       regionSelect.innerHTML = '<option value="">All regions</option>';
-      allRegions.filter(r => r.country === countrySelect.value).forEach(r => addOption(regionSelect, r.region, r.region + ' (' + r.count + ')'));
+      allRegions.filter(r => r.country === countrySelect.value)
+        .slice()
+        .sort((a, b) => (a.region === 'Unknown') - (b.region === 'Unknown'))
+        .forEach(r => addOption(regionSelect, r.region, r.region + ' (' + r.count + ')'));
       regionSelect.disabled = !countrySelect.value;
     });
 

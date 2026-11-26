@@ -151,6 +151,170 @@ def test_asker_summary_counts_bonus_lessons():
     assert summary["at_limit"] == 0
 
 
+def _counts(rows, *keys):
+    return {tuple(row[key] for key in keys): row["count"] for row in rows}
+
+
+def test_blank_locations_count_as_unknown_and_totals_match():
+    """Null, blank, and missing place keys share the Unknown bucket."""
+    db = importlib.import_module("lesson_platform.db")
+    lessons = [
+        {"country": "Canada", "region": "Ontario"},
+        {"country": "  Canada  ", "region": "Ontario"},
+        {"country": "United States", "region": "Texas"},
+        {"country": None, "region": None},
+        {"country": "", "region": "   "},
+        {},
+        {"country": "Canada"},
+        {"region": "Texas"},
+        {"country": "Canada", "region": None},
+    ]
+    charts = db.aggregate_lessons_by_location(lessons)
+    by_country = charts["lessons_by_country"]
+    by_region = charts["lessons_by_region"]
+
+    assert _counts(by_country, "country") == {
+        ("Canada",): 4,
+        ("United States",): 1,
+        ("Unknown",): 4,
+    }
+    assert _counts(by_region, "country", "region") == {
+        ("Canada", "Ontario"): 2,
+        ("United States", "Texas"): 1,
+        ("Unknown", "Texas"): 1,
+        ("Canada", "Unknown"): 2,
+        ("Unknown", "Unknown"): 3,
+    }
+    assert sum(row["count"] for row in by_country) == len(lessons)
+    assert sum(row["count"] for row in by_region) == len(lessons)
+    assert [row["country"] for row in by_country][-1] == "Unknown"
+    assert by_country[-1]["count"] == 4
+    assert all(row["region"] != "Unknown" for row in by_region[:3])
+    assert [row["region"] for row in by_region[-2:]] == ["Unknown", "Unknown"]
+
+
+def test_unknown_bucket_stays_last_even_when_it_is_largest():
+    db = importlib.import_module("lesson_platform.db")
+    charts = db.aggregate_lessons_by_location([
+        {"country": None, "region": None, "count": 37},
+        {"country": "", "region": "", "count": 2},
+        {"country": "Canada", "region": "Ontario", "count": 5},
+        {"country": "Mexico", "region": "Jalisco", "count": 1},
+    ])
+    assert [row["country"] for row in charts["lessons_by_country"]] == ["Canada", "Mexico", "Unknown"]
+    assert charts["lessons_by_country"][-1]["count"] == 39
+    assert [row["region"] for row in charts["lessons_by_region"]] == ["Ontario", "Jalisco", "Unknown"]
+    assert sum(row["count"] for row in charts["lessons_by_country"]) == 45
+    assert sum(row["count"] for row in charts["lessons_by_region"]) == 45
+
+
+def test_located_lessons_do_not_invent_an_unknown_bucket():
+    db = importlib.import_module("lesson_platform.db")
+    charts = db.aggregate_lessons_by_location([
+        {"country": "Canada", "region": "Ontario"},
+        {"country": "Canada", "region": "Quebec"},
+    ])
+    assert "Unknown" not in {row["country"] for row in charts["lessons_by_country"]}
+    assert "Unknown" not in {row["region"] for row in charts["lessons_by_region"]}
+    assert sum(row["count"] for row in charts["lessons_by_country"]) == 2
+
+
+class RecordingCursor(FakeCursor):
+    def __init__(self, results):
+        super().__init__(results)
+        self.statements = []
+        self.params = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def execute(self, sql, params=None):
+        self.statements.append(" ".join(sql.split()))
+        self.params = params
+        super().execute(sql, params)
+
+
+def test_location_query_keeps_null_and_blank_rows():
+    db = importlib.import_module("lesson_platform.db")
+    cursor = RecordingCursor([[
+        ("Canada", "Ontario", 2),
+        (None, None, 3),
+        ("", "", 1),
+        ("Canada", None, 4),
+    ]])
+    charts = db._admin_location_charts(cursor, ["/api/lesson", "/lesson"], "AND (city IS NULL)", ["Ashburn"])
+    sql = cursor.statements[0]
+    assert "country IS NOT NULL" not in sql
+    assert "region IS NOT NULL" not in sql
+    assert "GROUP BY country, region" in sql
+    assert cursor.params[0] == ["/api/lesson", "/lesson"]
+    assert cursor.params[1:] == ("Ashburn",)
+    assert _counts(charts["lessons_by_country"], "country") == {("Canada",): 6, ("Unknown",): 4}
+    assert sum(row["count"] for row in charts["lessons_by_country"]) == 10
+    assert sum(row["count"] for row in charts["lessons_by_region"]) == 10
+    assert charts["lessons_by_country"][-1]["country"] == "Unknown"
+    assert charts["lessons_by_region"][-1]["region"] == "Unknown"
+
+
+class _Conn:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    def cursor(self):
+        return self._cursor
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def test_unknown_place_filter_matches_blanks_and_labels_them(monkeypatch):
+    db = importlib.import_module("lesson_platform.db")
+    cursor = RecordingCursor([[(
+        "2026-11-01 09:00", "Why is the sky blue?", None, "  ", None, 0.01, 1200, "Mozilla",
+    )]])
+    conn = _Conn(cursor)
+    monkeypatch.setattr(db, "_direct_connect", lambda: conn)
+
+    rows = db.admin_lessons_filtered(country="Unknown", region="Unknown")
+    sql = cursor.statements[0]
+    assert "COALESCE(NULLIF(BTRIM(country), ''), %s) = %s" in sql
+    assert "COALESCE(NULLIF(BTRIM(region), ''), %s) = %s" in sql
+    assert cursor.params.count("Unknown") == 4
+    assert rows == [{
+        "created_at": "2026-11-01 09:00",
+        "question": "Why is the sky blue?",
+        "country": "Unknown",
+        "region": "Unknown",
+        "city": "—",
+        "cost": 0.01,
+        "duration_ms": 1200,
+        "device": "desktop",
+    }]
+
+    named = RecordingCursor([[]])
+    conn._cursor = named
+    db.admin_lessons_filtered(country="Canada", region="Ontario")
+    named_sql = named.statements[0]
+    assert "country = %s" in named_sql and "region = %s" in named_sql
+    assert "BTRIM(country)" not in named_sql
+    assert "Canada" in named.params and "Ontario" in named.params
+
+
+def test_dashboard_location_chart_script_keeps_unknown_last(admin):
+    client, _ = admin
+    page = client.get("/admin").data.decode()
+    assert "chartByCountry" in page and "chartByRegion" in page
+    assert "r.country !== 'Unknown'" in page
+    assert "unknownRegionCount" in page
+    assert "regionLabels.push('Unknown')" in page
+
+
 def test_admin_grant_needs_csrf_and_gives_two_lessons(admin, monkeypatch):
     client, app_module = admin
     monkeypatch.setattr(app_module.app, "secret_key", "test-secret-not-dev")
