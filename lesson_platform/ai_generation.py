@@ -17,6 +17,7 @@ from typing import Any
 from anthropic import Anthropic
 
 from .config import Settings
+from .db import lesson_log_id
 from .math_check import check_lesson, is_math_question
 
 logger = logging.getLogger(__name__)
@@ -385,29 +386,32 @@ def generate_lesson(question: str, settings: Settings) -> dict[str, Any]:
     client = Anthropic(api_key=settings.anthropic_api_key)
     started = time.time()
 
-    logger.info("Generating lesson for question: %s", question)
+    logger.info("Generating lesson %s", lesson_log_id(question))
 
     is_math = is_math_question(question)
     model = settings.math_model if is_math else settings.anthropic_model
     request = f'A child asked: "{question}"\n\nCreate the 4-slide lesson now. Keep every text field short.'
-    lesson, input_tokens, output_tokens = _ask_for_lesson(client, model, request)
+    lesson, input_tokens, output_tokens = _ask_for_lesson_quietly(client, model, request, question)
     math_problems = check_lesson(lesson)
     math_retried = False
     if math_problems:
         # One more try, telling Claude exactly which sums were wrong. Keep whichever draft has fewer mistakes.
-        logger.warning("Lesson arithmetic wrong, asking again: %s", math_problems)
+        # The mistake text can repeat the question, so the log keeps only a count.
+        logger.warning("Lesson arithmetic wrong, asking again lesson=%s count=%d",
+                       lesson_log_id(question), len(math_problems))
         math_retried = True
         retry_request = (request + "\n\nImportant: a draft of this lesson had these arithmetic mistakes:\n- "
                          + "\n- ".join(math_problems)
                          + "\nWork every calculation out carefully and make sure every number is correct.")
-        retry, more_in, more_out = _ask_for_lesson(client, model, retry_request)
+        retry, more_in, more_out = _ask_for_lesson_quietly(client, model, retry_request, question)
         input_tokens += more_in
         output_tokens += more_out
         retry_problems = check_lesson(retry)
         if len(retry_problems) <= len(math_problems):
             lesson, math_problems = retry, retry_problems
         if math_problems:
-            logger.error("Lesson arithmetic still wrong after retry: %s", math_problems)
+            logger.error("Lesson arithmetic still wrong after retry lesson=%s count=%d",
+                         lesson_log_id(question), len(math_problems))
 
     elapsed_ms = int((time.time() - started) * 1000)
     # Pricing per 1M tokens by model family
@@ -436,6 +440,15 @@ def generate_lesson(question: str, settings: Settings) -> dict[str, Any]:
 
     logger.info("Lesson total %dms — $%.5f", elapsed_ms, cost_usd)
     return lesson
+
+
+def _ask_for_lesson_quietly(client: Anthropic, model: str, request: str, question: str):
+    """Call Claude and, on failure, raise an error that does not contain the question."""
+    try:
+        return _ask_for_lesson(client, model, request)
+    except Exception as exc:
+        logger.error("Lesson generation failed lesson=%s (%s)", lesson_log_id(question), type(exc).__name__)
+        raise RuntimeError("Lesson generation failed") from None
 
 
 def _ask_for_lesson(client: Anthropic, model: str, request: str) -> tuple[dict[str, Any], int, int]:

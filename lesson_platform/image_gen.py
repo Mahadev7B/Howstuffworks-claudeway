@@ -37,6 +37,12 @@ def _estimate_cost(model: str, size: str) -> float:
     return _SIZE_TO_MP.get(size, 0.6) * _PRICE_PER_MP_BY_MODEL.get(model, _DEFAULT_PRICE_PER_MP)
 
 
+def _fail(message: str, exc: BaseException) -> None:
+    """Log and raise without the provider message, which can echo the prompt."""
+    logger.error("%s (%s)", message, type(exc).__name__)
+    raise RuntimeError(message) from None
+
+
 def generate_image(
     prompt: str,
     settings: Settings,
@@ -81,8 +87,7 @@ def generate_image(
         resp.raise_for_status()
         result: dict[str, Any] = resp.json()
     except Exception as exc:
-        logger.exception("Flux generation failed")
-        raise RuntimeError(f"Flux generation failed: {exc}") from exc
+        _fail("Flux generation failed", exc)
     logger.info("Flux done in %.1fs", time.time() - started)
 
     images = result.get("images") or []
@@ -100,8 +105,7 @@ def generate_image(
             content_type = resp.headers.get("Content-Type", "image/png").split(";")[0].strip()
             data = resp.read()
     except Exception as exc:
-        logger.exception("Flux image download failed")
-        raise RuntimeError(f"Flux image download failed: {exc}") from exc
+        _fail("Flux image download failed", exc)
 
     if not data:
         raise RuntimeError("Flux image was empty")
@@ -178,8 +182,7 @@ def generate_images_batch(
             for fut in _as_completed(future_to_idx, timeout=_BATCH_POLL_TIMEOUT_S + 5):
                 results[future_to_idx[fut]] = fut.result()
     except Exception as exc:
-        logger.exception("Flux batch generation failed")
-        raise RuntimeError(f"Flux batch generation failed: {exc}") from exc
+        _fail("Flux batch generation failed", exc)
 
     logger.info("Flux batch (%d images) done in %.1fs", len(prompts), time.time() - started)
 
@@ -196,8 +199,8 @@ def generate_images_batch(
             with urllib.request.urlopen(req, timeout=20) as r:
                 mime = r.headers.get("Content-Type", "image/png").split(";")[0].strip()
                 data = r.read()
-        except Exception as exc:
-            raise RuntimeError(f"Flux batch image download failed: {exc}") from exc
+        except Exception:
+            raise RuntimeError("Flux batch image download failed") from None
         if not data:
             raise RuntimeError("Flux batch: empty image")
         output.append((data, mime or "image/png", cost_each))

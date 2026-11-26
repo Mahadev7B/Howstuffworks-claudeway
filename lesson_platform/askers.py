@@ -135,8 +135,8 @@ def allowance(email: str, question: str, is_saved=None, ip_hash: str | None = No
                     used, ip_repeat = 0, False
                 repeat = bool(email_repeat or ip_repeat)
         except Exception as exc:
-            logger.exception("Asker allowance check failed")
-            raise AskerUnavailable(str(exc)) from exc
+            logger.error("Asker allowance check failed (%s)", type(exc).__name__)
+            raise AskerUnavailable("Asker allowance check failed") from None
     used, new_today = int(used or 0), int(new_today or 0)
     free_limit = FREE_QUESTIONS + int(bonus or 0)
     subscribed = status in _ACTIVE
@@ -212,8 +212,8 @@ def record_question(email: str, question: str, generated: bool = True, ip_hash: 
                 "ON CONFLICT (email, question_hash) DO NOTHING",
                 (email, qhash, question[:500], generated, ip_hash),
             )
-    except Exception:
-        logger.exception("Failed to record asker question")
+    except Exception as exc:
+        logger.error("Failed to record asker question (%s)", type(exc).__name__)
 
 
 def start_trial(email: str) -> tuple[bool, str | None]:
@@ -336,8 +336,8 @@ def delete_asker(email: str) -> bool:
         with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute("DELETE FROM askers WHERE email = %s", (email,))
             return cur.rowcount > 0
-    except Exception:
-        logger.exception("Failed to delete asker")
+    except Exception as exc:
+        logger.error("Failed to delete asker (%s)", type(exc).__name__)
         return False
 
 

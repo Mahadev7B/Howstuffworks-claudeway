@@ -1,5 +1,6 @@
 """Postgres storage — feedback, API call telemetry, cached lessons, guardrails."""
 import hashlib
+import hmac
 import logging
 import os
 import re
@@ -56,7 +57,13 @@ def _record_write_success(label: str) -> None:
 def _record_write_failure(label: str, exc: Exception) -> None:
     _write_stats["writes_failed"] += 1
     _write_stats["last_failure_at"] = datetime.utcnow().isoformat() + "Z"
-    _write_stats["last_failure_reason"] = f"{label}: {type(exc).__name__}: {str(exc)[:200]}"
+    # Exception text can echo a question or prompt, so the status report keeps only the type.
+    _write_stats["last_failure_reason"] = f"{label}: {type(exc).__name__}"
+
+
+def _log_write_failure(message: str, exc: Exception) -> None:
+    """Log a storage failure without the exception text, which can echo a question."""
+    logger.error("%s (%s)", message, type(exc).__name__)
 
 
 def get_write_stats() -> dict:
@@ -88,8 +95,8 @@ def _bg(fn, *args, **kwargs):
     """Fire-and-forget DB write. Returns immediately; logs on submit failure."""
     try:
         _bg_writer.submit(fn, *args, **kwargs)
-    except Exception:
-        logger.exception("Failed to schedule background DB write")
+    except Exception as exc:
+        _log_write_failure("Failed to schedule background DB write", exc)
 
 
 def _direct_connect():
@@ -109,8 +116,8 @@ def _direct_connect():
             autocommit=True,
             connect_timeout=_CONNECT_TIMEOUT_S,
         )
-    except Exception:
-        logger.exception("Failed to open direct DB connection")
+    except Exception as exc:
+        _log_write_failure("Failed to open direct DB connection", exc)
         return None
 
 SCHEMA = """
@@ -317,7 +324,7 @@ def _do_save_feedback(params: tuple) -> None:
             cur.execute(sql, params)
         _record_write_success("save_feedback")
     except Exception as exc:
-        logger.exception("Failed to save feedback")
+        _log_write_failure("Failed to save feedback", exc)
         _record_write_failure("save_feedback", exc)
     finally:
         try:
@@ -376,7 +383,7 @@ def _do_record_api_call(params: tuple) -> None:
             )
         _record_write_success("record_api_call")
     except Exception as exc:
-        logger.exception("Failed to record api_call")
+        _log_write_failure("Failed to record api_call", exc)
         _record_write_failure("record_api_call", exc)
     finally:
         try:
@@ -454,6 +461,26 @@ def question_hash(question: str) -> str:
     return hashlib.sha256(_normalize_question(question).encode("utf-8")).hexdigest()
 
 
+def _log_id_key() -> bytes:
+    """Secret for log ids. LOG_ID_KEY wins; otherwise the key is HMAC(FLASK_SECRET_KEY, 'log-id')."""
+    explicit = os.getenv("LOG_ID_KEY", "").strip()
+    if explicit:
+        return explicit.encode("utf-8")
+    secret = os.getenv("FLASK_SECRET_KEY", "").strip() or "dev-secret-key"
+    return hmac.new(secret.encode("utf-8"), b"log-id", hashlib.sha256).digest()
+
+
+def content_log_id(text: str) -> str:
+    """HMAC-SHA256 of text, 16 hex chars. Not reversible and not question_hash."""
+    digest = hmac.new(_log_id_key(), (text or "").encode("utf-8"), hashlib.sha256).hexdigest()
+    return digest[:16]
+
+
+def lesson_log_id(question: str) -> str:
+    """Keyed id for a question in logs. The cache lookup key stays question_hash."""
+    return content_log_id(_normalize_question(question or ""))
+
+
 def get_cached_lesson(question: str, ttl_days: int = 30) -> dict[str, Any] | None:
     """Return cached lesson if it exists and hasn't expired.
 
@@ -492,8 +519,8 @@ def get_cached_lesson(question: str, ttl_days: int = 30) -> dict[str, Any] | Non
                 (qhash,),
             )
             return row[0]
-    except Exception:
-        logger.exception("Cache read failed — skipping")
+    except Exception as exc:
+        _log_write_failure("Cache read failed — skipping", exc)
         return None
     finally:
         try:
@@ -514,7 +541,7 @@ def _do_pin_cached_lesson(qhash: str) -> None:
             )
         _record_write_success("pin_cached_lesson")
     except Exception as exc:
-        logger.exception("Pin cached lesson failed — skipping")
+        _log_write_failure("Pin cached lesson failed — skipping", exc)
         _record_write_failure("pin_cached_lesson", exc)
     finally:
         try:
@@ -548,8 +575,8 @@ def get_lesson_from_calls(question: str) -> dict[str, Any] | None:
             )
             row = cur.fetchone()
             return row[0] if row else None
-    except Exception:
-        logger.exception("get_lesson_from_calls failed — skipping")
+    except Exception as exc:
+        _log_write_failure("get_lesson_from_calls failed — skipping", exc)
         return None
     finally:
         try:
@@ -558,7 +585,7 @@ def get_lesson_from_calls(question: str) -> dict[str, Any] | None:
             pass
 
 
-def _do_delete_cached_lesson(qhash: str, label: str) -> None:
+def _do_delete_cached_lesson(qhash: str, log_id: str) -> None:
     conn = _direct_connect()
     if conn is None:
         return
@@ -568,10 +595,10 @@ def _do_delete_cached_lesson(qhash: str, label: str) -> None:
                 "DELETE FROM cached_lessons WHERE question_hash = %s",
                 (qhash,),
             )
-        logger.info("Deleted stale cache entry for: %s", label)
+        logger.info("Deleted stale cache entry for lesson %s", log_id)
         _record_write_success("delete_cached_lesson")
     except Exception as exc:
-        logger.exception("Cache delete failed — skipping")
+        _log_write_failure("Cache delete failed — skipping", exc)
         _record_write_failure("delete_cached_lesson", exc)
     finally:
         try:
@@ -584,7 +611,7 @@ def delete_cached_lesson(question: str) -> None:
     """Remove a cached lesson so it will be regenerated on next request. Fire-and-forget."""
     if _pool is None:
         return
-    _bg(_do_delete_cached_lesson, question_hash(question), question[:80])
+    _bg(_do_delete_cached_lesson, question_hash(question), lesson_log_id(question))
 
 
 def _do_save_cached_lesson(qhash: str, question: str, lesson: dict[str, Any]) -> None:
@@ -605,7 +632,7 @@ def _do_save_cached_lesson(qhash: str, question: str, lesson: dict[str, Any]) ->
             )
         _record_write_success("save_cached_lesson")
     except Exception as exc:
-        logger.exception("Cache write failed — skipping")
+        _log_write_failure("Cache write failed — skipping", exc)
         _record_write_failure("save_cached_lesson", exc)
     finally:
         try:
@@ -622,8 +649,8 @@ def cached_lesson_exists(question: str) -> bool:
         with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute("SELECT 1 FROM cached_lessons WHERE question_hash = %s", (question_hash(question),))
             return cur.fetchone() is not None
-    except Exception:
-        logger.exception("Saved-lesson check failed")
+    except Exception as exc:
+        _log_write_failure("Saved-lesson check failed", exc)
         return False
 
 
@@ -636,8 +663,8 @@ def get_saved_tts(text_hash: str) -> bytes | None:
             cur.execute("SELECT audio FROM tts_audio WHERE text_hash = %s", (text_hash,))
             row = cur.fetchone()
             return bytes(row[0]) if row else None
-    except Exception:
-        logger.exception("Saved voice lookup failed")
+    except Exception as exc:
+        _log_write_failure("Saved voice lookup failed", exc)
         return None
 
 
@@ -651,7 +678,7 @@ def _do_save_tts(text_hash: str, audio: bytes) -> None:
                         (text_hash, audio))
         _record_write_success("save_tts")
     except Exception as exc:
-        logger.exception("Saving voice failed — skipping")
+        _log_write_failure("Saving voice failed — skipping", exc)
         _record_write_failure("save_tts", exc)
     finally:
         try:
@@ -705,8 +732,8 @@ def create_share_link(question: str, slug: str, lesson: dict[str, Any] | None = 
                     (slug, qhash),
                 )
             return lesson is not None or cur.rowcount > 0
-    except Exception:
-        logger.exception("create_share_link failed")
+    except Exception as exc:
+        _log_write_failure("create_share_link failed", exc)
         return False
     finally:
         try:
@@ -736,8 +763,8 @@ def get_lesson_by_slug(slug: str) -> dict[str, Any] | None:
                 (slug,),
             )
             return lesson
-    except Exception:
-        logger.exception("get_lesson_by_slug failed")
+    except Exception as exc:
+        _log_write_failure("get_lesson_by_slug failed", exc)
         return None
     finally:
         try:
@@ -778,8 +805,8 @@ def today_spend_usd() -> float:
             value = float(row[0]) if row and row[0] is not None else 0.0
             _budget_cache = (now, value)
             return value
-    except Exception:
-        logger.exception("Budget query failed — skipping")
+    except Exception as exc:
+        _log_write_failure("Budget query failed — skipping", exc)
         return _budget_cache[1] if _budget_cache is not None else 0.0
     finally:
         try:
@@ -822,8 +849,9 @@ def ip_calls_last_hour(ip: str | None, endpoints: tuple[str, ...]) -> int:
             count = int(row[0]) if row else 0
             _IP_RATE_CACHE[cache_key] = (now, count)
             return count
-    except Exception:
-        logger.exception("IP rate-limit query failed — skipping")
+    except Exception as exc:
+        # The query is bound to the client address, so the driver message is not logged.
+        logger.error("IP rate-limit query failed — skipping (%s)", type(exc).__name__)
         return cached[1] if cached is not None else 0
     finally:
         try:
@@ -914,8 +942,8 @@ def _safe_query(default, fn):
     try:
         with conn, conn.cursor() as cur:
             return fn(cur)
-    except Exception:
-        logger.exception("Admin query failed — returning default")
+    except Exception as exc:
+        _log_write_failure("Admin query failed — returning default", exc)
         return default
     finally:
         try:
@@ -1416,14 +1444,14 @@ def admin_load_all(
 
         try:
             feedback_summary = _admin_feedback(cur, 100)
-        except Exception:
-            logger.exception("Admin feedback query failed")
+        except Exception as exc:
+            _log_write_failure("Admin feedback query failed", exc)
             feedback_summary = copy.deepcopy(_ADMIN_DEFAULTS["feedback"])
 
         try:
             asker_summary = _admin_askers(cur, today_start, limit_askers)
-        except Exception:
-            logger.exception("Admin askers query failed")
+        except Exception as exc:
+            _log_write_failure("Admin askers query failed", exc)
             asker_summary = copy.deepcopy(_ADMIN_DEFAULTS["askers"])
 
         return {
