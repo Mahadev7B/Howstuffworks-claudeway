@@ -260,7 +260,7 @@ def test_refused_question_log_and_storage_errors_omit_the_text(question, monkeyp
     caplog.set_level(logging.DEBUG)
     spam_log._write(
         {"at": 1, "endpoint": "/api/lesson", "reason": "too long", "question": question,
-         "user_agent": "Test", "device": "abc123"},
+         "user_agent": "SecretBrowser/9.9", "device": "device-tag-zz"},
         FORWARDED, REMOTE,
     )
 
@@ -297,9 +297,12 @@ def test_refused_question_log_and_storage_errors_omit_the_text(question, monkeyp
             return Cursor()
 
     monkeypatch.setattr(db, "_direct_connect", lambda: Conn())
-    db._do_delete_cached_lesson(question_hash(question))
+    db._do_delete_cached_lesson(question_hash(question), lesson_log_id(question))
     _assert_hidden(question, caplog, reason)
-    assert question_hash(question) in caplog.text
+    assert lesson_log_id(question) in caplog.text
+    assert question_hash(question) not in caplog.text
+    for leaked in ("Austin", "Texas", "United States", "SecretBrowser/9.9", "device-tag-zz"):
+        assert leaked not in caplog.text
     assert FORWARDED not in (tmp_path / "refused.jsonl").read_text(encoding="utf-8")
 
 
@@ -360,7 +363,8 @@ def test_admin_delete_logs_the_lesson_id(question, app_module, monkeypatch, capl
                          headers=_headers(), environ_base={"REMOTE_ADDR": REMOTE})
     assert ok.status_code == 200 and failed.status_code == 500
     _assert_hidden(question, caplog, failed.get_json())
-    assert question_hash(question) in caplog.text
+    assert lesson_log_id(question) in caplog.text
+    assert question_hash(question) not in caplog.text
 
 
 def test_gunicorn_access_log_has_no_client_address(monkeypatch):
@@ -389,3 +393,4 @@ def test_gunicorn_access_log_has_no_client_address(monkeypatch):
     assert probe.cfg.workers == 2
     assert probe.cfg.timeout == 120
     assert "0.0.0.0:10000" in probe.cfg.bind
+    assert probe.cfg.logger_class.__name__ == "RedactingLogger"

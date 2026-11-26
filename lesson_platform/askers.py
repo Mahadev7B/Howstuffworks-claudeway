@@ -336,8 +336,8 @@ def delete_asker(email: str) -> bool:
         with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute("DELETE FROM askers WHERE email = %s", (email,))
             return cur.rowcount > 0
-    except Exception:
-        logger.exception("Failed to delete asker")
+    except Exception as exc:
+        logger.error("Failed to delete asker (%s)", type(exc).__name__)
         return False
 
 

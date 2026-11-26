@@ -52,11 +52,10 @@ def _write(entry: dict, forwarded_for: str | None, remote_addr: str | None) -> N
             os.replace(_PATH, _PATH.with_suffix(".old"))
         with open(_PATH, "a", encoding="utf-8") as f:
             f.write(line)
-    except OSError:
-        logger.exception("Could not note a refused question")
-    logger.warning("Refused question (%s) lesson=%s from device %s, %s, %s", entry["reason"],
-                   lesson_log_id(entry.get("question") or ""), entry["device"], entry["place"],
-                   (entry["user_agent"] or "-")[:120])
+    except OSError as exc:
+        logger.error("Could not note a refused question (%s)", type(exc).__name__)
+    logger.warning("Refused question (%s) lesson=%s", entry["reason"],
+                   lesson_log_id(entry.get("question") or ""))
 
 
 def record(*, endpoint: str, question: str, reason: str, ip: str | None, forwarded_for: str | None,
@@ -66,8 +65,8 @@ def record(*, endpoint: str, question: str, reason: str, ip: str | None, forward
              "user_agent": (user_agent or "")[:300], "device": device_tag(ip)}
     try:
         _submit(_write, entry, forwarded_for, remote_addr)
-    except Exception:
-        logger.exception("Could not schedule a refused-question note")
+    except Exception as exc:
+        logger.error("Could not schedule a refused-question note (%s)", type(exc).__name__)
 
 
 def _read() -> list[dict]:

@@ -10,3 +10,6 @@
 # %(h)s is the client address and is omitted. %(r)s and %(q)s are omitted
 # because a question can be carried in the query string (?q=).
 access_log_format = "%(t)s %(m)s %(U)s %(s)s %(b)s %(M)sms"
+
+# Worker.handle_error logs the request URI, query string included.
+logger_class = "lesson_platform.gunicorn_log.RedactingLogger"

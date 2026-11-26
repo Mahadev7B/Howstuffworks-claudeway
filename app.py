@@ -60,7 +60,7 @@ from lesson_platform import (
     today_spend_usd,
 )
 from lesson_platform.db import (
-    cached_lesson_exists, get_pool_stats, get_saved_tts, get_write_stats, lesson_log_id, save_tts,
+    cached_lesson_exists, content_log_id, get_pool_stats, get_saved_tts, get_write_stats, lesson_log_id, save_tts,
 )
 from lesson_platform import spam_log
 from lesson_platform.math_check import is_math_question
@@ -192,8 +192,8 @@ LESSON_GENERATION_ERROR = "Could not make that lesson just now. Please try again
 
 
 def _prompt_log_id(prompt: str) -> str:
-    """Short hash for a picture prompt. The prompt text is never written to a log."""
-    return hashlib.sha256((prompt or "").encode("utf-8")).hexdigest()[:16]
+    """Keyed id for a picture prompt. The prompt text is never written to a log."""
+    return content_log_id(prompt or "")
 
 
 def _error_type(exc: BaseException) -> str:
@@ -1042,8 +1042,8 @@ def api_more_lessons():
         return jsonify({"ok": False, "error": "Too many tries. Please wait a while and try again."}), 429
     try:
         saved = askers.request_more(email)
-    except Exception:
-        logger.exception("Could not save a request for more lessons")
+    except Exception as exc:
+        logger.error("Could not save a request for more lessons (%s)", _error_type(exc))
         return jsonify({"ok": False, "error": ASKER_UNAVAILABLE_MESSAGE}), 503
     if not saved:
         return jsonify({"ok": False, "error": "Please make a lesson first."}), 404
@@ -1063,8 +1063,8 @@ def api_waitlist():
         return jsonify({"ok": False, "error": "Please pick one of the answers."}), 400
     try:
         askers.set_waitlist(email, choice)
-    except Exception:
-        logger.exception("Could not save a waitlist answer")
+    except Exception as exc:
+        logger.error("Could not save a waitlist answer (%s)", _error_type(exc))
         return jsonify({"ok": False, "error": ASKER_UNAVAILABLE_MESSAGE}), 503
     return jsonify({"ok": True, "choice": choice})
 
@@ -1078,8 +1078,8 @@ def api_trial_start():
         return jsonify({"ok": False, "code": refusal[0], "error": refusal[1]}), refusal[2]
     try:
         started, ends = askers.start_trial(email)
-    except Exception:
-        logger.exception("Could not start a free month")
+    except Exception as exc:
+        logger.error("Could not start a free month (%s)", _error_type(exc))
         return jsonify({"ok": False, "error": ASKER_UNAVAILABLE_MESSAGE}), 503
     if not started:
         return jsonify({"ok": False, "code": "trial_used", "trial_ends": ends,
@@ -1153,8 +1153,8 @@ def stripe_webhook():
     if change is not None:
         try:
             askers.set_subscription(change["email"], change["status"], change["customer_id"], change["subscription_id"])
-        except Exception:
-            logger.exception("Could not save a Stripe subscription change")
+        except Exception as exc:
+            logger.error("Could not save a Stripe subscription change (%s)", _error_type(exc))
             return jsonify({"ok": False}), 500  # Stripe retries failed deliveries.
         logger.info("Stripe subscription is now %s", change["status"])
     return jsonify({"ok": True})
@@ -1575,8 +1575,8 @@ def admin_clear_cache():
             deleted = cur.rowcount
         logger.info("Admin cleared cache: %d rows deleted", deleted)
         return jsonify({"ok": True, "deleted": deleted})
-    except Exception:
-        logger.exception("Admin clear-cache failed")
+    except Exception as exc:
+        logger.error("Admin clear-cache failed (%s)", _error_type(exc))
         return jsonify({"ok": False, "error": "could not clear the cache"}), 500
 
 
@@ -1596,7 +1596,7 @@ def admin_delete_cached_lesson():
         with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute("DELETE FROM cached_lessons WHERE question_hash = %s", (qhash,))
             deleted = cur.rowcount
-        logger.info("Admin deleted cached lesson %s (found=%s)", qhash, deleted > 0)
+        logger.info("Admin deleted cached lesson %s (found=%s)", lesson_log_id(question), deleted > 0)
         return jsonify({"ok": True, "deleted": deleted > 0})
     except Exception as exc:
         logger.error("Admin delete-cached-lesson failed (%s)", _error_type(exc))
@@ -1625,8 +1625,8 @@ def admin_cached_lessons():
             rows = [{"question": r[0], "hits": r[1], "pinned": r[2],
                      "created": r[3], "last_hit": r[4]} for r in cur.fetchall()]
         return jsonify({"ok": True, "lessons": rows})
-    except Exception:
-        logger.exception("Admin cached-lessons list failed")
+    except Exception as exc:
+        logger.error("Admin cached-lessons list failed (%s)", _error_type(exc))
         return jsonify({"ok": False, "error": "could not list saved lessons"}), 500
 
 
