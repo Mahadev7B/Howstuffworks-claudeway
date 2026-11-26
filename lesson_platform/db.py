@@ -259,10 +259,15 @@ def _check_connection(conn) -> None:
     conn.execute("SELECT 1")
 
 
-def init_db() -> bool:
-    """Create the pool and ensure schema exists. Returns True if DB is available."""
+def init_db(dsn: str | None = None) -> bool:
+    """Create the pool and ensure schema exists. Returns True if DB is available.
+
+    Pass `dsn` to use a specific database. Tests that wipe data pass the guarded
+    test URL. With no argument this reads DATABASE_URL, which is the app database.
+    """
     global _pool
-    dsn = os.getenv("DATABASE_URL")
+    if dsn is None:
+        dsn = os.getenv("DATABASE_URL")
     if not dsn:
         logger.warning("DATABASE_URL not set — DB storage disabled")
         return False

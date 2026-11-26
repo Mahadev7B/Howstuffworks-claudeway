@@ -1,6 +1,8 @@
 """init_db must succeed on a database that does not already have the asker tables.
 
-Skipped unless DATABASE_URL points at a Postgres this process can empty.
+Skipped unless TEST_DATABASE_URL is a local database whose name contains 'test'.
+DATABASE_URL is never read. A set but unsafe TEST_DATABASE_URL is refused
+before any connection is opened.
 """
 
 import os
@@ -8,23 +10,27 @@ import os
 import psycopg
 import pytest
 
+from tests.pg_guard import local_test_database_url
+
 pytestmark = pytest.mark.skipif(
-    not os.environ.get("DATABASE_URL"),
-    reason="DATABASE_URL is not set",
+    not os.environ.get("TEST_DATABASE_URL"),
+    reason="TEST_DATABASE_URL is not set",
 )
 
 
 def test_init_db_succeeds_on_an_empty_database():
     from lesson_platform import db
 
-    dsn = os.environ["DATABASE_URL"]
+    dsn = local_test_database_url()
+    if dsn is None:
+        pytest.skip("TEST_DATABASE_URL is not set")
     with psycopg.connect(dsn, autocommit=True) as conn:
         conn.execute("DROP SCHEMA public CASCADE")
         conn.execute("CREATE SCHEMA public")
     if db._pool is not None:
         db._pool.close()
         db._pool = None
-    assert db.init_db() is True
+    assert db.init_db(dsn) is True
     with psycopg.connect(dsn, autocommit=True) as conn:
         columns = {
             row[0]
