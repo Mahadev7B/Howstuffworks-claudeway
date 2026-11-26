@@ -801,7 +801,7 @@ def _mask_email(email: str) -> str:
 
 
 def _device_refusal(email: str | None) -> tuple[str, str, int] | None:
-    if email is None or not _device_lock_on():
+    if email is None or not _device_lock_on() or askers.is_unlimited(email):
         return None
     linked = _device_email()
     if linked and linked != email:

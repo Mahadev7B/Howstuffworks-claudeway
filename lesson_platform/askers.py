@@ -9,6 +9,7 @@
 Without a database (local previews and tests) everything lives in memory.
 """
 import logging
+import os
 import re
 import threading
 import time
@@ -47,6 +48,41 @@ def normalize_email(raw: str | None) -> str | None:
     return email
 
 
+# Temporary owner-testing allowlist. Remove this (and its device-lock check) after today's tests.
+# UNLIMITED_EMAILS replaces the default when set: comma-separated, same shape as ADMIN_EXCLUDE_CITIES.
+_DEFAULT_UNLIMITED_EMAILS = "asklilowl@gmail.com"
+
+
+def unlimited_emails() -> frozenset[str]:
+    raw = os.getenv("UNLIMITED_EMAILS", _DEFAULT_UNLIMITED_EMAILS)
+    return frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
+
+
+def is_unlimited(email: str | None) -> bool:
+    normalized = normalize_email(email)
+    return normalized is not None and normalized in unlimited_emails()
+
+
+def _unlimited_allowance() -> dict:
+    """Same access as an active subscription, without writing a Stripe subscription."""
+    return {
+        "used": 0,
+        "free_left": None,
+        "free_limit": FREE_QUESTIONS,
+        "subscribed": True,
+        "repeat": False,
+        "trial": "none",
+        "trial_ends": None,
+        "new_today": 0,
+        "new_left_today": None,
+        "next_slot_hours": None,
+        "reason": "subscribed",
+        "waitlist_choice": None,
+        "more_requested": False,
+        "allowed": True,
+    }
+
+
 def _trial_state(started: datetime | None, now: datetime) -> tuple[str, datetime | None]:
     if started is None:
         return "none", None
@@ -60,6 +96,8 @@ def allowance(email: str, question: str, is_saved=None) -> dict:
     `is_saved` is an optional callable that says whether a saved lesson already
     exists for the question; it's only consulted when the daily limit is reached.
     """
+    if is_unlimited(email):
+        return _unlimited_allowance()
     qhash = db.question_hash(question)
     now = datetime.now(timezone.utc)
     window_start = now - timedelta(seconds=WINDOW_S)
