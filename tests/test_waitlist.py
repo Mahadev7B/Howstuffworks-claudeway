@@ -51,6 +51,12 @@ def test_three_free_lessons_then_the_waitlist_question(site):
     assert "free month" not in body["error"]
 
 
+def test_a_saved_lesson_uses_one_free_question_the_first_time(site):
+    reply = ask(site, "Already asked by someone?")
+    assert reply.status_code == 200
+    assert reply.get_json()["free_left"] == 2
+
+
 def test_saved_copies_and_repeats_stay_free_after_three(site):
     for n in range(3):
         ask(site, f"Lesson {n}?")

@@ -1,11 +1,11 @@
-"""HowStuffWorks - Claudeway
+"""Ask Lil Owl.
 
-A Flask app that turns any 'How does X work?' question into a kid-friendly
-4-slide illustrated lesson with voiceover.
+A Flask app that turns a child's question into a short illustrated lesson
+with narration. Published lessons live at /explore. Parents ask new questions
+from the homepage.
 
-Powered by Claude (single API call per lesson).
-Images: Claude-generated SVG (free).
-Voiceover: browser Web Speech API (free).
+Lesson text: Anthropic. Pictures: fal.ai Flux, or Matplotlib when Flux is off.
+Voiceover: OpenAI text-to-speech, or the browser's speech synthesis.
 """
 import base64
 import hashlib
@@ -32,6 +32,7 @@ from flask import (
     session,
     url_for,
 )
+from flask.sessions import SecureCookieSessionInterface
 from itsdangerous import BadSignature, URLSafeSerializer
 
 from lesson_platform import (
@@ -81,12 +82,24 @@ register_private_api(app)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
+class _ProxyAwareSessionInterface(SecureCookieSessionInterface):
+    """Mark the admin cookie Secure when Render or Cloudflare says the visit is HTTPS."""
+
+    def get_cookie_secure(self, app):
+        proto = (request.headers.get("X-Forwarded-Proto") or "").split(",")[0].strip().lower()
+        if proto == "https" or request.is_secure:
+            return True
+        return bool(app.config.get("SESSION_COOKIE_SECURE"))
+
+
 settings = load_settings()
 app.secret_key = settings.flask_secret_key
+app.session_interface = _ProxyAwareSessionInterface()
 from datetime import timedelta as _td
 app.permanent_session_lifetime = _td(days=7)
 # HttpOnly and SameSite=Lax are explicit so a cross-site form cannot use the admin cookie.
 # Render sets RENDER=true; the cookie is Secure there and stays usable over http in local tests.
+# A request that is already HTTPS is Secure too, including when the proxy says so.
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
@@ -354,16 +367,20 @@ def _render_with_matplotlib(slide: dict) -> bool:
     return True
 
 
-def _attach_slide_images(lesson: dict, ctx: dict | None = None) -> None:
+def _attach_slide_images(lesson: dict, ctx: dict | None = None, *, allow_paid: bool = True) -> None:
     """Attach an `image_data_url` to each slide.
 
     Provider chosen by settings.image_provider. Falls back to matplotlib if
     Flux is unavailable or fails for a given slide. Mutates lesson in place.
     Flux slides are rendered in parallel for speed.
+
+    `allow_paid` is False on pages that only open a saved lesson. Those use the
+    free matplotlib fallback. Paid Flux runs when a parent asks, or when an
+    admin redraws from the missing-pictures page.
     """
     if ctx is None:
         ctx = {"city": None, "region": None, "country": None, "user_agent": None}
-    use_flux = settings.image_provider == "flux" and bool(settings.fal_api_key)
+    use_flux = allow_paid and settings.image_provider == "flux" and bool(settings.fal_api_key)
     subject = lesson.get("subject", "")
     is_math = bool((lesson.get("meta") or {}).get("math")) or is_math_question(f"{lesson.get('title', '')} {subject}")
     for s in lesson.get("slides", []):
@@ -530,6 +547,26 @@ def _keep_redrawn_pictures(question: str, lesson: dict, had_images: bool) -> Non
         logger.info("Saved redrawn pictures for an older lesson: %s", question[:80])
 
 
+def _fill_missing_slide_pictures(question: str, lesson: dict, ctx: dict) -> None:
+    """Draw only slides that have no picture, then store any that succeeded.
+
+    The saved row is also what a share link reads, so the next open of either
+    page does not pay for those pictures again. A slide that still has no
+    picture after this keeps the placeholder.
+    """
+    slides = [s for s in (lesson.get("slides") or []) if isinstance(s, dict)]
+    if not slides or all(s.get("image_data_url") for s in slides):
+        _recent_put(question, lesson)
+        return
+    before = sum(1 for s in slides if s.get("image_data_url"))
+    _attach_slide_images(lesson, ctx, allow_paid=False)
+    after = sum(1 for s in slides if s.get("image_data_url"))
+    if db_enabled and after > before:
+        save_cached_lesson(question, lesson)
+        logger.info("Saved redrawn pictures for %s", question[:80])
+    _recent_put(question, lesson)
+
+
 def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None, str | None]:
     """Serve from cache if possible; otherwise generate, record, and cache."""
     recent = _recent_get(question)
@@ -544,8 +581,10 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
         # Were images already baked into the cached lesson row?
         slides_before = cached.get("slides", [])
         had_images = bool(slides_before) and all(s.get("image_data_url") for s in slides_before)
-        # Cache may or may not have rendered images embedded; ensure they exist.
-        _attach_slide_images(cached, ctx)
+        # A saved lesson can still be missing pictures. Do not pay for Flux once
+        # the daily budget is used up; the free chart is enough.
+        over_budget = today_spend_usd() >= settings.daily_budget_usd
+        _attach_slide_images(cached, ctx, allow_paid=not over_budget)
         _keep_redrawn_pictures(question, cached, had_images)
         # If every slide is still missing an image the cached spec is broken — bust it.
         slides = cached.get("slides", [])
@@ -587,7 +626,7 @@ def _track_lesson(endpoint: str, question: str, ctx: dict) -> tuple[dict | None,
             error=str(exc),
             **ctx,
         )
-        return None, str(exc)
+        return None, "We couldn't make that lesson just now. Please try again."
 
     meta = data.get("meta", {})
     cost = meta.get("estimated_cost_usd", 0.0)
@@ -686,12 +725,29 @@ def explore():
                            featured=featured, spotlight=spotlight)
 
 
+def _point_slides_at_image_urls(lesson: dict, slug: str) -> None:
+    """Swap inlined slide pictures for cacheable URLs before the page is rendered.
+
+    The bytes stay in the published lesson. The version query changes when the
+    picture changes, so a long cache lifetime doesn't keep a replaced illustration.
+    """
+    for index, slide in enumerate(lesson.get("slides") or []):
+        data_url = slide.get("image_data_url")
+        if not isinstance(data_url, str) or not data_url.startswith("data:"):
+            continue
+        version = hashlib.sha256(data_url.encode("utf-8")).hexdigest()[:12]
+        slide["image_src"] = url_for("explore_slide_image", slug=slug, index=index, v=version)
+        slide.pop("image_data_url", None)
+
+
 @app.get("/explore/<slug>")
 def explore_lesson(slug: str):
     publication = library.get_published_lesson(slug)
     if publication is None:
         abort(404)
-    return render_template("share.html", lesson=library.with_publication_scripts(publication["lesson"]),
+    lesson = library.with_publication_scripts(publication["lesson"])
+    _point_slides_at_image_urls(lesson, slug)
+    return render_template("share.html", lesson=lesson,
                            question=publication["summary"], slug=slug,
                            published=True, publication=publication,
                            cube_animation_data=private_cube_animation(slug, publication["lesson"]),
@@ -705,6 +761,20 @@ def explore_thumbnail(slug: str):
         abort(404)
     return Response(result[0], mimetype=result[1],
                     headers={"Cache-Control": "no-store"})
+
+
+@app.get("/explore/<slug>/slide/<int:index>")
+def explore_slide_image(slug: str, index: int):
+    """Serve one published slide illustration instead of embedding it in the HTML."""
+    result = library.get_published_slide_image(slug, index)
+    if result is None:
+        abort(404)
+    body, mime = result
+    etag = '"' + hashlib.sha256(body).hexdigest()[:16] + '"'
+    headers = {"Cache-Control": "public, max-age=604800", "ETag": etag}
+    if request.if_none_match.contains(etag.strip('"')):
+        return Response(status=304, headers=headers)
+    return Response(body, mimetype=mime, headers=headers)
 
 
 @app.get("/explore/<slug>/audio/<int:slide_index>.mp3")
@@ -723,7 +793,8 @@ def sitemap():
         cards = library.list_published_cards()
     except RuntimeError:
         cards = []
-    urls = ["https://www.asklilowl.com/", "https://www.asklilowl.com/explore", "https://www.asklilowl.com/privacy"]
+    urls = ["https://www.asklilowl.com/", "https://www.asklilowl.com/explore",
+            "https://www.asklilowl.com/privacy", "https://www.asklilowl.com/terms"]
     urls.extend("https://www.asklilowl.com/explore/" + card["slug"] for card in cards)
     body = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
     body += "".join("<url><loc>" + escape(url) + "</loc></url>" for url in urls) + "</urlset>"
@@ -736,6 +807,12 @@ def privacy():
                            free_questions=askers.FREE_QUESTIONS)
 
 
+@app.get("/terms")
+def terms():
+    return render_template("terms.html", contact_email=PRIVACY_CONTACT_EMAIL, updated=TERMS_UPDATED,
+                           free_questions=askers.FREE_QUESTIONS)
+
+
 @app.get("/robots.txt")
 def robots():
     return Response("User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /debug\n"
@@ -745,6 +822,7 @@ def robots():
 
 PRIVACY_CONTACT_EMAIL = "Asklilowl@gmail.com"
 PRIVACY_UPDATED = "November 12, 2026"
+TERMS_UPDATED = "November 25, 2026"
 app.jinja_env.globals["privacy_contact_email"] = PRIVACY_CONTACT_EMAIL
 app.jinja_env.globals["billing_portal_url"] = billing.portal_url
 
@@ -753,7 +831,7 @@ DEVICE_EMAIL_MESSAGE = ("This device is already set up for another grown-up's em
                         "Please use that email to keep asking questions here.")
 DEVICE_COOKIE = "lilowl_device"
 DEVICE_COOKIE_MAX_AGE_S = 400 * 24 * 3600
-CONSENT_REQUIRED_MESSAGE = "A parent or guardian needs to agree to the privacy policy first."
+CONSENT_REQUIRED_MESSAGE = "A parent or guardian needs to agree to the privacy policy and terms first."
 VERIFY_REQUIRED_MESSAGE = "Please confirm the grown-up's email with the code we send to it."
 TRIAL_AVAILABLE_MESSAGE = (
     "You've used your {free} free questions. Start a free month: up to {daily} new questions every 24 hours "
@@ -857,10 +935,15 @@ def _asker_gate(raw_email: str | None, question: str, consent=None, token=None) 
     if refusal is not None:
         return email, None, refusal
     try:
-        allowance = askers.allowance(email, question, is_saved=lambda: _question_is_saved(question),
-                                     ip_hash=_lesson_ip_hash())
+        # Reserve the slot before any slow work so a second request sees it.
+        # The reservation counts against this network, not only this email.
+        network = _lesson_ip_hash()
+        allowance, reserved = askers.claim_question(
+            email, question, is_saved=lambda: _question_is_saved(question), ip_hash=network)
     except askers.AskerUnavailable:
         return email, None, ("asker_unavailable", ASKER_UNAVAILABLE_MESSAGE, 503)
+    stored_ip = None if allowance.get("subscribed") else network
+    g.asker_claim = (email, question, stored_ip) if reserved else None
     reason = allowance["reason"]
     if reason == "waitlist":
         return email, allowance, ("waitlist", WAITLIST_MESSAGE.format(free=allowance["free_limit"]), 402)
@@ -877,36 +960,45 @@ def _asker_gate(raw_email: str | None, question: str, consent=None, token=None) 
     return email, allowance, None
 
 
+def _release_asker_claim() -> None:
+    claim = getattr(g, "asker_claim", None)
+    if not claim:
+        return
+    g.asker_claim = None
+    try:
+        askers.release_question(*claim)
+    except Exception:
+        logger.exception("Could not release a reserved question")
+
+
+def _finish_asker_claim(generated: bool) -> None:
+    claim = getattr(g, "asker_claim", None)
+    if not claim:
+        return
+    g.asker_claim = None
+    askers.finish_question(*claim, generated)
+
+
 def _question_is_saved(question: str) -> bool:
     """A saved lesson already exists, so answering costs nothing new."""
     return _recent_get(question) is not None or (db_enabled and cached_lesson_exists(question))
 
 
 def _lookup_only(question: str, ctx: dict) -> dict | None:
-    """Return a cached lesson without ever calling Claude/Flux.
+    """Return a cached lesson. Missing slide pictures are drawn and saved.
 
-    Checks the in-memory recent cache and the persisted DB cache. Returns
-    None if neither has the lesson — caller should redirect rather than
-    regenerate.
+    Checks the in-memory recent cache and the persisted DB cache. Does not
+    write a new lesson. Slides that already have a picture are left alone.
     """
     recent = _recent_get(question)
     if recent is not None:
+        _fill_missing_slide_pictures(question, recent, ctx)
         return recent
     cached = get_cached_lesson(question, settings.lesson_cache_ttl_days) if db_enabled else None
     if cached is None:
         return None
     cached.setdefault("meta", {})["from_cache"] = True
-    slides_before = cached.get("slides", [])
-    had_images = bool(slides_before) and all(s.get("image_data_url") for s in slides_before)
-    _attach_slide_images(cached, ctx)
-    _keep_redrawn_pictures(question, cached, had_images)
-    slides = cached.get("slides", [])
-    if slides and not any(s.get("image_data_url") for s in slides):
-        logger.warning("Cached lesson has no renderable images — busting cache: %s", question)
-        delete_cached_lesson(question)
-        return None
-    # Refresh the in-memory cache so a follow-up Back/refresh stays instant
-    _recent_put(question, cached)
+    _fill_missing_slide_pictures(question, cached, ctx)
     return cached
 
 
@@ -930,7 +1022,8 @@ def lesson():
 
     ctx = _client_context()
 
-    # GET = navigation (Back, refresh, share link). NEVER regenerate here.
+    # GET opens a saved lesson. It does not write new lesson text. If a slide
+    # has no picture, only that picture is drawn and saved.
     # If the lesson isn't cached, send the user back to the home screen with
     # the question pre-filled so they have to explicitly click Ask.
     if request.method == "GET":
@@ -949,19 +1042,27 @@ def lesson():
         return render_template("error.html", question=question,
                                error="Please turn on JavaScript so we can confirm the grown-up's email."), 400
     email, allowance, refusal = _asker_gate(request.form.get("email"), question, request.form.get("parent_consent"))
-    if refusal is not None:
-        return render_template("error.html", question=question, error=refusal[1]), refusal[2]
-    data, err = _track_lesson("/lesson", question, ctx)
-    if err is not None:
-        if err == RATE_LIMIT_ERROR:
-            friendly = "Too many questions. Please try again later."
-            return render_template("error.html", question=question, error=friendly), 429
-        return render_template("error.html", question=question, error=err), 500
-    askers.record_question(email, question, generated=bool(getattr(g, "lesson_generated", False)),
-                           ip_hash=None if allowance and allowance.get("subscribed") else _lesson_ip_hash())
-    resp = app.make_response(render_template("lesson.html", question=question, lesson=data))
-    resp.headers["Cache-Control"] = "private, max-age=600"
-    return resp
+    try:
+        if refusal is not None:
+            return render_template("error.html", question=question, error=refusal[1]), refusal[2]
+        data, err = _track_lesson("/lesson", question, ctx)
+        if err is not None:
+            if err == RATE_LIMIT_ERROR:
+                friendly = "Too many questions. Please try again later."
+                return render_template("error.html", question=question, error=friendly), 429
+            return render_template("error.html", question=question, error=err), 500
+        generated = bool(getattr(g, "lesson_generated", False))
+        if getattr(g, "asker_claim", None):
+            _finish_asker_claim(generated)
+        else:
+            askers.record_question(email, question, generated=generated,
+                                   ip_hash=None if allowance.get("subscribed") else _lesson_ip_hash())
+        _link_device(email)
+        resp = app.make_response(render_template("lesson.html", question=question, lesson=data))
+        resp.headers["Cache-Control"] = "private, max-age=600"
+        return resp
+    finally:
+        _release_asker_claim()
 
 
 @app.route("/api/lesson", methods=["POST"])
@@ -982,29 +1083,35 @@ def api_lesson():
 
     email, allowance, refusal = _asker_gate(payload.get("email"), question, payload.get("parent_consent"),
                                             payload.get("email_token"))
-    if refusal is not None:
-        code, message, status = refusal
-        body = {"ok": False, "error": message, "code": code}
-        if allowance is not None:
-            body.update(free_left=allowance["free_left"], free_limit=allowance["free_limit"],
-                        waitlist_choice=allowance.get("waitlist_choice"),
-                        more_requested=allowance.get("more_requested", False),
-                        subscribe_available=billing.enabled() and code == "subscription_required")
-        return jsonify(body), status
-
-    ctx = _client_context()
-    data, err = _track_lesson("/api/lesson", question, ctx)
-    if err is not None:
-        if err == RATE_LIMIT_ERROR:
-            return jsonify({
-                "ok": False,
-                "error": "rate_limit",
-                "message": "Too many questions. Please try again later.",
-            }), 429
-        return jsonify({"ok": False, "error": err}), 500
-    generated = bool(getattr(g, "lesson_generated", False))
-    askers.record_question(email, question, generated=generated,
-                           ip_hash=None if allowance.get("subscribed") else _lesson_ip_hash())
+    try:
+        if refusal is not None:
+            code, message, status = refusal
+            body = {"ok": False, "error": message, "code": code}
+            if allowance is not None:
+                body.update(free_left=allowance["free_left"], free_limit=allowance["free_limit"],
+                            waitlist_choice=allowance.get("waitlist_choice"),
+                            more_requested=allowance.get("more_requested", False),
+                            subscribe_available=billing.enabled() and code == "subscription_required")
+            return jsonify(body), status
+        ctx = _client_context()
+        data, err = _track_lesson("/api/lesson", question, ctx)
+        if err is not None:
+            if err == RATE_LIMIT_ERROR:
+                return jsonify({
+                    "ok": False,
+                    "error": "rate_limit",
+                    "message": "Too many questions. Please try again later.",
+                }), 429
+            return jsonify({"ok": False, "error": err}), 500
+        generated = bool(getattr(g, "lesson_generated", False))
+        if getattr(g, "asker_claim", None):
+            _finish_asker_claim(generated)
+        else:
+            askers.record_question(email, question, generated=generated,
+                                   ip_hash=None if allowance.get("subscribed") else _lesson_ip_hash())
+        _link_device(email)
+    finally:
+        _release_asker_claim()
     reply = {"ok": True, "lesson": data, "subscribed": allowance["subscribed"], "free_left": None, "new_left_today": None,
              "free_limit": allowance["free_limit"], "waitlist_choice": allowance.get("waitlist_choice")}
     if allowance["subscribed"]:
@@ -1244,14 +1351,12 @@ def share_lesson(slug: str):
     if lesson_data is None:
         return render_template("error.html", question="", error="This share link has expired or doesn't exist."), 404
     question = lesson_data.pop("_share_question", "")
-    # Check in-memory cache first — images already attached, no Flux call needed
     cached = _recent_get(question)
     if cached is not None:
         lesson_data = cached
-    else:
-        ctx = _client_context()
-        _attach_slide_images(lesson_data, ctx)
-        _recent_put(question, lesson_data)
+    # Same fill as a saved lesson page: only missing pictures, then stored on
+    # this lesson's row so the share link and the question page stay in step.
+    _fill_missing_slide_pictures(question, lesson_data, _client_context())
     return render_template("share.html", question=question, lesson=lesson_data, slug=slug)
 
 
@@ -1596,9 +1701,9 @@ def admin_cached_lessons():
         return jsonify({"ok": False, "error": "forbidden"}), 403
     if not db_enabled:
         return jsonify({"ok": False, "error": "DB not enabled"}), 503
-    from lesson_platform.db import _pool, _POOL_TIMEOUT_S, ADMIN_TZ
+    from lesson_platform.db import _pool, _ADMIN_POOL_TIMEOUT_S, ADMIN_TZ
     try:
-        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        with _pool.connection(timeout=_ADMIN_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute(f"""
                 SELECT question,
                        hit_count,
@@ -1905,6 +2010,106 @@ def admin_logout():
     return redirect(url_for("admin_login"))
 
 
+_SHARE_SLUG = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _memory_lessons_missing_pictures() -> list[dict]:
+    """Lessons held in this process, without copying their picture data."""
+    from datetime import datetime, timezone
+    try:
+        from zoneinfo import ZoneInfo
+        zone = ZoneInfo(os.environ.get("ADMIN_TZ", "America/New_York"))
+    except Exception:
+        zone = timezone.utc
+    rows = []
+    for question, (stored_at, lesson) in list(_RECENT_LESSONS.items()):
+        if not isinstance(lesson, dict):
+            continue
+        slides = lesson.get("slides")
+        if not isinstance(slides, list) or not slides:
+            continue
+        missing = 0
+        for slide in slides:
+            picture = slide.get("image_data_url") if isinstance(slide, dict) else None
+            if not isinstance(picture, str) or not picture:
+                missing += 1
+        if not missing:
+            continue
+        created = datetime.fromtimestamp(stored_at, zone).strftime("%Y-%m-%d %H:%M")
+        title = lesson.get("title") if isinstance(lesson.get("title"), str) else ""
+        rows.append({
+            "question": question,
+            "title": title,
+            "share_slug": "",
+            "created": created,
+            "slide_count": len(slides),
+            "missing": missing,
+            "_stored_at": stored_at,
+        })
+    rows.sort(key=lambda row: row["_stored_at"], reverse=True)
+    for row in rows:
+        row.pop("_stored_at", None)
+    return rows
+
+
+def _with_share_links(rows: list[dict]) -> list[dict]:
+    for row in rows:
+        slug = row.get("share_slug") or ""
+        row["share_path"] = url_for("share_lesson", slug=slug) if _SHARE_SLUG.fullmatch(slug) else ""
+    return rows
+
+
+@app.get("/admin/missing-pictures")
+def admin_missing_pictures():
+    """Read-only list of saved lessons that are missing one or more pictures."""
+    if not _admin_authed():
+        return redirect(url_for("admin_login"))
+    from lesson_platform.db import _pool, list_cached_lessons_missing_pictures
+    error = None
+    if _pool is not None:
+        source = "database"
+        try:
+            rows = list_cached_lessons_missing_pictures()
+        except Exception:
+            logger.exception("Could not list lessons missing pictures")
+            rows = []
+            error = "The database list could not be read."
+    else:
+        source = "memory"
+        rows = _memory_lessons_missing_pictures()
+    return render_template(
+        "admin_missing_pictures.html",
+        rows=_with_share_links(rows),
+        total=len(rows),
+        source=source,
+        error=error,
+        csrf_token=_library_csrf_token(),
+    )
+
+
+@app.post("/admin/missing-pictures")
+def admin_redraw_missing_pictures():
+    """Draw missing pictures for one saved lesson. Admin session, CSRF, and the daily budget."""
+    if not _library_write_allowed():
+        abort(403)
+    if today_spend_usd() >= settings.daily_budget_usd:
+        return render_template("error.html", question="",
+                               error="The daily picture budget is used up, so no pictures were drawn."), 503
+    question = (request.form.get("question") or "").strip()
+    if not question:
+        abort(400)
+    lesson = _recent_get(question)
+    if lesson is None and db_enabled:
+        lesson = get_cached_lesson(question, settings.lesson_cache_ttl_days)
+    if not isinstance(lesson, dict):
+        abort(404)
+    _attach_slide_images(lesson, _client_context(), allow_paid=True)
+    if db_enabled:
+        save_cached_lesson(question, lesson)
+    _recent_put(question, lesson)
+    return redirect(url_for("admin_missing_pictures"))
+
+
 @app.route("/admin", methods=["GET"])
 def admin_dashboard():
     if not _admin_authed():
@@ -1997,6 +2202,30 @@ def favicon():
     return send_from_directory(app.static_folder, "favicon.svg", mimetype="image/svg+xml")
 
 
+def _prefers_json_error() -> bool:
+    if request.path.startswith("/api/"):
+        return True
+    accepts = request.accept_mimetypes
+    json_q = accepts["application/json"]
+    html_q = accepts["text/html"]
+    return json_q > 0 and json_q > html_q
+
+
+@app.errorhandler(404)
+def page_not_found(_err):
+    if _prefers_json_error():
+        return jsonify({"ok": False, "error": "Not found"}), 404
+    return render_template("error.html", question="", error="That page is not here."), 404
+
+
+@app.errorhandler(500)
+def server_error(_err):
+    if _prefers_json_error():
+        return jsonify({"ok": False, "error": "Something went wrong"}), 500
+    return render_template("error.html", question="",
+                           error="Something went wrong on our side. Please try again."), 500
+
+
 @app.route("/healthz")
 def healthz():
     """Host health check. Render uses this path and only needs HTTP 200."""
@@ -2022,7 +2251,7 @@ def debug_status():
     if not _operator_status_allowed():
         return jsonify({"ok": False, "error": "forbidden"}), 403
     import sys
-    return jsonify({
+    response = jsonify({
         "ok": True,
         "uptime_seconds": int(time.time() - _STARTED_AT),
         "git_commit": os.environ.get("RENDER_GIT_COMMIT", "unknown")[:8],
@@ -2045,6 +2274,8 @@ def debug_status():
             "daily_budget_usd": settings.daily_budget_usd,
         },
     })
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 if __name__ == "__main__":

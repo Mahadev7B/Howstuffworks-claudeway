@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ lesson.title }} — Ask Lil Owl</title>
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='brand/apple-touch-icon.png') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
@@ -154,7 +155,7 @@
     </section>
 
     <footer class="lesson-footer">
-      <p>Powered by AI ✨ Made with curiosity for curious minds 🦉 · <a href="/privacy">Privacy policy</a></p>
+      <p>Powered by AI ✨ Made with curiosity for curious minds 🦉 · <a href="/privacy">Privacy policy</a> · <a href="{{ url_for('terms') }}">Terms</a></p>
     </footer>
   </main>
 

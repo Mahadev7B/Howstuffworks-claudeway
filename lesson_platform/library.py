@@ -329,6 +329,38 @@ def get_published_thumbnail(slug: str) -> tuple[bytes, str] | None:
         return (bytes(row[0]), row[1]) if row else None
 
 
+def slide_image_bytes(data_url: str) -> tuple[bytes, str] | None:
+    """Decode one stored slide illustration. Returns None for anything unexpected."""
+    if not isinstance(data_url, str) or not data_url.startswith("data:"):
+        return None
+    header, separator, payload = data_url.partition(",")
+    mime = header[5:].split(";", 1)[0].lower()
+    if not separator or mime not in _RASTER_MIMES or not header.endswith(";base64"):
+        return None
+    if len(payload) > ((_MAX_IMAGE_BYTES + 2) // 3) * 4 + 8:
+        return None
+    try:
+        raw = base64.b64decode(payload, validate=True)
+    except (ValueError, binascii.Error):
+        return None
+    if not raw or len(raw) > _MAX_IMAGE_BYTES:
+        return None
+    return raw, mime
+
+
+def get_published_slide_image(slug: str, index: int) -> tuple[bytes, str] | None:
+    """One active lesson's slide art. Drafts are not served."""
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        return None
+    publication = get_published_lesson(slug)
+    if publication is None:
+        return None
+    slides = (publication.get("lesson") or {}).get("slides") or []
+    if index >= len(slides) or not isinstance(slides[index], dict):
+        return None
+    return slide_image_bytes(slides[index].get("image_data_url"))
+
+
 def get_published_audio(slug: str, slide_index: int) -> bytes | None:
     with _connect() as conn, conn.cursor() as cur:
         cur.execute(

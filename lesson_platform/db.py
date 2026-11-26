@@ -251,6 +251,7 @@ CREATE TABLE IF NOT EXISTS asker_questions (
 );
 ALTER TABLE asker_questions ADD COLUMN IF NOT EXISTS ip_hash TEXT;
 CREATE INDEX IF NOT EXISTS asker_questions_ip_hash_idx ON asker_questions (ip_hash);
+ALTER TABLE asker_questions ADD COLUMN IF NOT EXISTS settled BOOLEAN NOT NULL DEFAULT TRUE;
 """
 
 
@@ -259,10 +260,15 @@ def _check_connection(conn) -> None:
     conn.execute("SELECT 1")
 
 
-def init_db() -> bool:
-    """Create the pool and ensure schema exists. Returns True if DB is available."""
+def init_db(dsn: str | None = None) -> bool:
+    """Create the pool and ensure schema exists. Returns True if DB is available.
+
+    Pass `dsn` to use a specific database. Tests that wipe data pass the guarded
+    test URL. With no argument this reads DATABASE_URL, which is the app database.
+    """
     global _pool
-    dsn = os.getenv("DATABASE_URL")
+    if dsn is None:
+        dsn = os.getenv("DATABASE_URL")
     if not dsn:
         logger.warning("DATABASE_URL not set — DB storage disabled")
         return False
@@ -830,6 +836,58 @@ def ip_calls_last_hour(ip: str | None, endpoints: tuple[str, ...]) -> int:
             conn.close()
         except Exception:
             pass
+
+
+# Counts slides whose picture is missing without sending the picture bytes to Python.
+# A present picture is a non-empty JSON string. Comparing jsonb avoids turning the
+# base64 into text just to see whether it is empty.
+_MISSING_PICTURES_SQL = """
+SELECT c.question,
+       COALESCE(c.lesson->>'title', '') AS title,
+       c.share_slug,
+       to_char(c.created_at AT TIME ZONE %s, 'YYYY-MM-DD HH24:MI') AS created,
+       counts.slide_count,
+       counts.missing
+FROM cached_lessons AS c
+CROSS JOIN LATERAL (
+    SELECT COUNT(*)::int AS slide_count,
+           COUNT(*) FILTER (
+               WHERE NOT COALESCE(
+                   jsonb_typeof(slide->'image_data_url') = 'string'
+                   AND slide->'image_data_url' <> '""'::jsonb,
+                   false)
+           )::int AS missing
+    FROM jsonb_array_elements(
+        CASE WHEN jsonb_typeof(c.lesson->'slides') = 'array'
+             THEN c.lesson->'slides' ELSE '[]'::jsonb END
+    ) AS slide
+) AS counts
+WHERE counts.missing > 0
+ORDER BY c.created_at DESC
+"""
+
+
+def list_cached_lessons_missing_pictures() -> list[dict[str, Any]]:
+    """Saved parent-asked lessons that are missing at least one slide picture.
+
+    The rows are question, title, share slug, created time, slide count, and
+    how many slides have no picture. The picture data itself is not returned.
+    """
+    if _pool is None:
+        return []
+    with _pool.connection(timeout=_ADMIN_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        cur.execute(_MISSING_PICTURES_SQL, (ADMIN_TZ,))
+        return [
+            {
+                "question": row[0],
+                "title": row[1] or "",
+                "share_slug": row[2] or "",
+                "created": row[3] or "",
+                "slide_count": int(row[4] or 0),
+                "missing": int(row[5] or 0),
+            }
+            for row in cur.fetchall()
+        ]
 
 
 # ---------------------------------------------------------------------------
