@@ -4,7 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ publication.title if published else lesson.title }} — Ask Lil Owl</title>
-  {% set share_description = publication.summary if published else question %}
+  {% if published and publication.summary %}
+    {% set share_description = publication.summary %}
+  {% elif lesson.summary is defined and lesson.summary %}
+    {% set share_description = lesson.summary %}
+  {% else %}
+    {% set share_description = brand_description %}
+  {% endif %}
   {% set share_title = publication.title if published else lesson.title %}
   <meta name="description" content="{{ share_description }}">
   <meta property="og:title" content="{{ share_title }}">

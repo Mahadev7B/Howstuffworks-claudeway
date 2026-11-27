@@ -265,6 +265,113 @@ def test_thumbnail_is_cacheable_and_share_without_one_uses_the_brand_image(site)
     assert "evil.example" not in html
 
 
+def test_share_meta_omits_the_asker_question(site):
+    app_module, _client = site
+    question = "zigzag-platypus-question-9f3c"
+    summary = "Clouds get heavy and water falls."
+
+    def render(lesson):
+        with app_module.app.test_request_context("/s/shared-lesson"):
+            from flask import render_template
+            return render_template(
+                "share.html", question=question, slug="shared-lesson", lesson=lesson,
+            )
+
+    bare = render({"title": "Rain", "slides": [{
+        "title": "Clouds", "narration": "Water falls.",
+        "explanation": "Clouds get heavy.", "fun_fact": "Rain is fresh.",
+    }]})
+    metas = re.findall(r"<meta\b[^>]*>", bare, flags=re.I)
+    assert metas
+    preview = unescape("\n".join(metas))
+    assert question not in preview
+    assert HOME_DESCRIPTION in preview
+
+    described = render({"title": "Rain", "summary": summary, "slides": [{
+        "title": "Clouds", "narration": "Water falls.",
+        "explanation": "Clouds get heavy.", "fun_fact": "Rain is fresh.",
+    }]})
+    described_meta = unescape("\n".join(re.findall(r"<meta\b[^>]*>", described, flags=re.I)))
+    assert question not in described_meta
+    assert summary in described_meta
+    assert HOME_DESCRIPTION not in described_meta
+
+
+def test_failing_placeholder_seed_leaves_the_pool_up(monkeypatch, caplog):
+    import logging
+
+    import lesson_platform.db as db
+
+    class FakeConn:
+        def __init__(self):
+            self.in_transaction = False
+            self.statements = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def transaction(self):
+            conn = self
+
+            class Tx:
+                def __enter__(self_tx):
+                    conn.in_transaction = True
+                    return conn
+
+                def __exit__(self_tx, *args):
+                    conn.in_transaction = False
+                    return False
+
+            return Tx()
+
+        def cursor(self):
+            conn = self
+
+            class Cur:
+                def execute(self, sql, params=None):
+                    conn.statements.append((sql, conn.in_transaction))
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    return False
+
+            return Cur()
+
+    class FakePool:
+        def __init__(self, *args, **kwargs):
+            self.conn = FakeConn()
+
+        def connection(self, timeout=None):
+            return self.conn
+
+    previous = db._pool
+    monkeypatch.setattr(db, "ConnectionPool", FakePool)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://127.0.0.1:9/lilowl_seed_test")
+
+    def boom(_cur):
+        raise RuntimeError("seed blew up with secret details")
+
+    monkeypatch.setattr("lesson_platform.site_copy.apply_placeholder_summaries", boom)
+    try:
+        db._pool = None
+        with caplog.at_level(logging.ERROR, logger="lesson_platform.db"):
+            assert db.init_db() is True
+        assert db._pool is not None
+        assert db.enabled() is True
+        statements = db._pool.conn.statements
+        assert any(sql == "SET LOCAL statement_timeout = '5s'" and inside for sql, inside in statements)
+        assert any(sql == "SET LOCAL lock_timeout = '2s'" and inside for sql, inside in statements)
+        assert "RuntimeError" in caplog.text
+        assert "secret details" not in caplog.text
+    finally:
+        db._pool = previous
+
+
 def test_share_text_does_not_use_the_asker_question():
     import app as app_module
     title, description = app_module._lesson_share_text({
@@ -320,21 +427,21 @@ def test_sitemap_lists_public_pages_and_active_lessons_with_lastmod(site, monkey
     assert locs == [
         "https://www.asklilowl.com/",
         "https://www.asklilowl.com/explore",
-        "https://www.asklilowl.com/lesson",
         "https://www.asklilowl.com/privacy",
         "https://www.asklilowl.com/explore/what-is-a-dosa",
         "https://www.asklilowl.com/explore/why-do-flowers-exist",
     ]
+    assert "https://www.asklilowl.com/lesson" not in body
     assert lastmods[0] == app_module.deploy_lastmod()
-    assert lastmods[3] == "2026-11-26"
-    assert lastmods[4] == "2026-11-20T15:04:05Z"
-    assert lastmods[5] == app_module.deploy_lastmod()
+    assert lastmods[2] == "2026-11-26"
+    assert lastmods[3] == "2026-11-20T15:04:05Z"
+    assert lastmods[4] == app_module.deploy_lastmod()
     assert all(W3C_DATE.fullmatch(value) for value in lastmods)
     assert len(locs) == len(lastmods)
     joined = " ".join(locs)
-    for blocked in ("/admin", "/api/", "/login", "/logout", "/debug", "evil.example", "hidden"):
+    for blocked in ("/admin", "/api/", "/login", "/logout", "/debug", "/lesson", "evil.example", "hidden"):
         assert blocked not in joined
-    assert app_module.public_sitemap_paths() == ["/", "/explore", "/lesson", "/privacy"]
+    assert app_module.public_sitemap_paths() == ["/", "/explore", "/privacy"]
 
 
 def test_gate_still_blocks_the_new_pages_and_the_exempt_list_is_unchanged(site, monkeypatch):

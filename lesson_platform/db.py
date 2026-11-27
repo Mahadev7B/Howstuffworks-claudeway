@@ -291,19 +291,36 @@ def init_db() -> bool:
         )
         with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute(SCHEMA)
-            # Descriptions for 13 library lessons live in summary. This rewrites
-            # only that column, only those slugs, and only while the placeholder
-            # is still there. A second boot or a hand-edited summary is left alone.
-            from lesson_platform.site_copy import apply_placeholder_summaries
-            updated = apply_placeholder_summaries(cur)
-            if updated:
-                logger.info("Updated %s placeholder lesson descriptions", updated)
         logger.info("DB ready (feedback + api_calls)")
-        return True
     except Exception:
         logger.exception("DB init failed")
         _pool = None
         return False
+    _refresh_placeholder_summaries()
+    return True
+
+
+def _refresh_placeholder_summaries() -> None:
+    """Replace leftover placeholder summaries. A failure leaves the pool up.
+
+    Runs in its own transaction so a lock or a timeout cannot roll back schema
+    init or mark the worker's database as unavailable. The log line is only
+    the exception type.
+    """
+    try:
+        from lesson_platform.site_copy import apply_placeholder_summaries
+        with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '5s'")
+                cur.execute("SET LOCAL lock_timeout = '2s'")
+                updated = apply_placeholder_summaries(cur)
+        if updated:
+            logger.info("Updated %s placeholder lesson descriptions", updated)
+    except Exception as exc:
+        logger.error(
+            "Placeholder lesson descriptions were not updated: %s",
+            type(exc).__name__,
+        )
 
 
 def enabled() -> bool:

@@ -238,6 +238,7 @@ def inject_public_site():
         "home_title": HOME_TITLE,
         "home_description": HOME_DESCRIPTION,
         "home_h1": HOME_H1,
+        "brand_description": HOME_DESCRIPTION,
         "brand_image_url": base + BRAND_IMAGE_PATH,
     }
 
@@ -1165,6 +1166,8 @@ def explore_audio(slug: str, slide_index: int):
 
 _SITEMAP_SKIP = frozenset({
     "/login", "/logout", "/healthz", "/favicon.ico", "/robots.txt", "/sitemap.xml",
+    # No question redirects home. ?q= is a private custom lesson, not a public page.
+    "/lesson",
 })
 _SITEMAP_SKIP_PREFIXES = ("/admin", "/api", "/debug", "/stripe")
 _SITEMAP_SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -1174,8 +1177,9 @@ def public_sitemap_paths() -> list[str]:
     """Public content pages: GET routes that are not admin, API, login, or logout.
 
     Health checks, robots, the favicon, and this sitemap are not documents.
-    Parameterized routes are omitted here; active library lessons are added
-    from the catalog.
+    /lesson is skipped: with no question it redirects home, and with ?q= it is
+    a private custom lesson. Parameterized routes are omitted here; active
+    library lessons are added from the catalog.
     """
     found = []
     for rule in app.url_map.iter_rules():
