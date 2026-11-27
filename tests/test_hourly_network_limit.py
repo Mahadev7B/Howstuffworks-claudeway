@@ -28,9 +28,10 @@ def _store(monkeypatch):
                     and row["endpoint"] in endpoints and row["age_h"] < 1
                 )
             elif self.sql.startswith("UPDATE"):
+                table = "api_calls" if "UPDATE api_calls" in self.sql else "asker_questions"
                 hours = params[0]
                 for row in rows:
-                    if row["ip_hash"] and row["age_h"] > hours:
+                    if row.get("table", "api_calls") == table and row["ip_hash"] and row["age_h"] > hours:
                         row["ip_hash"] = None
 
         def fetchone(self):
@@ -111,6 +112,32 @@ def test_recent_codes_still_count_after_a_purge(monkeypatch):
     assert rows[2]["ip_hash"] is None
     db._IP_RATE_CACHE.clear()
     assert db.ip_calls_last_hour(digest, ("/api/lesson",)) == 2
+
+
+def test_purge_nulls_old_api_call_codes_and_the_hourly_limit_still_trips(monkeypatch):
+    rows, statements = _store(monkeypatch)
+    monkeypatch.setenv("FREE_WINDOW_HOURS", "6")
+    digest = askers.ip_hash("203.0.113.11")
+    rows.append({"table": "api_calls", "ip_hash": digest, "endpoint": "/api/lesson", "age_h": 8})
+    for age in (0.2, 0.4, 0.6):
+        rows.append({"table": "api_calls", "ip_hash": digest, "endpoint": "/api/lesson", "age_h": age})
+    rows.append({"table": "asker_questions", "ip_hash": digest, "endpoint": "/api/lesson", "age_h": 9})
+    assert askers.purge_ip_hashes() == "purged"
+    updates = [sql for sql, _params in statements if sql.startswith("UPDATE")]
+    assert updates == [
+        "UPDATE asker_questions SET ip_hash = NULL WHERE ip_hash IS NOT NULL AND created_at < NOW() - (%s * INTERVAL '1 hour')",
+        "UPDATE api_calls SET ip_hash = NULL WHERE ip_hash IS NOT NULL AND created_at < NOW() - (%s * INTERVAL '1 hour')",
+    ]
+    assert rows[0]["ip_hash"] is None and rows[4]["ip_hash"] is None
+    assert [row["ip_hash"] for row in rows[1:4]] == [digest, digest, digest]
+    db._IP_RATE_CACHE.clear()
+    assert db.ip_calls_last_hour(digest, ("/api/lesson",)) == 3
+    monkeypatch.setattr(app_module, "today_spend_usd", lambda: 0.0)
+    monkeypatch.setattr(app_module.settings, "per_ip_hourly_limit", 3)
+    monkeypatch.setattr(app_module.ratelimit, "allow", lambda *args, **kwargs: True)
+    with app_module.app.test_request_context("/", headers={"X-Forwarded-For": "203.0.113.11"}):
+        db._IP_RATE_CACHE.clear()
+        assert app_module._guardrail_check("/api/lesson", {}) == app_module.RATE_LIMIT_ERROR
 
 
 def test_new_api_call_stores_the_network_code_and_not_the_address(monkeypatch):

@@ -141,9 +141,9 @@ def test_changing_free_window_hours_changes_the_cap_and_the_purge(monkeypatch):
     captured.clear()
     assert askers.purge_ip_hashes() == "purged"
     updates = [sql for sql, _params in captured if sql.startswith("UPDATE")]
-    assert len(updates) == 1
-    assert "SET ip_hash = NULL" in updates[0]
-    assert "asker_questions" in updates[0]
+    assert len(updates) == 2
+    assert all("SET ip_hash = NULL" in sql for sql in updates)
+    assert "asker_questions" in updates[0] and "api_calls" in updates[1]
     assert "ip_address" not in updates[0]
     assert "DELETE" not in updates[0]
     assert "pg_advisory_unlock" not in " ".join(sql for sql, _params in captured)
@@ -231,7 +231,7 @@ def test_second_purge_skips_when_the_advisory_lock_is_held(monkeypatch):
     right.join(timeout=5)
     assert not left.is_alive() and not right.is_alive()
     assert sorted(results) == ["purged", "skipped"]
-    assert sum(sql.startswith("UPDATE") for sql in statements) == 1
+    assert sum(sql.startswith("UPDATE") for sql in statements) == 2
 
 
 def test_a_failed_update_does_not_keep_the_lock(monkeypatch):
@@ -314,7 +314,7 @@ def test_a_failed_update_does_not_keep_the_lock(monkeypatch):
     assert state["rows"][0]["ip_hash"] == "old-code"
     assert askers.purge_ip_hashes() == "purged"
     assert [row["ip_hash"] for row in state["rows"]] == [None, "new-code"]
-    assert state["updates"] == 2
+    assert state["updates"] == 3
     assert state["held"] is False
 
 

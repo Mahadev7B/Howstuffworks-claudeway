@@ -128,12 +128,12 @@ def _purge_memory_ip_hashes(now: float | None = None) -> None:
 
 
 def _purge_db_ip_hashes() -> bool:
-    """Set expired asker_questions.ip_hash to null.
+    """Set expired network codes to null.
 
-    Returns False when another worker holds the advisory lock. The pool connection
-    is autocommit, so the lock and the UPDATE share one explicit transaction.
-    pg_try_advisory_xact_lock ends with that transaction, including a rollback.
-    The askers table has no ip_hash column. Raw ip_address columns are not touched.
+    The code is stored on asker_questions and on api_calls. Both updates run in
+    the same transaction as pg_try_advisory_xact_lock, so a rollback releases the
+    lock. The askers table has no ip_hash column. Raw ip_address columns are not
+    touched, and existing rows are not rewritten except to clear an old code.
     """
     hours = free_window_hours()
     with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn:
@@ -143,12 +143,13 @@ def _purge_db_ip_hashes() -> bool:
                 row = cur.fetchone()
                 if not row or not row[0]:
                     return False
-                cur.execute(
-                    "UPDATE asker_questions SET ip_hash = NULL "
-                    "WHERE ip_hash IS NOT NULL "
-                    "AND created_at < NOW() - (%s * INTERVAL '1 hour')",
-                    (hours,),
-                )
+                for table in ("asker_questions", "api_calls"):
+                    cur.execute(
+                        f"UPDATE {table} SET ip_hash = NULL "
+                        "WHERE ip_hash IS NOT NULL "
+                        "AND created_at < NOW() - (%s * INTERVAL '1 hour')",
+                        (hours,),
+                    )
     return True
 
 
