@@ -98,6 +98,9 @@ class _Conn:
     def close(self):
         return None
 
+    def transaction(self):
+        return self
+
 
 class _Pool:
     def __init__(self, cursor):

@@ -12,6 +12,7 @@ import hashlib
 import logging
 import os
 import re
+import sys
 import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -93,6 +94,20 @@ app.config.update(
     SESSION_COOKIE_SECURE=os.getenv("RENDER", "").strip().lower() == "true",
 )
 db_enabled = init_db()
+
+
+def _spawn_purge_timer(loop) -> None:
+    """One daemon timer per worker. Tests import this module and must not keep that thread."""
+    if "pytest" in sys.modules:
+        return
+    askers._spawn_purge_daemon(loop)
+
+
+def _install_purge_timer() -> None:
+    askers.start_purge_timer(spawn=_spawn_purge_timer)
+
+
+_install_purge_timer()
 
 # App startup time, used by /debug/status to report uptime.
 _STARTED_AT = time.time()

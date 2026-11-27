@@ -1,7 +1,10 @@
 """The free-lesson cap and the network-code purge share FREE_WINDOW_HOURS."""
 
+import logging
 import threading
 import time
+
+import pytest
 
 from lesson_platform import askers, db
 
@@ -91,7 +94,7 @@ def test_changing_free_window_hours_changes_the_cap_and_the_purge(monkeypatch):
             captured.append((self.sql, params))
 
         def fetchone(self):
-            if "pg_try_advisory_lock" in self.sql:
+            if "pg_try_advisory_xact_lock" in self.sql:
                 return (True,)
             if "subscription_status" in self.sql:
                 return ("none", None, None, 0, False)
@@ -113,6 +116,9 @@ def test_changing_free_window_hours_changes_the_cap_and_the_purge(monkeypatch):
 
         def cursor(self):
             return self.cur
+
+        def transaction(self):
+            return self
 
         def __enter__(self):
             return self
@@ -140,7 +146,8 @@ def test_changing_free_window_hours_changes_the_cap_and_the_purge(monkeypatch):
     assert "asker_questions" in updates[0]
     assert "ip_address" not in updates[0]
     assert "DELETE" not in updates[0]
-    assert captured[-2][1] == (5,)  # the UPDATE's hours, before the unlock
+    assert "pg_advisory_unlock" not in " ".join(sql for sql, _params in captured)
+    assert captured[-1][0].startswith("UPDATE") and captured[-1][1] == (5,)
 
 
 def test_second_purge_skips_when_the_advisory_lock_is_held(monkeypatch):
@@ -164,16 +171,13 @@ def test_second_purge_skips_when_the_advisory_lock_is_held(monkeypatch):
                 assert release.wait(timeout=3)
 
         def fetchone(self):
-            if "pg_try_advisory_lock" in self.sql:
+            if "pg_try_advisory_xact_lock" in self.sql:
                 with guard:
                     if state["held"]:
                         return (False,)
                     state["held"] = True
+                    self.conn.acquired = True
                     return (True,)
-            if "pg_advisory_unlock" in self.sql:
-                with guard:
-                    state["held"] = False
-                return (True,)
             return None
 
         def __enter__(self):
@@ -183,13 +187,25 @@ def test_second_purge_skips_when_the_advisory_lock_is_held(monkeypatch):
             return False
 
     class Conn:
+        def __init__(self):
+            self.acquired = False
+            self.cur = Cur()
+            self.cur.conn = self
+
         def cursor(self):
-            return Cur()
+            return self.cur
+
+        def transaction(self):
+            return self
 
         def __enter__(self):
             return self
 
         def __exit__(self, *args):
+            if self.acquired:
+                with guard:
+                    state["held"] = False
+                self.acquired = False
             return False
 
     class Pool:
@@ -216,6 +232,146 @@ def test_second_purge_skips_when_the_advisory_lock_is_held(monkeypatch):
     assert not left.is_alive() and not right.is_alive()
     assert sorted(results) == ["purged", "skipped"]
     assert sum(sql.startswith("UPDATE") for sql in statements) == 1
+
+
+def test_a_failed_update_does_not_keep_the_lock(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr(db, "_direct_connect", lambda: (_ for _ in ()).throw(AssertionError("no direct connect")))
+    askers.reset_memory()
+    state = {
+        "held": False,
+        "updates": 0,
+        "rows": [
+            {"ip_hash": "old-code", "hours_old": 8},
+            {"ip_hash": "new-code", "hours_old": 1},
+        ],
+    }
+
+    class Cur:
+        def __init__(self, conn):
+            self.conn = conn
+            self.sql = ""
+
+        def execute(self, sql, params=None):
+            self.sql = " ".join(sql.split())
+            if "pg_try_advisory_xact_lock" in self.sql:
+                if state["held"]:
+                    self.got = False
+                else:
+                    state["held"] = True
+                    self.conn.acquired = True
+                    self.got = True
+                return
+            if self.sql.startswith("UPDATE"):
+                state["updates"] += 1
+                if state["updates"] == 1:
+                    raise RuntimeError("db down")
+                hours = params[0]
+                for row in state["rows"]:
+                    if row["ip_hash"] and row["hours_old"] > hours:
+                        row["ip_hash"] = None
+
+        def fetchone(self):
+            if "pg_try_advisory_xact_lock" in self.sql:
+                return (self.got,)
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    class Conn:
+        def __init__(self):
+            self.acquired = False
+            self.cur = Cur(self)
+
+        def cursor(self):
+            return self.cur
+
+        def transaction(self):
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            if self.acquired:
+                state["held"] = False
+                self.acquired = False
+            return False
+
+    class Pool:
+        def connection(self, timeout=None):
+            return Conn()
+
+    monkeypatch.setattr(db, "_pool", Pool())
+    monkeypatch.setenv("FREE_WINDOW_HOURS", "6")
+    with pytest.raises(RuntimeError, match="db down"):
+        askers.purge_ip_hashes()
+    assert state["held"] is False
+    assert state["rows"][0]["ip_hash"] == "old-code"
+    assert askers.purge_ip_hashes() == "purged"
+    assert [row["ip_hash"] for row in state["rows"]] == [None, "new-code"]
+    assert state["updates"] == 2
+    assert state["held"] is False
+
+
+def test_purge_timer_starts_once_and_calls_the_purge(monkeypatch, caplog):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    import app as app_module
+    assert askers._purge_timer_started is True
+    assert not any(thread.name == "ip-hash-purge" and thread.is_alive() for thread in threading.enumerate())
+    askers._purge_timer_started = False
+    spawned = []
+    purges = []
+
+    def spawn(loop):
+        spawned.append(loop)
+
+    def fake_sleep(seconds):
+        if fake_sleep.calls:
+            raise askers._StopPurgeTimer
+        fake_sleep.calls += 1
+        assert seconds == 15 * 60
+
+    fake_sleep.calls = 0
+
+    def purge():
+        purges.append("ran")
+
+    monkeypatch.setattr(askers, "maybe_purge_ip_hashes", purge)
+    try:
+        assert app_module.askers.start_purge_timer(interval_s=15 * 60, spawn=spawn, sleep=fake_sleep) is True
+        assert app_module.askers.start_purge_timer(interval_s=15 * 60, spawn=spawn, sleep=fake_sleep) is False
+        assert len(spawned) == 1
+        with pytest.raises(askers._StopPurgeTimer):
+            spawned[0]()
+        assert purges == ["ran"]
+        assert not any(thread.name == "ip-hash-purge" and thread.is_alive() for thread in threading.enumerate())
+
+        def boom():
+            raise RuntimeError("203.0.113.9 and a question")
+
+        def sleep_twice(seconds):
+            sleep_twice.calls += 1
+            if sleep_twice.calls == 2:
+                raise askers._StopPurgeTimer
+
+        sleep_twice.calls = 0
+        askers._purge_timer_started = False
+        spawned.clear()
+        monkeypatch.setattr(askers, "maybe_purge_ip_hashes", boom)
+        assert askers.start_purge_timer(interval_s=1, spawn=spawn, sleep=sleep_twice) is True
+        with caplog.at_level(logging.ERROR, logger="lesson_platform.askers"):
+            with pytest.raises(askers._StopPurgeTimer):
+                spawned[-1]()
+        assert "RuntimeError" in caplog.text
+        assert "203.0.113.9" not in caplog.text
+        assert "question" not in caplog.text
+    finally:
+        askers._purge_timer_started = True
 
 
 def test_privacy_page_renders_the_window(monkeypatch):

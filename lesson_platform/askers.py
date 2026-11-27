@@ -36,6 +36,8 @@ _PURGE_INTERVAL_S = 15 * 60
 _PURGE_ADVISORY_LOCK_KEY = 815204116
 _last_purge_at = 0.0
 _purge_interval_lock = threading.Lock()
+_purge_timer_started = False
+_purge_timer_guard = threading.Lock()
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _ACTIVE = ("active", "trialing")  # Same as billing.ACTIVE_STATES.
 
@@ -113,25 +115,25 @@ def _purge_memory_ip_hashes(now: float | None = None) -> None:
 def _purge_db_ip_hashes() -> bool:
     """Set expired asker_questions.ip_hash to null.
 
-    Returns False when another worker holds the advisory lock. The askers table
-    has no ip_hash column. Raw ip_address columns are not read or written.
+    Returns False when another worker holds the advisory lock. The pool connection
+    is autocommit, so the lock and the UPDATE share one explicit transaction.
+    pg_try_advisory_xact_lock ends with that transaction, including a rollback.
+    The askers table has no ip_hash column. Raw ip_address columns are not touched.
     """
     hours = free_window_hours()
-    with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
-        cur.execute("SELECT pg_try_advisory_lock(%s)", (_PURGE_ADVISORY_LOCK_KEY,))
-        row = cur.fetchone()
-        if not row or not row[0]:
-            return False
-        try:
-            cur.execute(
-                "UPDATE asker_questions SET ip_hash = NULL "
-                "WHERE ip_hash IS NOT NULL "
-                "AND created_at < NOW() - (%s * INTERVAL '1 hour')",
-                (hours,),
-            )
-        finally:
-            cur.execute("SELECT pg_advisory_unlock(%s)", (_PURGE_ADVISORY_LOCK_KEY,))
-            cur.fetchone()
+    with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn:
+        with conn.transaction():
+            with conn.cursor() as cur:
+                cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (_PURGE_ADVISORY_LOCK_KEY,))
+                row = cur.fetchone()
+                if not row or not row[0]:
+                    return False
+                cur.execute(
+                    "UPDATE asker_questions SET ip_hash = NULL "
+                    "WHERE ip_hash IS NOT NULL "
+                    "AND created_at < NOW() - (%s * INTERVAL '1 hour')",
+                    (hours,),
+                )
     return True
 
 
@@ -157,8 +159,42 @@ def maybe_purge_ip_hashes() -> None:
         _last_purge_at = now
     try:
         purge_ip_hashes()
-    except Exception:
-        logger.exception("Could not remove expired network codes")
+    except Exception as exc:
+        logger.error("Could not remove expired network codes: %s", type(exc).__name__)
+
+
+class _StopPurgeTimer(BaseException):
+    """Stops a test loop. It is not an Exception, so the timer does not swallow it."""
+
+
+def _spawn_purge_daemon(loop) -> None:
+    threading.Thread(target=loop, name="ip-hash-purge", daemon=True).start()
+
+
+def start_purge_timer(*, interval_s: float | None = None, spawn=None, sleep=None) -> bool:
+    """Start one purge loop in this process. A second call does nothing.
+
+    ``spawn`` receives the loop and starts it. The default is a daemon thread.
+    ``sleep`` replaces time.sleep so tests can run one tick without waiting.
+    """
+    global _purge_timer_started
+    with _purge_timer_guard:
+        if _purge_timer_started:
+            return False
+        _purge_timer_started = True
+    interval = _PURGE_INTERVAL_S if interval_s is None else interval_s
+    sleeper = time.sleep if sleep is None else sleep
+
+    def loop() -> None:
+        while True:
+            sleeper(interval)
+            try:
+                maybe_purge_ip_hashes()
+            except Exception as exc:
+                logger.error("Network-code purge timer failed: %s", type(exc).__name__)
+
+    (spawn or _spawn_purge_daemon)(loop)
+    return True
 
 
 def _trial_state(started: datetime | None, now: datetime) -> tuple[str, datetime | None]:
