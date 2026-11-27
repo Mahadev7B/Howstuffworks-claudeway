@@ -3,7 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Ask Lil Owl — Learn Anything!</title>
+  <title>{{ home_title|safe }}</title>
+  <meta name="description" content="{{ home_description|safe }}">
+  <link rel="canonical" href="{{ public_base_url }}/">
+  <meta property="og:title" content="{{ home_title|safe }}">
+  <meta property="og:description" content="{{ home_description|safe }}">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="{{ public_base_url }}/">
+  <meta property="og:image" content="{{ brand_image_url }}">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ home_title|safe }}">
+  <meta name="twitter:description" content="{{ home_description|safe }}">
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='library.css') }}">
@@ -303,12 +313,13 @@
   </header>
 
   <main>
+    <h1 class="cine-product-title">{{ home_h1|safe }}</h1>
     {% if spotlight %}
     <section class="cine-hero" aria-label="Featured lesson">
       <img src="{{ url_for('explore_thumbnail', slug=spotlight.slug) }}" alt="">
       <div class="cine-hero-copy">
         <p class="cine-kicker">Featured lesson · {{ spotlight.category }}</p>
-        <h1>{{ spotlight.title }}</h1>
+        <h2 class="cine-feature-title">{{ spotlight.title }}</h2>
         <p class="cine-summary">{{ spotlight.summary }}</p>
         <a class="cine-play" href="{{ url_for('explore_lesson', slug=spotlight.slug) }}"><span aria-hidden="true">▶</span> Play</a>
       </div>
@@ -336,7 +347,7 @@
     </div>
     {% else %}
     <section class="cine-empty">
-      <h1>New lessons are on the way</h1>
+      <h2>New lessons are on the way</h2>
       <p>Ask Lil Owl anything and get your own picture lesson.</p>
     </section>
     {% endif %}

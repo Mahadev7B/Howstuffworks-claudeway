@@ -291,6 +291,13 @@ def init_db() -> bool:
         )
         with _pool.connection(timeout=_POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
             cur.execute(SCHEMA)
+            # Descriptions for 13 library lessons live in summary. This rewrites
+            # only that column, only those slugs, and only while the placeholder
+            # is still there. A second boot or a hand-edited summary is left alone.
+            from lesson_platform.site_copy import apply_placeholder_summaries
+            updated = apply_placeholder_summaries(cur)
+            if updated:
+                logger.info("Updated %s placeholder lesson descriptions", updated)
         logger.info("DB ready (feedback + api_calls)")
         return True
     except Exception:
