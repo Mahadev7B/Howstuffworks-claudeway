@@ -349,20 +349,15 @@
 
     <h2 class="h5 mt-5 mb-3">Where people are</h2>
     <div class="row g-3">
-      <div class="col-lg-5"><div class="card p-3"><h6>New lessons by country</h6><canvas id="chartByCountry" height="200"></canvas></div></div>
-      <div class="col-lg-7"><div class="card p-3"><h6>New lessons by state or region (top 20)</h6><canvas id="chartByRegion" height="200"></canvas></div></div>
+      <div class="col-lg-6"><div class="card p-3"><h6>New lessons by country</h6><canvas id="chartByCountry" height="200"></canvas></div></div>
     </div>
 
-    <h2 class="h5 mt-5 mb-3">Lessons from one place</h2>
+    <h2 class="h5 mt-5 mb-3">Lessons from one country</h2>
     <div class="card p-3">
       <div class="row g-2 align-items-end mb-3">
         <div class="col-auto">
           <label class="form-label mb-1" for="filterCountry">Country</label>
           <select id="filterCountry" class="form-select form-select-sm" style="min-width:160px;"><option value="">All countries</option></select>
-        </div>
-        <div class="col-auto">
-          <label class="form-label mb-1" for="filterRegion">State or region</label>
-          <select id="filterRegion" class="form-select form-select-sm" style="min-width:180px;" disabled><option value="">All regions</option></select>
         </div>
         <div class="col-auto">
           <button id="filterApply" class="btn btn-sm btn-dark">Show</button>
@@ -372,8 +367,8 @@
       </div>
       <div class="table-responsive scroll-table">
         <table class="table table-sm table-hover mb-0">
-          <thead class="table-light"><tr><th>When</th><th>Question</th><th>Country</th><th>State/Region</th><th>City</th><th>Device</th><th class="nowrap">Time</th><th class="nowrap">Cost</th></tr></thead>
-          <tbody id="locationTableBody"><tr><td colspan="8" class="text-muted">Pick a place and press Show</td></tr></tbody>
+          <thead class="table-light"><tr><th>When</th><th>Question</th><th>Country</th><th>Device</th><th class="nowrap">Time</th><th class="nowrap">Cost</th></tr></thead>
+          <tbody id="locationTableBody"><tr><td colspan="6" class="text-muted">Pick a country and press Show</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -460,21 +455,10 @@
       { label: 'One picture (s)', data: pbd.map(r => r.flux_ms == null ? null : r.flux_ms / 1000), borderColor: ORANGE, tension: 0.3 },
     ]);
 
-    // Unknown stays last on both charts. The region chart is still the top 20
-    // named places, plus one Unknown bar so lessons with no region are not cut off.
+    // Unknown stays last so a lesson with no country is still on the chart.
     const countryRows = DATA.lessons_by_country || [];
     const byCountry = countryRows.filter(r => r.country !== 'Unknown').concat(countryRows.filter(r => r.country === 'Unknown'));
     doughnut('chartByCountry', byCountry.map(r => r.country), byCountry.map(r => r.count));
-    const regionRows = DATA.lessons_by_region || [];
-    const topRegions = regionRows.filter(r => r.region !== 'Unknown').slice(0, 20);
-    const unknownRegionCount = regionRows.filter(r => r.region === 'Unknown').reduce((sum, r) => sum + Number(r.count || 0), 0);
-    const regionLabels = topRegions.map(r => r.region + ' (' + r.country + ')');
-    const regionCounts = topRegions.map(r => r.count);
-    if (unknownRegionCount) {
-      regionLabels.push('Unknown');
-      regionCounts.push(unknownRegionCount);
-    }
-    barChart('chartByRegion', regionLabels, [{ label: 'New lessons', data: regionCounts, backgroundColor: ORANGE }]);
 
     // ── Email search ─────────────────────────────────────────────────────────
     const emailSearch = document.getElementById('emailSearch');
@@ -498,13 +482,11 @@
     }));
 
     // ── Location filter ──────────────────────────────────────────────────────
-    const allRegions = DATA.lessons_by_region || [];
     const countrySelect = document.getElementById('filterCountry');
-    const regionSelect = document.getElementById('filterRegion');
     const applyBtn = document.getElementById('filterApply');
     const statusEl = document.getElementById('filterStatus');
     const tbody = document.getElementById('locationTableBody');
-    const pickPrompt = '<tr><td colspan="8" class="text-muted">Pick a place and press Show</td></tr>';
+    const pickPrompt = '<tr><td colspan="6" class="text-muted">Pick a country and press Show</td></tr>';
 
     function addOption(select, value, label) {
       const opt = document.createElement('option');
@@ -512,19 +494,10 @@
       select.appendChild(opt);
     }
     [...new Set(byCountry.map(r => r.country))].forEach(c => addOption(countrySelect, c, c));
-    countrySelect.addEventListener('change', () => {
-      regionSelect.innerHTML = '<option value="">All regions</option>';
-      allRegions.filter(r => r.country === countrySelect.value)
-        .slice()
-        .sort((a, b) => (a.region === 'Unknown') - (b.region === 'Unknown'))
-        .forEach(r => addOption(regionSelect, r.region, r.region + ' (' + r.count + ')'));
-      regionSelect.disabled = !countrySelect.value;
-    });
 
     applyBtn.addEventListener('click', async () => {
       const params = new URLSearchParams();
       if (countrySelect.value) params.set('country', countrySelect.value);
-      if (regionSelect.value) params.set('region', regionSelect.value);
       statusEl.textContent = 'Loading…';
       applyBtn.disabled = true;
       try {
@@ -535,10 +508,10 @@
           <tr>
             <td class="nowrap">${esc(r.created_at || '—')}</td>
             <td class="truncate" title="${esc(r.question)}">${esc(r.question)}</td>
-            <td>${esc(r.country)}</td><td>${esc(r.region)}</td><td>${esc(r.city)}</td><td>${esc(r.device)}</td>
+            <td>${esc(r.country || 'Unknown')}</td><td>${esc(r.device)}</td>
             <td class="nowrap">${(r.duration_ms / 1000).toFixed(1)}s</td>
             <td class="nowrap">$${Number(r.cost).toFixed(3)}</td>
-          </tr>`).join('') : '<tr><td colspan="8" class="text-muted">No lessons from there</td></tr>';
+          </tr>`).join('') : '<tr><td colspan="6" class="text-muted">No lessons from there</td></tr>';
       } catch (e) {
         statusEl.textContent = 'Could not load lessons';
       } finally {
@@ -547,8 +520,6 @@
     });
     document.getElementById('filterReset').addEventListener('click', () => {
       countrySelect.value = '';
-      regionSelect.innerHTML = '<option value="">All regions</option>';
-      regionSelect.disabled = true;
       tbody.innerHTML = pickPrompt;
       statusEl.textContent = '';
     });

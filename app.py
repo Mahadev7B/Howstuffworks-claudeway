@@ -362,7 +362,7 @@ def _attach_slide_images(lesson: dict, ctx: dict | None = None) -> None:
     Flux slides are rendered in parallel for speed.
     """
     if ctx is None:
-        ctx = {"city": None, "region": None, "country": None, "user_agent": None}
+        ctx = {"country": None, "user_agent": None}
     use_flux = settings.image_provider == "flux" and bool(settings.fal_api_key)
     subject = lesson.get("subject", "")
     is_math = bool((lesson.get("meta") or {}).get("math")) or is_math_question(f"{lesson.get('title', '')} {subject}")
@@ -476,14 +476,12 @@ def _client_ip() -> str | None:
 
 
 def _client_context() -> dict:
-    """Approximate location and device details. The IP address is used for the lookup, then dropped."""
-    _, city, region, country = extract_and_lookup(
+    """Approximate country and device details. The IP address is used for the lookup, then dropped."""
+    _, country = extract_and_lookup(
         request.headers.get("X-Forwarded-For"), request.remote_addr,
         request.headers.get("CF-Connecting-IP"),
     )
     return {
-        "city": city,
-        "region": region,
         "country": country,
         "user_agent": request.headers.get("User-Agent"),
     }
@@ -733,7 +731,8 @@ def sitemap():
 @app.get("/privacy")
 def privacy():
     return render_template("privacy.html", contact_email=PRIVACY_CONTACT_EMAIL, updated=PRIVACY_UPDATED,
-                           free_questions=askers.FREE_QUESTIONS)
+                           free_questions=askers.FREE_QUESTIONS,
+                           free_window_hours=askers.free_window_hours())
 
 
 @app.get("/robots.txt")
@@ -1981,14 +1980,13 @@ def admin_askers_csv():
 
 @app.route("/admin/lessons-by-location", methods=["GET"])
 def admin_lessons_by_location():
-    """JSON: recent lessons filtered by country/region. Used by the location filter UI."""
+    """JSON: recent lessons filtered by country. Used by the location filter UI."""
     if not _admin_authed():
         return jsonify({"ok": False, "error": "forbidden"}), 403
     if not db_enabled:
         return jsonify({"ok": False, "lessons": []}), 503
     country = request.args.get("country") or None
-    region = request.args.get("region") or None
-    rows = admin_lessons_filtered(country=country, region=region, limit=100)
+    rows = admin_lessons_filtered(country=country, limit=100)
     return jsonify({"ok": True, "lessons": rows})
 
 

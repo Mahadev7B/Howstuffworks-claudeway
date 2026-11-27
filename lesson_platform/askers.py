@@ -1,6 +1,8 @@
 """Who is asking: an email per asker, a few free questions, a free month, then a subscription.
 
-* The first FREE_QUESTIONS different questions from one client IP are free, whichever email asks.
+* The first FREE_QUESTIONS different questions from one network are free inside
+  FREE_WINDOW_HOURS (default 6), whichever email asks. After that the network
+  code is cleared. The questions and the email stay.
 * Then a parent can start one free month: up to TRIAL_DAILY_NEW new lessons in
   any 24 hours (a rolling window, so time zones don't matter) for TRIAL_DAYS days. Questions someone already asked (a saved copy) and
   the family's own repeats never count.
@@ -28,6 +30,12 @@ TRIAL_DAILY_NEW = 5
 WAITLIST_INSTEAD_OF_TRIAL = True
 WAITLIST_CHOICES = ("subscribe", "browsing", "price")
 WINDOW_S = 24 * 3600
+# How often a worker may clear expired network codes. Several workers on Render
+# also take a Postgres advisory lock so only one of them deletes at a time.
+_PURGE_INTERVAL_S = 15 * 60
+_PURGE_ADVISORY_LOCK_KEY = 815204116
+_last_purge_at = 0.0
+_purge_interval_lock = threading.Lock()
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _ACTIVE = ("active", "trialing")  # Same as billing.ACTIVE_STATES.
 
@@ -71,6 +79,88 @@ def ip_hash(ip: str | None) -> str | None:
     return hmac.new(_ip_hmac_key(), b"free-lesson-ip|" + ip.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+def free_window_hours() -> int:
+    """Hours a network code counts toward the free lessons and how long it is kept.
+
+    ``FREE_WINDOW_HOURS`` is the only setting. The cap and the purge both call this.
+    A missing or unusable value means 6.
+    """
+    raw = os.getenv("FREE_WINDOW_HOURS", "6").strip()
+    try:
+        hours = int(raw)
+    except ValueError:
+        return 6
+    return hours if hours >= 1 else 6
+
+
+def _window_cutoff(now: float | None = None) -> float:
+    moment = time.time() if now is None else now
+    return moment - free_window_hours() * 3600
+
+
+def _purge_memory_ip_hashes(now: float | None = None) -> None:
+    """Drop in-memory network codes older than the window. Question history stays."""
+    cutoff = _window_cutoff(now)
+    with _memory_lock:
+        for digest in list(_memory_ip):
+            kept = {qhash: pair for qhash, pair in _memory_ip[digest].items() if pair[0] >= cutoff}
+            if kept:
+                _memory_ip[digest] = kept
+            else:
+                del _memory_ip[digest]
+
+
+def _purge_db_ip_hashes() -> bool:
+    """Set expired asker_questions.ip_hash to null.
+
+    Returns False when another worker holds the advisory lock. The askers table
+    has no ip_hash column. Raw ip_address columns are not read or written.
+    """
+    hours = free_window_hours()
+    with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn, conn.cursor() as cur:
+        cur.execute("SELECT pg_try_advisory_lock(%s)", (_PURGE_ADVISORY_LOCK_KEY,))
+        row = cur.fetchone()
+        if not row or not row[0]:
+            return False
+        try:
+            cur.execute(
+                "UPDATE asker_questions SET ip_hash = NULL "
+                "WHERE ip_hash IS NOT NULL "
+                "AND created_at < NOW() - (%s * INTERVAL '1 hour')",
+                (hours,),
+            )
+        finally:
+            cur.execute("SELECT pg_advisory_unlock(%s)", (_PURGE_ADVISORY_LOCK_KEY,))
+            cur.fetchone()
+    return True
+
+
+def purge_ip_hashes() -> str:
+    """Clear network codes older than free_window_hours().
+
+    Returns "memory" when there is no database, "skipped" when another worker
+    holds the lock, or "purged" when this worker cleared the database column.
+    """
+    _purge_memory_ip_hashes()
+    if db._pool is None:
+        return "memory"
+    return "purged" if _purge_db_ip_hashes() else "skipped"
+
+
+def maybe_purge_ip_hashes() -> None:
+    """Purge at most once every 15 minutes in this process. Failures are logged."""
+    global _last_purge_at
+    now = time.monotonic()
+    with _purge_interval_lock:
+        if now - _last_purge_at < _PURGE_INTERVAL_S:
+            return
+        _last_purge_at = now
+    try:
+        purge_ip_hashes()
+    except Exception:
+        logger.exception("Could not remove expired network codes")
+
+
 def _trial_state(started: datetime | None, now: datetime) -> tuple[str, datetime | None]:
     if started is None:
         return "none", None
@@ -81,20 +171,25 @@ def _trial_state(started: datetime | None, now: datetime) -> tuple[str, datetime
 def allowance(email: str, question: str, is_saved=None, ip_hash: str | None = None) -> dict:
     """Decide whether this email may ask this question now, and why.
 
-    The 3 free lessons are shared by everyone on the same client IP (`ip_hash` is
-    a one-way code, never the address). A repeat of a question this email or this
-    IP already asked, and a lesson saved from an earlier ask, stay free.
+    The 3 free lessons are shared by everyone on the same network inside
+    free_window_hours() (`ip_hash` is a one-way code, never the address). A repeat
+    of a question this email already asked, a repeat this network asked inside
+    the window, and a lesson saved from an earlier ask, stay free.
 
     `is_saved` is an optional callable that says whether a saved lesson already
     exists for the question; it's only consulted when the daily limit is reached.
     """
+    maybe_purge_ip_hashes()
+    hours = free_window_hours()
     qhash = db.question_hash(question)
     now = datetime.now(timezone.utc)
     window_start = now - timedelta(seconds=WINDOW_S)
+    ip_cutoff = _window_cutoff()
     if db._pool is None:
         with _memory_lock:
             asked = _memory_asked.get(email, {})
-            by_ip = _memory_ip.get(ip_hash, {}) if ip_hash else {}
+            by_ip_all = _memory_ip.get(ip_hash, {}) if ip_hash else {}
+            by_ip = {qhash_key: pair for qhash_key, pair in by_ip_all.items() if pair[0] >= ip_cutoff}
             status = _memory_status.get(email, "none")
             started_ts = _memory_trial.get(email)
             choice = _memory_waitlist.get(email)
@@ -127,8 +222,9 @@ def allowance(email: str, question: str, is_saved=None, ip_hash: str | None = No
                 if ip_hash:
                     cur.execute(
                         "SELECT COUNT(DISTINCT question_hash), BOOL_OR(question_hash = %s) "
-                        "FROM asker_questions WHERE ip_hash = %s",
-                        (qhash, ip_hash),
+                        "FROM asker_questions WHERE ip_hash = %s "
+                        "AND created_at >= NOW() - (%s * INTERVAL '1 hour')",
+                        (qhash, ip_hash, hours),
                     )
                     used, ip_repeat = cur.fetchone()
                 else:
@@ -188,6 +284,7 @@ def record_question(email: str, question: str, generated: bool = True, ip_hash: 
     `ip_hash` is the one-way code for the client IP. Pass None for a subscriber so
     their lessons do not use up that network's free ones.
     """
+    maybe_purge_ip_hashes()
     qhash = db.question_hash(question)
     if db._pool is None:
         with _memory_lock:
@@ -343,6 +440,7 @@ def delete_asker(email: str) -> bool:
 
 def reset_memory() -> None:
     """Test helper: forget in-memory askers."""
+    global _last_purge_at
     with _memory_lock:
         _memory_asked.clear()
         _memory_ip.clear()
@@ -351,3 +449,5 @@ def reset_memory() -> None:
         _memory_waitlist.clear()
         _memory_bonus.clear()
         _memory_requests.clear()
+    with _purge_interval_lock:
+        _last_purge_at = 0.0
