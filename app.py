@@ -76,7 +76,7 @@ from lesson_platform import ratelimit
 from lesson_platform import library
 from lesson_platform import library_audio
 from lesson_platform import library_import
-from lesson_platform.private_api import register_private_api
+from lesson_platform.private_api import import_bearer_ok, register_private_api
 from lesson_platform.cube_lesson import private_cube_animation
 
 load_dotenv()
@@ -103,6 +103,8 @@ _SITE_SESSION_KEY = "site_ok"
 _SITE_SESSION_MAX_AGE_S = 30 * 24 * 3600
 _SITE_LOGIN_WINDOW_S = 15 * 60
 _SITE_LOGIN_LIMIT = 10
+# Each gunicorn worker keeps its own count, so the effective limit is up to
+# workers x 10. A restart resets the counts.
 _SITE_LOGIN_WRONG = "That password isn't right. Please try again."
 _SITE_LOGIN_LIMITED = "Too many tries. Please wait a few minutes and try again."
 _SITE_JSON_PATHS = {
@@ -297,11 +299,53 @@ def _replace_session(extra: dict | None = None, *, permanent: bool = False) -> N
         session.permanent = True
 
 
+def _signing_key_configured() -> bool:
+    """The gate may sign a session only with a non-empty FLASK_SECRET_KEY."""
+    configured = os.getenv("FLASK_SECRET_KEY", "").strip()
+    active = app.secret_key
+    if isinstance(active, bytes):
+        active = active.decode("utf-8", "ignore")
+    return bool(configured) and bool(str(active or "").strip())
+
+
+def _signing_key_unavailable():
+    # The log line is only that the key is missing. Do not include the password or the IP.
+    logger.error("FLASK_SECRET_KEY is missing")
+    if _request_wants_json():
+        return jsonify({"ok": False, "error": "signing key missing"}), 503
+    return render_template(
+        "error.html", question="",
+        error="The site password is on, but FLASK_SECRET_KEY is missing.",
+    ), 503
+
+
+def _operator_credential_opens_gate() -> bool:
+    """The route's own credential can pass the gate. Other admin routes cannot.
+
+    Private import paths use the bearer token. /debug/status and /admin/clear-cache
+    use X-Admin-Secret. Both checks are hmac.compare_digest, and a missing or
+    wrong credential does not open the gate.
+    """
+    path = request.path or ""
+    if path == "/api/admin/private-lessons" or path.startswith("/api/admin/private-lessons/"):
+        return import_bearer_ok()
+    if path in {"/debug/status", "/admin/clear-cache"}:
+        return _admin_secret_ok()
+    return False
+
+
 def _require_site_password():
     if not _site_gate_enabled():
         return None
     path = request.path or "/"
-    if path in {"/login", "/healthz", "/robots.txt"} or path.startswith("/static/"):
+    # /stripe/webhook stays gated. Stripe is survey-only and no webhook is live.
+    if path in {"/healthz", "/robots.txt", "/favicon.ico"} or path.startswith("/static/"):
+        return None
+    if _operator_credential_opens_gate():
+        return None
+    if not _signing_key_configured():
+        return _signing_key_unavailable()
+    if path == "/login":
         return None
     if _site_authed():
         return None
@@ -321,6 +365,8 @@ def site_login():
     nxt = _safe_next(raw_next)
     if not _site_gate_enabled() or _site_authed():
         return redirect(nxt)
+    if not _signing_key_configured():
+        return _signing_key_unavailable()
     error = None
     status = 200
     if request.method == "POST":
@@ -1935,7 +1981,7 @@ def _admin_secret_ok() -> bool:
     provided = request.headers.get("X-Admin-Secret", "")
     if not expected or not provided:
         return False
-    return secrets.compare_digest(provided.encode(), expected.encode())
+    return hmac.compare_digest(provided.encode(), expected.encode())
 
 
 app.jinja_env.globals["publish_all_hold"] = library.PUBLISH_ALL_HOLD

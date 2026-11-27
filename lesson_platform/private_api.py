@@ -19,15 +19,22 @@ def _error(message, status):
     return jsonify(error=message), status
 
 
-def _authorize():
+def import_bearer_ok() -> bool:
+    """True only when the dedicated import bearer matches. Empty tokens never match."""
     token = os.environ.get("ASKLILOWL_IMPORT_TOKEN")
     if not valid_token(token):
-        return _error("Private import is not configured", 503)
+        return False
     authorization = request.headers.get("Authorization", "")
     scheme, separator, supplied = authorization.partition(" ")
     if scheme.lower() != "bearer" or not separator or not valid_token(supplied):
-        return _error("Dedicated import bearer required", 401)
-    if not hmac.compare_digest(token.encode("ascii"), supplied.encode("ascii")):
+        return False
+    return hmac.compare_digest(token.encode("ascii"), supplied.encode("ascii"))
+
+
+def _authorize():
+    if not valid_token(os.environ.get("ASKLILOWL_IMPORT_TOKEN")):
+        return _error("Private import is not configured", 503)
+    if not import_bearer_ok():
         return _error("Dedicated import bearer required", 401)
     return None
 

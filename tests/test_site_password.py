@@ -19,6 +19,9 @@ def site(monkeypatch):
     monkeypatch.delenv("SITE_PASSWORD", raising=False)
     monkeypatch.delenv("RENDER", raising=False)
     monkeypatch.delenv("ADMIN_PASSWORD", raising=False)
+    monkeypatch.delenv("ADMIN_SECRET", raising=False)
+    monkeypatch.delenv("ASKLILOWL_IMPORT_TOKEN", raising=False)
+    monkeypatch.setenv("FLASK_SECRET_KEY", "test-site-gate-secret")
     app_module = __import__("app")
     app_module.app.config.update(TESTING=True)
     monkeypatch.setitem(app_module.app.config, "SESSION_COOKIE_SECURE", False)
@@ -193,6 +196,107 @@ def test_failed_logins_are_limited_per_hashed_ip(site, monkeypatch, caplog):
     expired = client.post("/login", data={"password": WRONG}, headers=headers)
     assert expired.status_code == 401
     assert ip not in caplog.text and PASSWORD not in caplog.text and WRONG not in caplog.text
+
+
+IMPORT_TOKEN = "fixture-import-token-" + "x" * 32
+
+
+def _not_the_gate(response):
+    assert response.status_code != 401 or response.get_json(silent=True) != {
+        "ok": False, "error": "password required"}
+
+
+def test_route_credentials_pass_the_gate_and_wrong_ones_do_not(site, monkeypatch):
+    app_module, client = site
+    monkeypatch.setenv("SITE_PASSWORD", PASSWORD)
+    monkeypatch.setenv("ADMIN_SECRET", "s3cret-value")
+    monkeypatch.setenv("ASKLILOWL_IMPORT_TOKEN", IMPORT_TOKEN)
+    monkeypatch.setattr(app_module, "db_enabled", False)
+    bearer = {"Authorization": "Bearer " + IMPORT_TOKEN}
+    secret = {"X-Admin-Secret": "s3cret-value"}
+
+    opened = client.get("/debug/status", headers=secret)
+    assert opened.status_code == 200
+    assert "git_commit" in opened.get_json()
+    assert client.get("/debug/status").status_code == 401
+    assert client.get("/debug/status").get_json() == {"ok": False, "error": "password required"}
+    wrong_secret = client.get("/debug/status", headers={"X-Admin-Secret": "nope"})
+    assert wrong_secret.status_code == 401
+    assert wrong_secret.get_json() == {"ok": False, "error": "password required"}
+    assert client.get("/debug/status", headers=bearer).get_json() == {
+        "ok": False, "error": "password required"}
+
+    cleared = client.post("/admin/clear-cache", headers=secret)
+    assert cleared.status_code == 503
+    assert cleared.get_json()["error"] == "DB not enabled"
+    assert client.post("/admin/clear-cache").get_json() == {"ok": False, "error": "password required"}
+    assert client.post("/admin/clear-cache", headers={"X-Admin-Secret": "nope"}).get_json() == {
+        "ok": False, "error": "password required"}
+
+    capabilities = client.get("/api/admin/private-lessons/capabilities", headers=bearer)
+    assert capabilities.status_code == 200
+    assert capabilities.get_json()["protocol"] == 1
+    imported = client.post("/api/admin/private-lessons", json={}, headers=bearer)
+    _not_the_gate(imported)
+    missing_bearer = client.get("/api/admin/private-lessons/capabilities")
+    assert missing_bearer.status_code == 401
+    assert missing_bearer.get_json() == {"ok": False, "error": "password required"}
+    wrong_bearer = client.post(
+        "/api/admin/private-lessons", json={},
+        headers={"Authorization": "Bearer " + "y" * 40})
+    assert wrong_bearer.status_code == 401
+    assert wrong_bearer.get_json() == {"ok": False, "error": "password required"}
+    assert client.get("/api/admin/private-lessons/capabilities", headers=secret).get_json() == {
+        "ok": False, "error": "password required"}
+
+    admin = client.get("/admin", headers=secret)
+    assert admin.status_code == 302
+    assert _location(admin).path == "/login"
+    cached = client.get("/admin/cached-lessons", headers=secret)
+    assert cached.status_code == 401
+    assert cached.get_json() == {"ok": False, "error": "password required"}
+
+
+def test_favicon_is_open_and_sitemap_stays_gated(site, monkeypatch):
+    _, client = site
+    monkeypatch.setenv("SITE_PASSWORD", PASSWORD)
+    icon = client.get("/favicon.ico")
+    assert icon.status_code == 200
+    assert icon.mimetype == "image/svg+xml"
+    assert icon.data
+    sitemap = client.get("/sitemap.xml")
+    assert sitemap.status_code == 302
+    assert _location(sitemap).path == "/login"
+    assert parse_qs(_location(sitemap).query)["next"] == ["/sitemap.xml"]
+
+
+@pytest.mark.parametrize("secret", [None, "", "   "])
+def test_gate_fails_closed_without_a_signing_key(site, monkeypatch, caplog, secret):
+    _, client = site
+    monkeypatch.setenv("SITE_PASSWORD", PASSWORD)
+    if secret is None:
+        monkeypatch.delenv("FLASK_SECRET_KEY", raising=False)
+    else:
+        monkeypatch.setenv("FLASK_SECRET_KEY", secret)
+    caplog.set_level(logging.DEBUG)
+    page = client.get("/", headers={"X-Forwarded-For": "203.0.113.77"})
+    assert page.status_code == 503
+    assert b"FLASK_SECRET_KEY is missing" in page.data
+    assert PASSWORD.encode() not in page.data
+    posted = client.post("/login", data={"password": PASSWORD},
+                         headers={"X-Forwarded-For": "203.0.113.77"})
+    assert posted.status_code == 503
+    assert PASSWORD.encode() not in posted.data
+    with client.session_transaction() as session:
+        assert session.get("site_ok") is not True
+    assert client.get("/privacy").status_code == 503
+    api = client.post("/api/lesson", json={"question": "Why is the sky blue?"})
+    assert api.status_code == 503
+    assert api.get_json() == {"ok": False, "error": "signing key missing"}
+    assert "FLASK_SECRET_KEY is missing" in caplog.text
+    assert PASSWORD not in caplog.text
+    assert "203.0.113.77" not in caplog.text
+    assert WRONG not in caplog.text
 
 
 def test_exempt_paths_stay_open_and_robots_hides_the_site(site, monkeypatch):
