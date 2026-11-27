@@ -98,12 +98,12 @@ Set `SITE_PASSWORD` on the Render service to ask for one shared password before 
 
 While it is set:
 
-- Visitors enter the password at `/login`. A correct password is stored in the signed session cookie for 30 days. `/logout` clears that flag. This stays closed until `FLASK_SECRET_KEY` is set to a non-empty value: the password is not accepted and no session is stored while that key is missing.
+- Visitors enter the password at `/login`. A correct password is stored in the signed session cookie for 30 days as an HMAC of the password, not the password itself. Changing `SITE_PASSWORD` signs existing sessions out. `/logout` clears that flag. This stays closed until `FLASK_SECRET_KEY` is set to a non-empty value: the password is not accepted and no session is stored while that key is missing.
 - `/healthz` and `/favicon.ico` stay open. `/static/...` stays open so the login page can load its files. `/sitemap.xml` stays behind the password.
 - `/robots.txt` answers `Disallow: /`, and responses include `X-Robots-Tag: noindex, nofollow`.
 - `/admin` keeps its own login as a second step behind this gate. `X-Admin-Secret` opens only `/debug/status` and `/admin/clear-cache`. The private-import bearer opens only `/api/admin/private-lessons` and its subpaths.
 
-Failed tries are limited to 10 per 15 minutes for each visitor. Limits are counted per gunicorn worker, so the effective limit is up to workers × 10, and a restart resets them. The address is stored only as a one-way hash.
+Failed tries are limited to 10 per 15 minutes for each visitor. A visitor who is already at that limit gets HTTP 429 and is not signed in, even with the correct password, until the window passes. Limits are counted per gunicorn worker, so the effective limit is up to workers × 10, and a restart resets them. The address is stored only as a one-way hash.
 
 ## Deploying to Render
 
