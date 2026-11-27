@@ -44,6 +44,27 @@ def _session_cookie(response):
     return matches[0]
 
 
+def _stored_site_flag(client):
+    with client.session_transaction() as sess:
+        return sess.get("site_ok"), sess.permanent
+
+
+def _assert_not_signed_in(app_module, client):
+    flag, _permanent = _stored_site_flag(client)
+    assert not app_module._site_session_matches(flag)
+
+
+def _assert_signed_in(app_module, client):
+    flag, permanent = _stored_site_flag(client)
+    assert isinstance(flag, str)
+    assert len(flag) == 64
+    assert all(char in "0123456789abcdef" for char in flag)
+    assert flag != PASSWORD
+    assert PASSWORD not in flag
+    assert app_module._site_session_matches(flag)
+    assert permanent is True
+
+
 def test_gate_is_off_when_the_password_is_unset_or_blank(site, monkeypatch, value=None):
     app_module, client = site
     if value is not None:
@@ -126,8 +147,7 @@ def test_gate_blocks_pages_and_json_until_the_password_is_entered(site, monkeypa
     assert WRONG.encode() not in wrong.data
     assert b"That password" in wrong.data and b"Please try again" in wrong.data
     assert wrong.headers["X-Robots-Tag"] == "noindex, nofollow"
-    with client.session_transaction() as session:
-        assert session.get("site_ok") is not True
+    _assert_not_signed_in(app_module, client)
     assert client.get("/privacy").status_code == 302
 
     signed = client.post("/login", data={"password": PASSWORD, "next": "/privacy"})
@@ -138,9 +158,7 @@ def test_gate_blocks_pages_and_json_until_the_password_is_entered(site, monkeypa
     assert "SameSite=Lax" in cookie
     assert "Max-Age=2592000" in cookie
     assert "Secure" not in cookie
-    with client.session_transaction() as session:
-        assert session.get("site_ok") is True
-        assert session.permanent is True
+    _assert_signed_in(app_module, client)
     assert client.get("/privacy").status_code == 200
     assert client.get("/").status_code == 200
     authed = client.get("/explore")
@@ -272,7 +290,7 @@ def test_favicon_is_open_and_sitemap_stays_gated(site, monkeypatch):
 
 @pytest.mark.parametrize("secret", [None, "", "   "])
 def test_gate_fails_closed_without_a_signing_key(site, monkeypatch, caplog, secret):
-    _, client = site
+    app_module, client = site
     monkeypatch.setenv("SITE_PASSWORD", PASSWORD)
     if secret is None:
         monkeypatch.delenv("FLASK_SECRET_KEY", raising=False)
@@ -287,8 +305,7 @@ def test_gate_fails_closed_without_a_signing_key(site, monkeypatch, caplog, secr
                          headers={"X-Forwarded-For": "203.0.113.77"})
     assert posted.status_code == 503
     assert PASSWORD.encode() not in posted.data
-    with client.session_transaction() as session:
-        assert session.get("site_ok") is not True
+    _assert_not_signed_in(app_module, client)
     assert client.get("/privacy").status_code == 503
     api = client.post("/api/lesson", json={"question": "Why is the sky blue?"})
     assert api.status_code == 503
@@ -368,7 +385,9 @@ def test_admin_login_stays_behind_the_site_gate(site, monkeypatch):
     assert client.get("/privacy").status_code == 200
     with client.session_transaction() as session:
         assert session.get("admin") is True
-        assert session.get("site_ok") is True
+        stored = session.get("site_ok")
+        assert stored != PASSWORD
+        assert app_module._site_session_matches(stored)
     client.post("/admin/logout")
     assert client.get("/privacy").status_code == 200
     assert client.get("/admin").status_code == 302
@@ -376,3 +395,97 @@ def test_admin_login_stays_behind_the_site_gate(site, monkeypatch):
     client.get("/logout")
     assert client.get("/admin/login").status_code == 302
     assert _location(client.get("/admin/login")).path == "/login"
+
+
+def test_correct_password_stays_limited_until_the_window_passes(site, monkeypatch, caplog):
+    app_module, client = site
+    monkeypatch.setenv("SITE_PASSWORD", PASSWORD)
+    ip = "203.0.113.90"
+    headers = {"X-Forwarded-For": ip}
+    caplog.set_level(logging.DEBUG)
+    for _ in range(10):
+        failed = client.post("/login", data={"password": WRONG}, headers=headers)
+        assert failed.status_code == 401
+    compared = {"called": False}
+    real_compare = app_module.hmac.compare_digest
+
+    def _spy(left, right):
+        compared["called"] = True
+        return real_compare(left, right)
+
+    monkeypatch.setattr(app_module.hmac, "compare_digest", _spy)
+    blocked = client.post("/login", data={"password": PASSWORD}, headers=headers)
+    assert blocked.status_code == 429
+    assert b"Too many tries" in blocked.data
+    assert PASSWORD.encode() not in blocked.data
+    assert WRONG.encode() not in blocked.data
+    assert compared["called"] is False
+    assert not any(value.startswith("session=") for value in blocked.headers.getlist("Set-Cookie"))
+    _assert_not_signed_in(app_module, client)
+    still_out = client.get("/privacy", headers=headers)
+    assert still_out.status_code == 302
+    assert _location(still_out).path == "/login"
+    assert PASSWORD not in caplog.text and WRONG not in caplog.text
+    assert ip not in caplog.text
+
+    later = time.time() + app_module._SITE_LOGIN_WINDOW_S + 5
+    monkeypatch.setattr(app_module.time, "time", lambda: later)
+    signed = client.post("/login", data={"password": PASSWORD, "next": "/privacy"}, headers=headers)
+    assert signed.status_code == 302
+    assert _location(signed).path == "/privacy"
+    assert compared["called"] is True
+    _assert_signed_in(app_module, client)
+    assert client.get("/privacy", headers=headers).status_code == 200
+    assert PASSWORD not in caplog.text and ip not in caplog.text
+
+
+def test_changing_the_site_password_signs_the_session_out(site, monkeypatch):
+    app_module, client = site
+    monkeypatch.setenv("SITE_PASSWORD", PASSWORD)
+    signed = client.post("/login", data={"password": PASSWORD, "next": "/privacy"})
+    assert signed.status_code == 302
+    _assert_signed_in(app_module, client)
+    assert client.get("/privacy").status_code == 200
+    # The same password still matches the stored fingerprint.
+    monkeypatch.setenv("SITE_PASSWORD", PASSWORD)
+    assert client.get("/").status_code == 200
+    assert client.get("/privacy").status_code == 200
+
+    monkeypatch.setenv("SITE_PASSWORD", "a-different-password")
+    page = client.get("/privacy")
+    assert page.status_code == 302
+    assert _location(page).path == "/login"
+    api = client.post("/api/lesson", json={"question": "Why is the sky blue?"})
+    assert api.status_code == 401
+    assert api.get_json() == {"ok": False, "error": "password required"}
+    _assert_not_signed_in(app_module, client)
+
+    # Restoring the original password makes that same session valid again.
+    monkeypatch.setenv("SITE_PASSWORD", PASSWORD)
+    assert client.get("/privacy").status_code == 200
+    _assert_signed_in(app_module, client)
+
+    monkeypatch.setenv("SITE_PASSWORD", "a-different-password")
+    rejected = client.post("/login", data={"password": PASSWORD, "next": "/privacy"})
+    assert rejected.status_code == 401
+    _assert_not_signed_in(app_module, client)
+    accepted = client.post("/login", data={"password": "a-different-password", "next": "/privacy"})
+    assert accepted.status_code == 302
+    assert _location(accepted).path == "/privacy"
+    _assert_signed_in(app_module, client)
+    assert client.get("/privacy").status_code == 200
+
+
+def test_bare_true_session_flag_is_not_signed_in(site, monkeypatch):
+    app_module, client = site
+    monkeypatch.setenv("SITE_PASSWORD", PASSWORD)
+    with client.session_transaction() as sess:
+        sess["site_ok"] = True
+        sess.permanent = True
+    page = client.get("/privacy")
+    assert page.status_code == 302
+    assert _location(page).path == "/login"
+    api = client.post("/api/does-not-exist")
+    assert api.status_code == 401
+    assert api.get_json() == {"ok": False, "error": "password required"}
+    _assert_not_signed_in(app_module, client)

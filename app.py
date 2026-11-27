@@ -105,7 +105,8 @@ _SITE_SESSION_MAX_AGE_S = 30 * 24 * 3600
 _SITE_LOGIN_WINDOW_S = 15 * 60
 _SITE_LOGIN_LIMIT = 10
 # Each gunicorn worker keeps its own count, so the effective limit is up to
-# workers x 10. A restart resets the counts.
+# workers x 10. A restart resets the counts. A client already at the limit is
+# rejected before the password is checked.
 _SITE_LOGIN_WRONG = "That password isn't right. Please try again."
 _SITE_LOGIN_LIMITED = "Too many tries. Please wait a few minutes and try again."
 _SITE_JSON_PATHS = {
@@ -131,7 +132,7 @@ class _SiteGateSessionInterface(SecureCookieSessionInterface):
     """30-day cookie for the site password. Other sessions keep the 7-day lifetime."""
 
     def get_expiration_time(self, app, session):
-        if session.get(_SITE_SESSION_KEY) is True:
+        if _site_session_matches(session.get(_SITE_SESSION_KEY)):
             return datetime.now(timezone.utc) + timedelta(seconds=_SITE_SESSION_MAX_AGE_S)
         return super().get_expiration_time(app, session)
 
@@ -146,7 +147,7 @@ class _SiteGateSessionInterface(SecureCookieSessionInterface):
         # then re-check every other session against the existing 7-day lifetime
         # so an admin-only cookie does not live longer when the gate is off.
         data = _load_signed_session(serializer, raw, _SITE_SESSION_MAX_AGE_S)
-        if isinstance(data, dict) and data.get(_SITE_SESSION_KEY) is True:
+        if isinstance(data, dict) and _site_session_matches(data.get(_SITE_SESSION_KEY)):
             return self.session_class(data)
         shorter = _load_signed_session(
             serializer, raw, int(app.permanent_session_lifetime.total_seconds())
@@ -156,7 +157,7 @@ class _SiteGateSessionInterface(SecureCookieSessionInterface):
         return self.session_class(shorter)
 
     def save_session(self, app, session, response):
-        if session.get(_SITE_SESSION_KEY) is not True:
+        if not _site_session_matches(session.get(_SITE_SESSION_KEY)):
             return super().save_session(app, session, response)
         name = self.get_cookie_name(app)
         domain = self.get_cookie_domain(app)
@@ -203,8 +204,37 @@ def _site_gate_enabled() -> bool:
     return bool(_site_password())
 
 
+# Domain separator so this HMAC is not the password and not the IP hash.
+_SITE_PASSWORD_FINGERPRINT_PREFIX = b"site-password|"
+
+
+def _site_password_fingerprint() -> str | None:
+    """HMAC-SHA256 of SITE_PASSWORD, keyed with FLASK_SECRET_KEY.
+
+    None when the signing key is missing, so nothing is stored. The password
+    itself is never the return value, and this function does not log it.
+    """
+    password = _site_password()
+    key = os.getenv("FLASK_SECRET_KEY", "").strip()
+    if not password or not key or not _signing_key_configured():
+        return None
+    return hmac.new(
+        key.encode("utf-8"),
+        _SITE_PASSWORD_FINGERPRINT_PREFIX + password.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _site_session_matches(stored) -> bool:
+    """True when the session flag is the fingerprint of the current password."""
+    expected = _site_password_fingerprint()
+    if not expected or not isinstance(stored, str) or len(stored) != len(expected):
+        return False
+    return hmac.compare_digest(stored, expected)
+
+
 def _site_authed() -> bool:
-    return session.get(_SITE_SESSION_KEY) is True
+    return _site_session_matches(session.get(_SITE_SESSION_KEY))
 
 
 def _safe_next(raw: str | None) -> str:
@@ -255,6 +285,26 @@ def _prune_site_login(hits: deque, now: float) -> None:
         hits.popleft()
 
 
+def _site_login_limited(bucket: str) -> bool:
+    """True when this hashed IP is already at the failed-login limit.
+
+    Does not record a new try and does not clear a live limit, so a correct
+    password cannot bypass the window. Expired tries are dropped so the limit
+    lifts when the window passes.
+    """
+    now = time.time()
+    with _site_login_lock:
+        hits = _site_login_failures.get(bucket)
+        if not hits:
+            return False
+        _prune_site_login(hits, now)
+        if len(hits) >= _SITE_LOGIN_LIMIT:
+            return True
+        if not hits:
+            _site_login_failures.pop(bucket, None)
+        return False
+
+
 def _note_site_login_failure(bucket: str) -> bool:
     """Remember one failed password. True when this IP is already over the limit.
 
@@ -290,10 +340,11 @@ def reset_site_login_limits() -> None:
 
 def _replace_session(extra: dict | None = None, *, permanent: bool = False) -> None:
     """Start a fresh session, keeping the site-password flag when it is valid."""
-    keep_gate = session.get(_SITE_SESSION_KEY) is True
+    stored = session.get(_SITE_SESSION_KEY)
+    keep_gate = _site_session_matches(stored)
     session.clear()
     if keep_gate:
-        session[_SITE_SESSION_KEY] = True
+        session[_SITE_SESSION_KEY] = stored
     if extra:
         session.update(extra)
     if permanent or keep_gate:
@@ -389,26 +440,34 @@ def site_login():
         # is the same protection the admin password form uses.
         provided = request.form.get("password", "")
         bucket = _site_login_bucket()
-        try:
-            # Compare bytes so a different length or encoding is a mismatch.
-            # Do not log `provided` — a traceback would keep the password.
-            password_ok = hmac.compare_digest(
-                provided.encode("utf-8"), _site_password().encode("utf-8")
-            )
-        except UnicodeError:
-            password_ok = False
-        if password_ok:
-            _clear_site_login_failures(bucket)
-            session.clear()
-            session[_SITE_SESSION_KEY] = True
-            session.permanent = True
-            return redirect(nxt)
-        if _note_site_login_failure(bucket):
+        # askers.ip_hash is already at the limit: do not look at the password.
+        if _site_login_limited(bucket):
             error = _SITE_LOGIN_LIMITED
             status = 429
         else:
-            error = _SITE_LOGIN_WRONG
-            status = 401
+            try:
+                # Compare bytes so a different length or encoding is a mismatch.
+                # Do not log `provided` — a traceback would keep the password.
+                password_ok = hmac.compare_digest(
+                    provided.encode("utf-8"), _site_password().encode("utf-8")
+                )
+            except UnicodeError:
+                password_ok = False
+            if password_ok:
+                fingerprint = _site_password_fingerprint()
+                if not fingerprint:
+                    return _signing_key_unavailable()
+                _clear_site_login_failures(bucket)
+                session.clear()
+                session[_SITE_SESSION_KEY] = fingerprint
+                session.permanent = True
+                return redirect(nxt)
+            if _note_site_login_failure(bucket):
+                error = _SITE_LOGIN_LIMITED
+                status = 429
+            else:
+                error = _SITE_LOGIN_WRONG
+                status = 401
     return render_template("site_login.html", error=error, next_path=nxt), status
 
 
