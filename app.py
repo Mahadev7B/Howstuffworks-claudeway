@@ -1202,7 +1202,10 @@ def api_feedback():
     if not ratelimit.allow("feedback", _client_ip(), FEEDBACK_HOURLY_LIMIT):
         return jsonify({"ok": False, "error": "Too many feedback submissions. Try again later."}), 429
 
-    save_feedback(question, rating, comment, client_id=client_id, **ctx)
+    save_feedback(
+        question, rating, comment, client_id=client_id,
+        country=ctx.get("country"), user_agent=ctx.get("user_agent"),
+    )
 
     if rating == "up" and db_enabled:
         # Lesson is already saved to cached_lessons on generation — just pin it.

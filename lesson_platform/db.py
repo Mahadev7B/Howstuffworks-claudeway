@@ -171,6 +171,8 @@ ALTER TABLE feedback  ADD COLUMN IF NOT EXISTS country    TEXT;
 ALTER TABLE feedback  ADD COLUMN IF NOT EXISTS user_agent TEXT;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS ip_address TEXT;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS ip_hash    TEXT;
+CREATE INDEX IF NOT EXISTS api_calls_ip_hash_created_idx
+  ON api_calls (ip_hash, created_at) WHERE ip_hash IS NOT NULL;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS city       TEXT;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS region     TEXT;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS country    TEXT;
@@ -826,6 +828,7 @@ def ip_calls_last_hour(ip_hash: str | None, endpoints: tuple[str, ...]) -> int:
                 WHERE ip_hash = %s
                   AND ip_hash IS NOT NULL
                   AND endpoint = ANY(%s)
+                  AND model <> 'cache'
                   AND created_at > NOW() - INTERVAL '1 hour'
                 """,
                 (ip_hash, list(endpoints)),
@@ -885,6 +888,8 @@ def _exclude_admin_ip_sql() -> tuple[str, list]:
     params: list = []
 
     if ADMIN_EXCLUDE_CITIES:
+        # A null city stays in the charts. New rows no longer record a city, so
+        # this only drops older rows whose city is one of the named places.
         clauses.append("(city IS NULL OR city != ALL(%s))")
         params.append(ADMIN_EXCLUDE_CITIES)
 

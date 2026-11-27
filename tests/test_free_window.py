@@ -27,6 +27,22 @@ def _backdate(digest: str, age_s: float) -> None:
         askers._memory_ip[digest][qhash] = (when, pair[1])
 
 
+def test_unusable_free_window_hours_warns_once(monkeypatch, caplog):
+    import logging
+    askers._warned_short_window = False
+    try:
+        with caplog.at_level(logging.WARNING, logger="lesson_platform.askers"):
+            monkeypatch.setenv("FREE_WINDOW_HOURS", "abc")
+            assert askers.free_window_hours() == 6
+            monkeypatch.setenv("FREE_WINDOW_HOURS", "2.5")
+            assert askers.free_window_hours() == 6
+            monkeypatch.setenv("FREE_WINDOW_HOURS", "0")
+            assert askers.free_window_hours() == 6
+        assert caplog.text.count("using 6") == 1
+    finally:
+        askers._warned_short_window = False
+
+
 def test_free_window_hours_defaults_to_six(monkeypatch):
     monkeypatch.delenv("FREE_WINDOW_HOURS", raising=False)
     assert askers.free_window_hours() == 6
@@ -379,5 +395,5 @@ def test_privacy_page_renders_the_window(monkeypatch):
     monkeypatch.setenv("FREE_WINDOW_HOURS", "4")
     app_module = __import__("app")
     page = app_module.app.test_client().get("/privacy").get_data(as_text=True)
-    assert "We delete the scrambled network code within 4 hours." in page
+    assert "We delete the scrambled network code within about 4 hours." in page
     assert "We do not currently delete the scrambled network code on a short timer." not in page

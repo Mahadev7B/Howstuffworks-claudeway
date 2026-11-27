@@ -26,6 +26,7 @@ def _store(monkeypatch):
                     1 for row in rows
                     if row["ip_hash"] and row["ip_hash"] == digest
                     and row["endpoint"] in endpoints and row["age_h"] < 1
+                    and row.get("model") != "cache"
                 )
             elif self.sql.startswith("UPDATE"):
                 table = "api_calls" if "UPDATE api_calls" in self.sql else "asker_questions"
@@ -138,6 +139,15 @@ def test_purge_nulls_old_api_call_codes_and_the_hourly_limit_still_trips(monkeyp
     with app_module.app.test_request_context("/", headers={"X-Forwarded-For": "203.0.113.11"}):
         db._IP_RATE_CACHE.clear()
         assert app_module._guardrail_check("/api/lesson", {}) == app_module.RATE_LIMIT_ERROR
+
+
+def test_cached_lesson_rows_do_not_count_toward_the_hourly_limit(monkeypatch):
+    rows, statements = _store(monkeypatch)
+    digest = "cached-network"
+    rows.append({"ip_hash": digest, "endpoint": "/api/lesson", "age_h": 0.2, "model": "cache"})
+    rows.append({"ip_hash": digest, "endpoint": "/api/lesson", "age_h": 0.2, "model": "claude"})
+    assert db.ip_calls_last_hour(digest, ("/api/lesson",)) == 1
+    assert "model <> 'cache'" in statements[0][0]
 
 
 def test_new_api_call_stores_the_network_code_and_not_the_address(monkeypatch):

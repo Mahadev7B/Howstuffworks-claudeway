@@ -99,8 +99,8 @@ def free_window_hours() -> int:
     try:
         hours = int(raw)
     except ValueError:
-        return 6
-    if hours < _MIN_FREE_WINDOW_HOURS:
+        hours = None
+    if hours is None or hours < _MIN_FREE_WINDOW_HOURS:
         if not _warned_short_window:
             _warned_short_window = True
             logger.warning(
@@ -139,6 +139,8 @@ def _purge_db_ip_hashes() -> bool:
     with db._pool.connection(timeout=db._POOL_TIMEOUT_S) as conn:
         with conn.transaction():
             with conn.cursor() as cur:
+                cur.execute("SET LOCAL statement_timeout = '5s'")
+                cur.execute("SET LOCAL lock_timeout = '2s'")
                 cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (_PURGE_ADVISORY_LOCK_KEY,))
                 row = cur.fetchone()
                 if not row or not row[0]:
@@ -231,7 +233,6 @@ def allowance(email: str, question: str, is_saved=None, ip_hash: str | None = No
     `is_saved` is an optional callable that says whether a saved lesson already
     exists for the question; it's only consulted when the daily limit is reached.
     """
-    maybe_purge_ip_hashes()
     hours = free_window_hours()
     qhash = db.question_hash(question)
     now = datetime.now(timezone.utc)
@@ -336,7 +337,6 @@ def record_question(email: str, question: str, generated: bool = True, ip_hash: 
     `ip_hash` is the one-way code for the client IP. Pass None for a subscriber so
     their lessons do not use up that network's free ones.
     """
-    maybe_purge_ip_hashes()
     qhash = db.question_hash(question)
     if db._pool is None:
         with _memory_lock:
