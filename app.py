@@ -499,6 +499,7 @@ def _client_context() -> dict:
     return {
         "country": country,
         "user_agent": request.headers.get("User-Agent"),
+        "ip_hash": askers.ip_hash(_client_ip()),
     }
 
 
@@ -529,6 +530,11 @@ def _guardrail_check(endpoint: str, ctx: dict) -> str | None:
     # trigger generation (POST /api/lesson). GET /lesson, /api/tts, static
     # files etc. are excluded.
     if endpoint in LESSON_RATE_LIMIT_ENDPOINTS:
+        digest = askers.ip_hash(_client_ip())
+        recent = ip_calls_last_hour(digest, tuple(LESSON_RATE_LIMIT_ENDPOINTS))
+        if recent >= settings.per_ip_hourly_limit:
+            logger.warning("Hourly lesson limit reached for one network on %s", endpoint)
+            return RATE_LIMIT_ERROR
         if not ratelimit.allow("lesson", _client_ip(), settings.per_ip_hourly_limit):
             logger.warning("Hourly lesson limit reached for one device on %s", endpoint)
             return RATE_LIMIT_ERROR

@@ -81,18 +81,33 @@ def ip_hash(ip: str | None) -> str | None:
     return hmac.new(_ip_hmac_key(), b"free-lesson-ip|" + ip.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+# The hourly lesson count reads api_calls.ip_hash for the past hour. A purge
+# window under 1 hour would delete that code before the count could see it, so
+# a configured value below 1 is ignored and the default of 6 is used instead.
+_MIN_FREE_WINDOW_HOURS = 1
+_warned_short_window = False
+
+
 def free_window_hours() -> int:
     """Hours a network code counts toward the free lessons and how long it is kept.
 
     ``FREE_WINDOW_HOURS`` is the only setting. The cap and the purge both call this.
-    A missing or unusable value means 6.
+    A missing or unusable value, including anything below 1 hour, means 6.
     """
+    global _warned_short_window
     raw = os.getenv("FREE_WINDOW_HOURS", "6").strip()
     try:
         hours = int(raw)
     except ValueError:
         return 6
-    return hours if hours >= 1 else 6
+    if hours < _MIN_FREE_WINDOW_HOURS:
+        if not _warned_short_window:
+            _warned_short_window = True
+            logger.warning(
+                "FREE_WINDOW_HOURS is below 1; using 6 so the hourly network-code count still sees the last hour"
+            )
+        return 6
+    return hours
 
 
 def _window_cutoff(now: float | None = None) -> float:

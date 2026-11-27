@@ -141,6 +141,7 @@ CREATE TABLE IF NOT EXISTS api_calls (
   success        BOOLEAN NOT NULL,
   error          TEXT,
   ip_address     TEXT,
+  ip_hash        TEXT,
   city           TEXT,
   region         TEXT,
   country        TEXT,
@@ -169,6 +170,7 @@ ALTER TABLE feedback  ADD COLUMN IF NOT EXISTS region     TEXT;
 ALTER TABLE feedback  ADD COLUMN IF NOT EXISTS country    TEXT;
 ALTER TABLE feedback  ADD COLUMN IF NOT EXISTS user_agent TEXT;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS ip_address TEXT;
+ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS ip_hash    TEXT;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS city       TEXT;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS region     TEXT;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS country    TEXT;
@@ -371,8 +373,8 @@ def _do_record_api_call(params: tuple) -> None:
                 INSERT INTO api_calls
                   (endpoint, question, model, input_tokens, output_tokens,
                    input_chars, output_chars, cost_usd, duration_ms, success, error,
-                   ip_address, country, user_agent, lesson)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   ip_address, ip_hash, country, user_agent, lesson)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 params,
             )
@@ -401,6 +403,7 @@ def record_api_call(
     success: bool,
     error: str | None = None,
     ip_address: str | None = None,
+    ip_hash: str | None = None,
     city: str | None = None,
     region: str | None = None,
     country: str | None = None,
@@ -438,6 +441,7 @@ def record_api_call(
         success,
         (error or "")[:1000] or None,
         None,  # IP addresses are never stored.
+        (ip_hash or "")[:128] or None,  # Same network code as the free-lesson cap. Not the raw address.
         (country or "")[:128] or None,
         (user_agent or "")[:500] or None,
         Jsonb(lesson_slim) if lesson_slim is not None else None,
@@ -790,17 +794,22 @@ def today_spend_usd() -> float:
             pass
 
 
-# Per-IP rate-limit cache: avoids a DB hit on every lesson/feedback request.
-# Key: (ip, endpoints_tuple). Value: (timestamp, count).
+# Hourly network-code cache: avoids a DB hit on every lesson request.
+# Key: (ip_hash, endpoints_tuple). Value: (timestamp, count). The raw address is not a key.
 _IP_RATE_CACHE: dict[tuple, tuple[float, int]] = {}
 _IP_RATE_CACHE_TTL_S = 30.0
 
 
-def ip_calls_last_hour(ip: str | None, endpoints: tuple[str, ...]) -> int:
-    """Count of api_calls from this IP hitting given endpoints in the last hour. 0 on failure."""
-    if not ip:
+def ip_calls_last_hour(ip_hash: str | None, endpoints: tuple[str, ...]) -> int:
+    """Count api_calls for this network code in the last hour. 0 on failure.
+
+    ``ip_hash`` is the same HMAC as the free-lesson cap. A null code, including
+    legacy rows that only have an address, does not match. The purge keeps the
+    code for at least an hour, so rows from this window are still present.
+    """
+    if not ip_hash:
         return 0
-    cache_key = (ip, endpoints)
+    cache_key = (ip_hash, endpoints)
     now = time.time()
     cached = _IP_RATE_CACHE.get(cache_key)
     if cached is not None and now - cached[0] < _IP_RATE_CACHE_TTL_S:
@@ -814,11 +823,12 @@ def ip_calls_last_hour(ip: str | None, endpoints: tuple[str, ...]) -> int:
                 """
                 SELECT COUNT(*)
                 FROM api_calls
-                WHERE ip_address = %s
+                WHERE ip_hash = %s
+                  AND ip_hash IS NOT NULL
                   AND endpoint = ANY(%s)
                   AND created_at > NOW() - INTERVAL '1 hour'
                 """,
-                (ip, list(endpoints)),
+                (ip_hash, list(endpoints)),
             )
             row = cur.fetchone()
             count = int(row[0]) if row else 0
