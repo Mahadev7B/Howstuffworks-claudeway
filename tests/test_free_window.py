@@ -39,6 +39,7 @@ def test_unusable_free_window_hours_warns_once(monkeypatch, caplog):
             monkeypatch.setenv("FREE_WINDOW_HOURS", "0")
             assert askers.free_window_hours() == 6
         assert caplog.text.count("using 6") == 1
+        assert "not a whole number" in caplog.text
     finally:
         askers._warned_short_window = False
 

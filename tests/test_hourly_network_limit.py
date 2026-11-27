@@ -22,12 +22,14 @@ def _store(monkeypatch):
             statements.append((self.sql, params))
             if self.sql.startswith("SELECT COUNT"):
                 digest, endpoints = params
-                self.count = sum(
-                    1 for row in rows
-                    if row["ip_hash"] and row["ip_hash"] == digest
-                    and row["endpoint"] in endpoints and row["age_h"] < 1
-                    and row.get("model") != "cache"
-                )
+
+                def counted(row):
+                    if not (row["ip_hash"] and row["ip_hash"] == digest and row["endpoint"] in endpoints and row["age_h"] < 1):
+                        return False
+                    has_lesson = row["lesson"] if "lesson" in row else True
+                    return has_lesson is not None or row.get("success") is False
+
+                self.count = sum(1 for row in rows if counted(row))
             elif self.sql.startswith("UPDATE"):
                 table = "api_calls" if "UPDATE api_calls" in self.sql else "asker_questions"
                 hours = params[0]
@@ -141,13 +143,63 @@ def test_purge_nulls_old_api_call_codes_and_the_hourly_limit_still_trips(monkeyp
         assert app_module._guardrail_check("/api/lesson", {}) == app_module.RATE_LIMIT_ERROR
 
 
-def test_cached_lesson_rows_do_not_count_toward_the_hourly_limit(monkeypatch):
+def test_saved_lesson_hit_does_not_count_but_a_new_lesson_and_a_failure_do(monkeypatch):
     rows, statements = _store(monkeypatch)
-    digest = "cached-network"
-    rows.append({"ip_hash": digest, "endpoint": "/api/lesson", "age_h": 0.2, "model": "cache"})
-    rows.append({"ip_hash": digest, "endpoint": "/api/lesson", "age_h": 0.2, "model": "claude"})
-    assert db.ip_calls_last_hour(digest, ("/api/lesson",)) == 1
-    assert "model <> 'cache'" in statements[0][0]
+    monkeypatch.setattr(app_module, "db_enabled", True)
+    monkeypatch.setattr(app_module, "today_spend_usd", lambda: 0.0)
+    monkeypatch.setattr(app_module.settings, "per_ip_hourly_limit", 20)
+    monkeypatch.setattr(app_module.ratelimit, "allow", lambda *args, **kwargs: True)
+    monkeypatch.setattr(app_module, "_attach_slide_images", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app_module, "save_cached_lesson", lambda *args, **kwargs: None)
+    ctx = {"country": "Canada", "user_agent": "test", "ip_hash": "net-1"}
+    saved = {
+        "title": "Saved",
+        "slides": [{"title": "S", "image_data_url": "data:image/png;base64,aa"}],
+        "meta": {"model": "claude-sonnet-4-6"},
+    }
+    monkeypatch.setattr(app_module, "get_cached_lesson", lambda *args, **kwargs: saved)
+
+    def capture(**kwargs):
+        rows.append({
+            "ip_hash": kwargs.get("ip_hash"),
+            "endpoint": kwargs.get("endpoint"),
+            "age_h": 0.1,
+            "model": kwargs.get("model"),
+            "success": kwargs.get("success"),
+            "lesson": kwargs.get("lesson"),
+            "cost_usd": kwargs.get("cost_usd"),
+        })
+
+    monkeypatch.setattr(app_module, "record_api_call", capture)
+    with app_module.app.test_request_context("/"):
+        lesson, err = app_module._track_lesson("/api/lesson", "Why is the sky blue?", ctx)
+    assert err is None and lesson["meta"]["model"] == "claude-sonnet-4-6"
+    assert rows[0]["model"] == "claude-sonnet-4-6" and rows[0]["cost_usd"] == 0.0
+    assert rows[0]["success"] is True and rows[0]["lesson"] is None
+    db._IP_RATE_CACHE.clear()
+    assert db.ip_calls_last_hour("net-1", ("/api/lesson",)) == 0
+    assert "lesson IS NOT NULL OR success = false" in statements[-1][0]
+    assert "model <> 'cache'" not in statements[-1][0]
+
+    monkeypatch.setattr(app_module, "get_cached_lesson", lambda *args, **kwargs: None)
+    monkeypatch.setattr(app_module, "generate_lesson", lambda question, settings: {
+        "title": "New",
+        "slides": [{"title": "S", "image_data_url": "data:image/png;base64,aa"}],
+        "meta": {"model": "claude-sonnet-4-6", "estimated_cost_usd": 0.01},
+    })
+    with app_module.app.test_request_context("/"):
+        made, err = app_module._track_lesson("/api/lesson", "How do birds fly?", ctx)
+    assert err is None and made["title"] == "New"
+
+    def fail(question, settings):
+        raise RuntimeError("generator down")
+
+    monkeypatch.setattr(app_module, "generate_lesson", fail)
+    with app_module.app.test_request_context("/"):
+        failed, err = app_module._track_lesson("/api/lesson", "What is rain?", ctx)
+    assert failed is None and err
+    db._IP_RATE_CACHE.clear()
+    assert db.ip_calls_last_hour("net-1", ("/api/lesson",)) == 2
 
 
 def test_new_api_call_stores_the_network_code_and_not_the_address(monkeypatch):

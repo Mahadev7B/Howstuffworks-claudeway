@@ -103,8 +103,10 @@ def free_window_hours() -> int:
     if hours is None or hours < _MIN_FREE_WINDOW_HOURS:
         if not _warned_short_window:
             _warned_short_window = True
+            why = "not a whole number" if hours is None else "below 1"
             logger.warning(
-                "FREE_WINDOW_HOURS is below 1; using 6 so the hourly network-code count still sees the last hour"
+                "FREE_WINDOW_HOURS is %s; using 6 so the hourly network-code count still sees the last hour",
+                why,
             )
         return 6
     return hours

@@ -806,8 +806,10 @@ def ip_calls_last_hour(ip_hash: str | None, endpoints: tuple[str, ...]) -> int:
     """Count api_calls for this network code in the last hour. 0 on failure.
 
     ``ip_hash`` is the same HMAC as the free-lesson cap. A null code, including
-    legacy rows that only have an address, does not match. The purge keeps the
-    code for at least an hour, so rows from this window are still present.
+    legacy rows that only have an address, does not match. A saved-lesson hit is
+    a successful row with no lesson JSON, so it is not counted. A failed call is.
+    The purge keeps the code for at least an hour, so rows from this window are
+    still present.
     """
     if not ip_hash:
         return 0
@@ -828,7 +830,7 @@ def ip_calls_last_hour(ip_hash: str | None, endpoints: tuple[str, ...]) -> int:
                 WHERE ip_hash = %s
                   AND ip_hash IS NOT NULL
                   AND endpoint = ANY(%s)
-                  AND model <> 'cache'
+                  AND (lesson IS NOT NULL OR success = false)
                   AND created_at > NOW() - INTERVAL '1 hour'
                 """,
                 (ip_hash, list(endpoints)),
@@ -941,8 +943,9 @@ def _safe_query(default, fn):
             pass
 
 
-# A "real lesson" = a successful generation that produced a lesson JSON. This
-# excludes cache-hit rows (which are recorded with model='cache' and lesson=NULL).
+# A "real lesson" = a successful generation that stored lesson JSON.
+# A saved-lesson hit is success with lesson NULL. Its model is the lesson's own
+# model name, not a separate cache label.
 _REAL_LESSON_FILTER = "success = true AND endpoint = ANY(%s) AND lesson IS NOT NULL"
 
 _ADMIN_DEFAULTS = {
