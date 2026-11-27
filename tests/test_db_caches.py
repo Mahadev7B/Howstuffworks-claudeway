@@ -66,14 +66,16 @@ class TestIPRateCache:
         assert db.ip_calls_last_hour("", ("/api/lesson",)) == 0
 
     def test_caches_within_ttl(self):
-        db._IP_RATE_CACHE[("1.2.3.4", ("/api/lesson",))] = (time.time(), 7)
+        digest = "a" * 64
+        db._IP_RATE_CACHE[(digest, ("/api/lesson",))] = (time.time(), 7)
         with patch.object(db, "_direct_connect") as mock_connect:
-            count = db.ip_calls_last_hour("1.2.3.4", ("/api/lesson",))
+            count = db.ip_calls_last_hour(digest, ("/api/lesson",))
             assert count == 7
             mock_connect.assert_not_called()
 
     def test_requeries_after_ttl_expiry(self):
-        db._IP_RATE_CACHE[("1.2.3.4", ("/api/lesson",))] = (time.time() - 60.0, 7)
+        digest = "b" * 64
+        db._IP_RATE_CACHE[(digest, ("/api/lesson",))] = (time.time() - 60.0, 7)
         mock_conn = MagicMock()
         mock_cursor = MagicMock()
         mock_cursor.fetchone.return_value = [12]
@@ -81,5 +83,9 @@ class TestIPRateCache:
         mock_conn.__exit__ = lambda *a: None
         mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
         with patch.object(db, "_direct_connect", return_value=mock_conn):
-            count = db.ip_calls_last_hour("1.2.3.4", ("/api/lesson",))
+            count = db.ip_calls_last_hour(digest, ("/api/lesson",))
             assert count == 12
+            sql = mock_cursor.execute.call_args.args[0]
+            assert "ip_hash = %s" in sql
+            assert "ip_address = %s" not in sql
+            assert mock_cursor.execute.call_args.args[1][0] == digest

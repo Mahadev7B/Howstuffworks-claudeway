@@ -46,28 +46,32 @@ def _is_public(ip: str) -> bool:
         return False
 
 
-def lookup(ip: str | None) -> tuple[Optional[str], Optional[str], Optional[str]]:
-    """Fresh lookup every call — returns (city, region, country). Any field may be None."""
+def lookup(ip: str | None) -> Optional[str]:
+    """Fresh lookup every call — returns the country, or None.
+
+    The request asks ipwho.is for success and country only. City and region are
+    not requested and are ignored if a response includes them.
+    """
     if not ip or not _is_public(ip):
-        return (None, None, None)
+        return None
     try:
         req = urllib.request.Request(
-            f"https://ipwho.is/{ip}?fields=success,city,region,country",
+            f"https://ipwho.is/{ip}?fields=success,country",
             headers={"User-Agent": "asklilowl/1.0"},
         )
         with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         if data.get("success"):
-            return (data.get("city"), data.get("region"), data.get("country"))
+            country = data.get("country")
+            return country if isinstance(country, str) else None
     except Exception:
         logger.warning("Geo lookup failed", exc_info=False)
-    return (None, None, None)
+    return None
 
 
 def extract_and_lookup(
     forwarded_for: str | None, remote_addr: str | None, cf_connecting_ip: str | None = None,
-) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
-    """Returns (ip, city, region, country)."""
+) -> tuple[Optional[str], Optional[str]]:
+    """Returns (ip, country). City and region are not looked up."""
     ip = _client_ip(forwarded_for, remote_addr, cf_connecting_ip)
-    city, region, country = lookup(ip)
-    return (ip, city, region, country)
+    return (ip, lookup(ip))
