@@ -235,14 +235,14 @@ def test_location_query_keeps_null_and_blank_rows():
         (None, 3),
         ("", 1),
     ]])
-    charts = db._admin_location_charts(cursor, ["/api/lesson", "/lesson"], "AND (city IS NULL)", ["Ashburn"])
+    charts = db._admin_location_charts(cursor, ["/api/lesson", "/lesson"])
     sql = cursor.statements[0]
     assert "country IS NOT NULL" not in sql
+    assert "city" not in sql
     assert "region" not in sql
     assert "SELECT country, COUNT(*) AS n" in sql
     assert "GROUP BY country" in sql
-    assert cursor.params[0] == ["/api/lesson", "/lesson"]
-    assert cursor.params[1:] == ("Ashburn",)
+    assert cursor.params == (["/api/lesson", "/lesson"],)
     assert _counts(charts["lessons_by_country"], "country") == {("Canada",): 6, ("Unknown",): 4}
     assert sum(row["count"] for row in charts["lessons_by_country"]) == 10
     assert "lessons_by_region" not in charts
@@ -310,6 +310,8 @@ def test_dashboard_location_chart_script_keeps_unknown_last(admin):
     assert "State or region" not in page and "State/Region" not in page
     assert "filterRegion" not in page
     assert ">City<" not in page
+    assert "Leaving out visitors" not in page
+    assert "ADMIN_EXCLUDE_CITIES" not in page
 
 
 def test_admin_grant_needs_csrf_and_gives_two_lessons(admin, monkeypatch):

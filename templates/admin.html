@@ -31,14 +31,7 @@
         <img src="{{ url_for('static', filename='brand/owl-cutout.png') }}" alt="">AskLilOwl · Admin
       </span>
       <span class="badge bg-secondary">Times in {{ admin_tz }}</span>
-      {% if excluded_cities %}
-        <span class="badge bg-warning text-dark me-auto"
-              title="Left out of the figures below. Change with the ADMIN_EXCLUDE_CITIES setting on Render.">
-          Leaving out visitors from {{ excluded_cities|join(', ') }}
-        </span>
-      {% else %}
-        <span class="me-auto"></span>
-      {% endif %}
+      <span class="me-auto"></span>
       <a href="/" class="btn btn-sm btn-outline-light">View site</a>
       <a href="{{ url_for('admin_publications') }}" class="btn btn-sm btn-outline-light">Lesson library</a>
       <form method="post" action="{{ url_for('admin_logout') }}" class="d-inline">

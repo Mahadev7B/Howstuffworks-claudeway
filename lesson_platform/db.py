@@ -305,8 +305,6 @@ def enabled() -> bool:
 
 def _do_save_feedback(params: tuple) -> None:
     # One entry per lesson visit: a thumb and a later comment update the same row.
-    # City and region are omitted, so a new row leaves those columns null.
-    # The conflict update does not touch them, so older values stay until a separate purge.
     sql = """
         INSERT INTO feedback
           (question, rating, comment, ip_address, country, user_agent, client_id)
@@ -339,8 +337,6 @@ def save_feedback(
     *,
     client_id: str | None = None,
     ip_address: str | None = None,
-    city: str | None = None,
-    region: str | None = None,
     country: str | None = None,
     user_agent: str | None = None,
 ) -> None:
@@ -350,8 +346,6 @@ def save_feedback(
         raise ValueError("rating must be 'up', 'down' or None")
     if rating is None and not comment:
         raise ValueError("a rating or a comment is required")
-    # Accepted so older callers still run. Never written on a new row.
-    del city, region
     params = (
         question[:500],
         rating,
@@ -406,8 +400,6 @@ def record_api_call(
     error: str | None = None,
     ip_address: str | None = None,
     ip_hash: str | None = None,
-    city: str | None = None,
-    region: str | None = None,
     country: str | None = None,
     user_agent: str | None = None,
     lesson: dict[str, Any] | None = None,
@@ -416,8 +408,6 @@ def record_api_call(
     returns immediately so lesson generation is never delayed by DB latency."""
     if _pool is None:
         return
-    # Accepted so older callers still run. Never written. Older rows are not updated.
-    del city, region
     # Strip image_data_url before storing — base64 images are ~1MB each and
     # can be regenerated from Flux. Storing them blocks the connection for
     # several seconds and exhausts the pool under concurrent load.
@@ -872,36 +862,6 @@ _raw_admin_ips = [ip.strip() for ip in os.getenv("ADMIN_IPS", "").split(",") if 
 ADMIN_IPS: list[str] = [ip for ip in _raw_admin_ips if not ip.endswith(":")]
 ADMIN_IP_PREFIXES: list[str] = [ip for ip in _raw_admin_ips if ip.endswith(":")]
 
-# Comma-separated cities to exclude (e.g. datacenter cities like Ashburn).
-# ADMIN_EXCLUDE_CITIES=Ashburn,Frankfurt
-ADMIN_EXCLUDE_CITIES: list[str] = [
-    c.strip() for c in os.getenv("ADMIN_EXCLUDE_CITIES", "Ashburn,New York,Ohio,Columbus").split(",") if c.strip()
-]
-
-
-def _exclude_admin_ip_sql() -> tuple[str, list]:
-    """Return (sql_fragment, params) to append to a WHERE clause.
-
-    Excludes by exact/prefix IP match and by city (for datacenter traffic that
-    rotates IPs, e.g. Render/AWS us-east-1 appearing as Ashburn, Virginia).
-    Returns ("", []) when nothing is configured.
-    """
-    clauses: list[str] = []
-    params: list = []
-
-    if ADMIN_EXCLUDE_CITIES:
-        # A null city stays in the charts. New rows no longer record a city, so
-        # this only drops older rows whose city is one of the named places.
-        clauses.append("(city IS NULL OR city != ALL(%s))")
-        params.append(ADMIN_EXCLUDE_CITIES)
-
-    if not clauses:
-        return "", []
-
-    inner = " AND ".join(clauses)
-    return f"AND ({inner})", params
-
-
 def today_start_local() -> datetime:
     """Return the timezone-aware datetime at midnight ADMIN_TZ today.
 
@@ -1039,24 +999,22 @@ def _admin_askers(cur, today_start: datetime, limit: int) -> dict[str, Any]:
 
 
 def _admin_feedback(cur, limit: int) -> dict[str, Any]:
-    xip_sql, xip_params = _exclude_admin_ip_sql()
-    where = f"WHERE {xip_sql[4:]}" if xip_sql else ""
-    cur.execute(f"""
+    cur.execute("""
         SELECT COUNT(*),
                COUNT(*) FILTER (WHERE rating = 'up'),
                COUNT(*) FILTER (WHERE rating = 'down'),
                COUNT(comment),
                COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '30 days')
-        FROM feedback {where}
-    """, (*xip_params,))
+        FROM feedback
+    """)
     total, up, down, comments, last_30d = (int(v or 0) for v in cur.fetchone())
     cur.execute(f"""
         SELECT to_char(created_at AT TIME ZONE '{ADMIN_TZ}', 'YYYY-MM-DD HH24:MI'),
                rating, question, comment, country
-        FROM feedback {where}
+        FROM feedback
         ORDER BY created_at DESC
         LIMIT %s
-    """, (*xip_params, limit))
+    """, (limit,))
     rows = [{"created_at": r[0], "rating": r[1], "question": r[2], "comment": r[3],
              "place": location_bucket(r[4])} for r in cur.fetchall()]
     return {"total": total, "up": up, "down": down, "comments": comments, "last_30d": last_30d,
@@ -1080,8 +1038,7 @@ def aggregate_lessons_by_location(rows: Iterable[Mapping[str, Any]]) -> dict[str
 
     Each row is one lesson, or a group with a ``count``. A missing key, null, or
     blank country is Unknown. Named countries stay in descending count; Unknown
-    is last. City and region on a row are ignored. The counts sum to the number
-    of lessons.
+    is last. The counts sum to the number of lessons.
     """
     country_counts: dict[str, int] = {}
     for row in rows:
@@ -1115,14 +1072,14 @@ def _location_filter_clause(column: str, value: str | None) -> tuple[str, list[A
     return (f"{column} = %s", [value])
 
 
-def _admin_location_charts(cur, endpoints: list[str], xip_sql: str, xip_params: list) -> dict[str, list[dict[str, Any]]]:
+def _admin_location_charts(cur, endpoints: list[str]) -> dict[str, list[dict[str, Any]]]:
     """All-time lesson counts by country, including lessons whose country was never recorded."""
     cur.execute(f"""
         SELECT country, COUNT(*) AS n
         FROM api_calls
-        WHERE {_REAL_LESSON_FILTER} {xip_sql}
+        WHERE {_REAL_LESSON_FILTER}
         GROUP BY country
-    """, (endpoints, *xip_params))
+    """, (endpoints,))
     rows = [
         {"country": country, "count": int(count)}
         for country, count in cur.fetchall()
@@ -1161,65 +1118,61 @@ def admin_load_all(
         today_start = today_start_local()
         logger.info("Admin load_all: today_start=%s (tz=%s)", today_start.isoformat(), ADMIN_TZ)
 
-        xip_sql, xip_params = _exclude_admin_ip_sql()
-
         # ── Overview ─────────────────────────────────────────────────────────
-        cur.execute(f"SELECT COUNT(*) FROM api_calls WHERE {_REAL_LESSON_FILTER} {xip_sql}",
-                    (endpoints, *xip_params))
+        cur.execute(f"SELECT COUNT(*) FROM api_calls WHERE {_REAL_LESSON_FILTER}",
+                    (endpoints,))
         total_lessons = int(cur.fetchone()[0] or 0)
 
         cur.execute(f"""
             SELECT COUNT(*) FROM api_calls
-            WHERE {_REAL_LESSON_FILTER} AND created_at >= %s {xip_sql}
-        """, (endpoints, today_start, *xip_params))
+            WHERE {_REAL_LESSON_FILTER} AND created_at >= %s
+        """, (endpoints, today_start))
         lessons_today = int(cur.fetchone()[0] or 0)
 
         cur.execute("SELECT COUNT(*) FROM askers WHERE last_question_at >= %s", (today_start,))
         unique_ips_today = int(cur.fetchone()[0] or 0)  # Emails that asked today; no IPs are kept.
 
-        cur.execute(f"""
+        cur.execute("""
             SELECT COALESCE(SUM(cost_usd), 0) FROM api_calls
-            WHERE created_at >= %s {xip_sql}
-        """, (today_start, *xip_params))
+            WHERE created_at >= %s
+        """, (today_start,))
         cost_today = float(cur.fetchone()[0] or 0.0)
 
-        _all_time_where = f"WHERE {xip_sql[4:]}" if xip_sql else ""
-        cur.execute(f"SELECT COALESCE(SUM(cost_usd), 0) FROM api_calls {_all_time_where}",
-                    (*xip_params,))
+        cur.execute("SELECT COALESCE(SUM(cost_usd), 0) FROM api_calls")
         cost_all_time = float(cur.fetchone()[0] or 0.0)
 
         avg_cost_per_lesson = (cost_all_time / total_lessons) if total_lessons else 0.0
 
         cur.execute(f"""
             SELECT COALESCE(AVG(duration_ms), 0) FROM api_calls
-            WHERE {_REAL_LESSON_FILTER} {xip_sql}
-        """, (endpoints, *xip_params))
+            WHERE {_REAL_LESSON_FILTER}
+        """, (endpoints,))
         avg_claude_ms = float(cur.fetchone()[0] or 0.0)
 
-        cur.execute(f"""
+        cur.execute("""
             SELECT COALESCE(AVG(duration_ms), 0) FROM api_calls
-            WHERE endpoint = %s AND success = true {xip_sql}
-        """, (_FLUX_ENDPOINT, *xip_params))
+            WHERE endpoint = %s AND success = true
+        """, (_FLUX_ENDPOINT,))
         avg_flux_ms = float(cur.fetchone()[0] or 0.0)
 
-        cur.execute(f"""
+        cur.execute("""
             SELECT COUNT(*) FROM api_calls
-            WHERE success = false AND endpoint = ANY(%s) AND created_at >= %s {xip_sql}
-        """, (endpoints, today_start, *xip_params))
+            WHERE success = false AND endpoint = ANY(%s) AND created_at >= %s
+        """, (endpoints, today_start))
         lesson_errors_today = int(cur.fetchone()[0] or 0)
 
-        cur.execute(f"""
+        cur.execute("""
             SELECT COUNT(*) FROM api_calls
-            WHERE success = false AND created_at >= %s {xip_sql}
-        """, (today_start, *xip_params))
+            WHERE success = false AND created_at >= %s
+        """, (today_start,))
         all_errors_today = int(cur.fetchone()[0] or 0)
 
-        cur.execute(f"""
+        cur.execute("""
             SELECT COUNT(*),
                    COUNT(*) FILTER (WHERE created_at >= %s)
             FROM api_calls
-            WHERE success = true AND endpoint = ANY(%s) AND lesson IS NULL {xip_sql}
-        """, (today_start, endpoints, *xip_params))
+            WHERE success = true AND endpoint = ANY(%s) AND lesson IS NULL
+        """, (today_start, endpoints))
         saved_all_time, saved_today = (int(v or 0) for v in cur.fetchone())
 
         overview = {
@@ -1237,7 +1190,6 @@ def admin_load_all(
             "errors_today": lesson_errors_today,
             "errors_today_total": all_errors_today,
             "today_start_iso": today_start.isoformat(),
-            "admin_ips_excluded": len(ADMIN_EXCLUDE_CITIES),
         }
 
         # ── Lessons by day ────────────────────────────────────────────────────
@@ -1245,9 +1197,9 @@ def admin_load_all(
             SELECT {_LOCAL_DATE_SQL} AS d, COUNT(*) AS n
             FROM api_calls
             WHERE {_REAL_LESSON_FILTER}
-              AND created_at > NOW() - INTERVAL '1 day' * %s {xip_sql}
+              AND created_at > NOW() - INTERVAL '1 day' * %s
             GROUP BY d ORDER BY d
-        """, (endpoints, days_lessons, *xip_params))
+        """, (endpoints, days_lessons))
         lessons_by_day = _fill_days([{"date": str(r[0]), "count": int(r[1])} for r in cur.fetchall()],
                                     days_lessons, {"count": 0})
 
@@ -1256,9 +1208,9 @@ def admin_load_all(
             SELECT {_LOCAL_HOUR_SQL} AS h, COUNT(*) AS n
             FROM api_calls
             WHERE {_REAL_LESSON_FILTER}
-              AND created_at > NOW() - INTERVAL '7 days' {xip_sql}
+              AND created_at > NOW() - INTERVAL '7 days'
             GROUP BY h ORDER BY h
-        """, (endpoints, *xip_params))
+        """, (endpoints,))
         hour_rows = {int(r[0]): int(r[1]) for r in cur.fetchall()}
         lessons_by_hour = [{"hour": h, "count": hour_rows.get(h, 0)} for h in range(24)]
 
@@ -1266,8 +1218,8 @@ def admin_load_all(
         cur.execute(f"""
             SELECT user_agent FROM api_calls
             WHERE user_agent IS NOT NULL AND {_REAL_LESSON_FILTER}
-              AND created_at > NOW() - INTERVAL '30 days' {xip_sql}
-        """, (endpoints, *xip_params))
+              AND created_at > NOW() - INTERVAL '30 days'
+        """, (endpoints,))
         mobile = desktop = 0
         for (ua,) in cur.fetchall():
             ua_l = (ua or "").lower()
@@ -1278,13 +1230,13 @@ def admin_load_all(
         device_split = {"mobile": mobile, "desktop": desktop}
 
         # ── Top questions ─────────────────────────────────────────────────────
-        cur.execute(f"""
+        cur.execute("""
             SELECT MIN(question), COUNT(*) AS n
             FROM api_calls
-            WHERE success = true AND endpoint = ANY(%s) {xip_sql}
+            WHERE success = true AND endpoint = ANY(%s)
             GROUP BY LOWER(TRIM(question)) ORDER BY n DESC
             LIMIT %s
-        """, (endpoints, *xip_params, limit_questions))
+        """, (endpoints, limit_questions))
         top_questions = [{"question": r[0], "count": int(r[1])} for r in cur.fetchall()]
 
         # ── Cost by day ───────────────────────────────────────────────────────
@@ -1294,9 +1246,9 @@ def admin_load_all(
                    COALESCE(SUM(CASE WHEN endpoint = %s      THEN cost_usd ELSE 0 END), 0),
                    COALESCE(SUM(CASE WHEN endpoint = %s      THEN cost_usd ELSE 0 END), 0)
             FROM api_calls
-            WHERE created_at > NOW() - INTERVAL '1 day' * %s {xip_sql}
+            WHERE created_at > NOW() - INTERVAL '1 day' * %s
             GROUP BY d ORDER BY d
-        """, (endpoints, _FLUX_ENDPOINT, _TTS_ENDPOINT, days_cost, *xip_params))
+        """, (endpoints, _FLUX_ENDPOINT, _TTS_ENDPOINT, days_cost))
         cost_by_day = []
         for r in cur.fetchall():
             c, f, t = float(r[1] or 0), float(r[2] or 0), float(r[3] or 0)
@@ -1306,7 +1258,7 @@ def admin_load_all(
         cost_by_day = _fill_days(cost_by_day, days_cost, {"claude": 0, "flux": 0, "tts": 0, "total": 0})
 
         # ── Cost by provider ──────────────────────────────────────────────────
-        cur.execute(f"""
+        cur.execute("""
             SELECT
               CASE
                 WHEN endpoint = ANY(%s) THEN 'Claude'
@@ -1316,9 +1268,8 @@ def admin_load_all(
               END AS provider,
               COALESCE(SUM(cost_usd), 0) AS total
             FROM api_calls
-            {_all_time_where}
             GROUP BY provider ORDER BY total DESC
-        """, (endpoints, _FLUX_ENDPOINT, _TTS_ENDPOINT, *xip_params))
+        """, (endpoints, _FLUX_ENDPOINT, _TTS_ENDPOINT))
         cost_by_provider = [{"provider": r[0], "cost": round(float(r[1] or 0), 5)}
                             for r in cur.fetchall()]
 
@@ -1342,10 +1293,10 @@ def admin_load_all(
                WHERE w.endpoint = %s AND w.success = true
                  AND w.created_at BETWEEN a.created_at AND a.created_at + INTERVAL '5 minutes')
             FROM api_calls a
-            WHERE {_REAL_LESSON_FILTER} {xip_sql}
+            WHERE {_REAL_LESSON_FILTER}
             ORDER BY a.created_at DESC
             LIMIT %s
-        """, (_FLUX_ENDPOINT, _TTS_ENDPOINT, _FLUX_ENDPOINT, endpoints, *xip_params, limit_recent))
+        """, (_FLUX_ENDPOINT, _TTS_ENDPOINT, _FLUX_ENDPOINT, endpoints, limit_recent))
         recent_lessons = []
         for r in cur.fetchall():
             rid, created_local, question, model, claude_cost, dur_ms, ua, flux_c, tts_c, flux_ms = r
@@ -1373,9 +1324,9 @@ def admin_load_all(
                    COALESCE(AVG(CASE WHEN endpoint = ANY(%s) AND lesson IS NOT NULL THEN duration_ms END), 0),
                    COALESCE(AVG(CASE WHEN endpoint = %s THEN duration_ms END), 0)
             FROM api_calls
-            WHERE success = true AND created_at > NOW() - INTERVAL '1 day' * %s {xip_sql}
+            WHERE success = true AND created_at > NOW() - INTERVAL '1 day' * %s
             GROUP BY d ORDER BY d
-        """, (endpoints, _FLUX_ENDPOINT, days_perf, *xip_params))
+        """, (endpoints, _FLUX_ENDPOINT, days_perf))
         perf_by_day = [{"date": str(r[0]), "claude_ms": int(r[1] or 0), "flux_ms": int(r[2] or 0)}
                        for r in cur.fetchall()]
         perf_by_day = _fill_days(perf_by_day, days_perf, {"claude_ms": None, "flux_ms": None})
@@ -1385,10 +1336,10 @@ def admin_load_all(
             SELECT to_char(created_at AT TIME ZONE '{ADMIN_TZ}', 'YYYY-MM-DD HH24:MI'),
                    question, duration_ms, cost_usd
             FROM api_calls
-            WHERE {_REAL_LESSON_FILTER} {xip_sql}
+            WHERE {_REAL_LESSON_FILTER}
             ORDER BY duration_ms DESC
             LIMIT %s
-        """, (endpoints, *xip_params, limit_slowest))
+        """, (endpoints, limit_slowest))
         slowest_lessons = [{"created_at": r[0], "question": r[1],
                             "duration_ms": int(r[2] or 0), "cost": round(float(r[3] or 0), 5)}
                            for r in cur.fetchall()]
@@ -1400,17 +1351,16 @@ def admin_load_all(
             FROM api_calls
             WHERE success = false
               AND created_at > NOW() - INTERVAL '1 day'
-              {xip_sql}
             ORDER BY created_at DESC
             LIMIT %s
-        """, (*xip_params, limit_errors))
+        """, (limit_errors,))
         recent_errors = [{"created_at": r[0], "endpoint": r[1], "question": r[2],
                           "error": r[3]}
                          for r in cur.fetchall()]
 
         # ── Lessons by country (all time) ─────────────────────────────────────
         # A blank country stays in the result and is counted as Unknown.
-        location_charts = _admin_location_charts(cur, endpoints, xip_sql, xip_params)
+        location_charts = _admin_location_charts(cur, endpoints)
         lessons_by_country = location_charts["lessons_by_country"]
 
         try:
@@ -1452,21 +1402,17 @@ def admin_lessons_filtered(
 ) -> list[dict[str, Any]]:
     """Return recent lessons filtered by country. One pool checkout.
 
-    A null country is labeled Unknown. City and region are not selected.
+    A null country is labeled Unknown.
     """
     endpoints = list(_LESSON_GEN_ENDPOINTS)
 
     def _run(cur):
-        xip_sql, xip_params = _exclude_admin_ip_sql()
         clauses = [_REAL_LESSON_FILTER]
         params: list[Any] = [endpoints]
         match = _location_filter_clause("country", country)
         if match:
             clauses.append(match[0])
             params.extend(match[1])
-        if xip_sql:
-            clauses.append(xip_sql[4:])  # strip leading "AND "
-            params.extend(xip_params)
         params.append(limit)
         cur.execute(f"""
             SELECT

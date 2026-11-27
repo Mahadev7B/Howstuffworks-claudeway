@@ -104,9 +104,8 @@ def test_save_feedback_accepts_comment_only_and_passes_client_id(monkeypatch):
     monkeypatch.setattr(db, "_pool", object())
     monkeypatch.setattr(db, "_bg", lambda fn, params: captured.append(params))
     db.save_feedback("Why?", None, "More dinosaurs", client_id="visit-0002",
-                     city="Austin", region="Texas", country="United States")
+                     country="United States")
     assert captured[0][1] is None and captured[0][2] == "More dinosaurs" and captured[0][-1] == "visit-0002"
-    assert "Austin" not in repr(captured[0]) and "Texas" not in repr(captured[0])
     assert "United States" in captured[0]
     with pytest.raises(ValueError):
         db.save_feedback("Why?", None, None)
