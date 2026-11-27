@@ -230,7 +230,9 @@ def test_privacy_page_estimates_country_only():
     app_module = importlib.import_module("app")
     page = app_module.app.test_client().get("/privacy").get_data(as_text=True)
     assert "estimated country" in page
-    assert "to estimate the country" in page
+    assert page.count("We send the visitor's IP address to a location service (ipwho.is) to estimate the country only.") == 2
+    assert "removing this" not in page
+    assert "the scrambled network code stored with those questions" not in page
     assert "city, region" not in page
     assert "estimated city, region and country" not in page
     assert "to estimate country, region and city" not in page
