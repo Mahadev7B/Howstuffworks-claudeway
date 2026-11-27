@@ -12,6 +12,7 @@ import hashlib
 import logging
 import os
 import re
+import sys
 import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -93,6 +94,20 @@ app.config.update(
     SESSION_COOKIE_SECURE=os.getenv("RENDER", "").strip().lower() == "true",
 )
 db_enabled = init_db()
+
+
+def _spawn_purge_timer(loop) -> None:
+    """One daemon timer per worker. Tests import this module and must not keep that thread."""
+    if "pytest" in sys.modules:
+        return
+    askers._spawn_purge_daemon(loop)
+
+
+def _install_purge_timer() -> None:
+    askers.start_purge_timer(spawn=_spawn_purge_timer)
+
+
+_install_purge_timer()
 
 # App startup time, used by /debug/status to report uptime.
 _STARTED_AT = time.time()
@@ -362,7 +377,7 @@ def _attach_slide_images(lesson: dict, ctx: dict | None = None) -> None:
     Flux slides are rendered in parallel for speed.
     """
     if ctx is None:
-        ctx = {"city": None, "region": None, "country": None, "user_agent": None}
+        ctx = {"country": None, "user_agent": None}
     use_flux = settings.image_provider == "flux" and bool(settings.fal_api_key)
     subject = lesson.get("subject", "")
     is_math = bool((lesson.get("meta") or {}).get("math")) or is_math_question(f"{lesson.get('title', '')} {subject}")
@@ -476,16 +491,15 @@ def _client_ip() -> str | None:
 
 
 def _client_context() -> dict:
-    """Approximate location and device details. The IP address is used for the lookup, then dropped."""
-    _, city, region, country = extract_and_lookup(
+    """Approximate country and device details. The IP address is used for the lookup, then dropped."""
+    _, country = extract_and_lookup(
         request.headers.get("X-Forwarded-For"), request.remote_addr,
         request.headers.get("CF-Connecting-IP"),
     )
     return {
-        "city": city,
-        "region": region,
         "country": country,
         "user_agent": request.headers.get("User-Agent"),
+        "ip_hash": askers.ip_hash(_client_ip()),
     }
 
 
@@ -516,6 +530,11 @@ def _guardrail_check(endpoint: str, ctx: dict) -> str | None:
     # trigger generation (POST /api/lesson). GET /lesson, /api/tts, static
     # files etc. are excluded.
     if endpoint in LESSON_RATE_LIMIT_ENDPOINTS:
+        digest = askers.ip_hash(_client_ip())
+        recent = ip_calls_last_hour(digest, tuple(LESSON_RATE_LIMIT_ENDPOINTS))
+        if recent >= settings.per_ip_hourly_limit:
+            logger.warning("Hourly lesson limit reached for one network on %s", endpoint)
+            return RATE_LIMIT_ERROR
         if not ratelimit.allow("lesson", _client_ip(), settings.per_ip_hourly_limit):
             logger.warning("Hourly lesson limit reached for one device on %s", endpoint)
             return RATE_LIMIT_ERROR
@@ -733,7 +752,8 @@ def sitemap():
 @app.get("/privacy")
 def privacy():
     return render_template("privacy.html", contact_email=PRIVACY_CONTACT_EMAIL, updated=PRIVACY_UPDATED,
-                           free_questions=askers.FREE_QUESTIONS)
+                           free_questions=askers.FREE_QUESTIONS,
+                           free_window_hours=askers.free_window_hours())
 
 
 @app.get("/robots.txt")
@@ -1182,7 +1202,10 @@ def api_feedback():
     if not ratelimit.allow("feedback", _client_ip(), FEEDBACK_HOURLY_LIMIT):
         return jsonify({"ok": False, "error": "Too many feedback submissions. Try again later."}), 429
 
-    save_feedback(question, rating, comment, client_id=client_id, **ctx)
+    save_feedback(
+        question, rating, comment, client_id=client_id,
+        country=ctx.get("country"), user_agent=ctx.get("user_agent"),
+    )
 
     if rating == "up" and db_enabled:
         # Lesson is already saved to cached_lessons on generation — just pin it.
@@ -1981,14 +2004,13 @@ def admin_askers_csv():
 
 @app.route("/admin/lessons-by-location", methods=["GET"])
 def admin_lessons_by_location():
-    """JSON: recent lessons filtered by country/region. Used by the location filter UI."""
+    """JSON: recent lessons filtered by country. Used by the location filter UI."""
     if not _admin_authed():
         return jsonify({"ok": False, "error": "forbidden"}), 403
     if not db_enabled:
         return jsonify({"ok": False, "lessons": []}), 503
     country = request.args.get("country") or None
-    region = request.args.get("region") or None
-    rows = admin_lessons_filtered(country=country, region=region, limit=100)
+    rows = admin_lessons_filtered(country=country, limit=100)
     return jsonify({"ok": True, "lessons": rows})
 
 

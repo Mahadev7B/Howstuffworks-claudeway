@@ -41,10 +41,12 @@ def device_tag(ip: str | None) -> str:
 
 def _write(entry: dict, forwarded_for: str | None, remote_addr: str | None) -> None:
     try:
-        _, city, region, country = extract_and_lookup(forwarded_for, remote_addr)
+        _, country = extract_and_lookup(forwarded_for, remote_addr)
     except Exception:
-        city = region = country = None
-    entry["place"] = ", ".join(part for part in (city, region, country) if part) or "—"
+        country = None
+    entry.pop("city", None)
+    entry.pop("region", None)
+    entry["place"] = country or "—"
     line = json.dumps(entry, ensure_ascii=False) + "\n"
     try:
         if _PATH.exists() and _PATH.stat().st_size > _MAX_BYTES:

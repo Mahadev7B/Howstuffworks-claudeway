@@ -6,15 +6,16 @@ import logging
 from lesson_platform import db, ratelimit
 
 
-def test_client_context_keeps_location_but_not_the_address(monkeypatch):
+def test_client_context_keeps_country_but_not_the_address(monkeypatch):
     app_module = importlib.import_module("app")
     monkeypatch.setattr(app_module, "extract_and_lookup",
-                        lambda fwd, remote, cf=None: ("203.0.113.9", "Austin", "Texas", "United States"))
+                        lambda fwd, remote, cf=None: ("203.0.113.9", "United States"))
     with app_module.app.test_request_context("/", headers={"X-Forwarded-For": "203.0.113.9"}):
         ctx = app_module._client_context()
     assert "ip_address" not in ctx
+    assert "city" not in ctx and "region" not in ctx
     assert "203.0.113.9" not in repr(ctx)
-    assert ctx["city"] == "Austin"
+    assert ctx["country"] == "United States"
 
 
 def test_database_writes_never_include_an_address(monkeypatch):

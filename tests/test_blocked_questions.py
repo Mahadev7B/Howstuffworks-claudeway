@@ -16,7 +16,7 @@ def site(monkeypatch, tmp_path):
     ratelimit.reset()
     monkeypatch.setattr(spam_log, "_PATH", tmp_path / "refused.jsonl")
     monkeypatch.setattr(spam_log, "_submit", lambda fn, *args: fn(*args))  # Write at once in tests.
-    monkeypatch.setattr(spam_log, "extract_and_lookup", lambda *a: (None, "Austin", "Texas", "United States"))
+    monkeypatch.setattr(spam_log, "extract_and_lookup", lambda *a: ("203.0.113.9", "United States"))
     yield app_module, app_module.app.test_client()
     ratelimit.reset()
 
@@ -33,7 +33,10 @@ def test_link_spam_is_noted_without_making_a_lesson_or_keeping_the_ip(site, monk
     assert reply.status_code == 400
     [entry] = rows()
     assert entry["reason"] == "link" and entry["question"] == "SCAM SERVICE https://spam.cc/"
-    assert entry["user_agent"] == "BadBot/1.0" and entry["place"] == "Austin, Texas, United States"
+    assert entry["user_agent"] == "BadBot/1.0" and entry["place"] == "United States"
+    stored = spam_log._PATH.read_text(encoding="utf-8")
+    assert "Austin" not in stored and "Texas" not in stored
+    assert "city" not in stored and "region" not in stored
     assert len(entry["device"]) == 6
     assert "203.0.113.9" not in spam_log._PATH.read_text(encoding="utf-8")
 

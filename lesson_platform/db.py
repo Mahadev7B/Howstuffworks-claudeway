@@ -141,6 +141,7 @@ CREATE TABLE IF NOT EXISTS api_calls (
   success        BOOLEAN NOT NULL,
   error          TEXT,
   ip_address     TEXT,
+  ip_hash        TEXT,
   city           TEXT,
   region         TEXT,
   country        TEXT,
@@ -169,6 +170,9 @@ ALTER TABLE feedback  ADD COLUMN IF NOT EXISTS region     TEXT;
 ALTER TABLE feedback  ADD COLUMN IF NOT EXISTS country    TEXT;
 ALTER TABLE feedback  ADD COLUMN IF NOT EXISTS user_agent TEXT;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS ip_address TEXT;
+ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS ip_hash    TEXT;
+CREATE INDEX IF NOT EXISTS api_calls_ip_hash_created_idx
+  ON api_calls (ip_hash, created_at) WHERE ip_hash IS NOT NULL;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS city       TEXT;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS region     TEXT;
 ALTER TABLE api_calls ADD COLUMN IF NOT EXISTS country    TEXT;
@@ -301,10 +305,12 @@ def enabled() -> bool:
 
 def _do_save_feedback(params: tuple) -> None:
     # One entry per lesson visit: a thumb and a later comment update the same row.
+    # City and region are omitted, so a new row leaves those columns null.
+    # The conflict update does not touch them, so older values stay until a separate purge.
     sql = """
         INSERT INTO feedback
-          (question, rating, comment, ip_address, city, region, country, user_agent, client_id)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+          (question, rating, comment, ip_address, country, user_agent, client_id)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (client_id) DO UPDATE SET
           rating  = COALESCE(EXCLUDED.rating, feedback.rating),
           comment = COALESCE(EXCLUDED.comment, feedback.comment)
@@ -344,13 +350,13 @@ def save_feedback(
         raise ValueError("rating must be 'up', 'down' or None")
     if rating is None and not comment:
         raise ValueError("a rating or a comment is required")
+    # Accepted so older callers still run. Never written on a new row.
+    del city, region
     params = (
         question[:500],
         rating,
         (comment or "")[:2000] or None,
         None,  # IP addresses are never stored.
-        (city or "")[:128] or None,
-        (region or "")[:128] or None,
         (country or "")[:128] or None,
         (user_agent or "")[:500] or None,
         client_id,
@@ -369,8 +375,8 @@ def _do_record_api_call(params: tuple) -> None:
                 INSERT INTO api_calls
                   (endpoint, question, model, input_tokens, output_tokens,
                    input_chars, output_chars, cost_usd, duration_ms, success, error,
-                   ip_address, city, region, country, user_agent, lesson)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   ip_address, ip_hash, country, user_agent, lesson)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 params,
             )
@@ -399,6 +405,7 @@ def record_api_call(
     success: bool,
     error: str | None = None,
     ip_address: str | None = None,
+    ip_hash: str | None = None,
     city: str | None = None,
     region: str | None = None,
     country: str | None = None,
@@ -409,6 +416,8 @@ def record_api_call(
     returns immediately so lesson generation is never delayed by DB latency."""
     if _pool is None:
         return
+    # Accepted so older callers still run. Never written. Older rows are not updated.
+    del city, region
     # Strip image_data_url before storing — base64 images are ~1MB each and
     # can be regenerated from Flux. Storing them blocks the connection for
     # several seconds and exhausts the pool under concurrent load.
@@ -434,8 +443,7 @@ def record_api_call(
         success,
         (error or "")[:1000] or None,
         None,  # IP addresses are never stored.
-        (city or "")[:128] or None,
-        (region or "")[:128] or None,
+        (ip_hash or "")[:128] or None,  # Same network code as the free-lesson cap. Not the raw address.
         (country or "")[:128] or None,
         (user_agent or "")[:500] or None,
         Jsonb(lesson_slim) if lesson_slim is not None else None,
@@ -788,17 +796,24 @@ def today_spend_usd() -> float:
             pass
 
 
-# Per-IP rate-limit cache: avoids a DB hit on every lesson/feedback request.
-# Key: (ip, endpoints_tuple). Value: (timestamp, count).
+# Hourly network-code cache: avoids a DB hit on every lesson request.
+# Key: (ip_hash, endpoints_tuple). Value: (timestamp, count). The raw address is not a key.
 _IP_RATE_CACHE: dict[tuple, tuple[float, int]] = {}
 _IP_RATE_CACHE_TTL_S = 30.0
 
 
-def ip_calls_last_hour(ip: str | None, endpoints: tuple[str, ...]) -> int:
-    """Count of api_calls from this IP hitting given endpoints in the last hour. 0 on failure."""
-    if not ip:
+def ip_calls_last_hour(ip_hash: str | None, endpoints: tuple[str, ...]) -> int:
+    """Count api_calls for this network code in the last hour. 0 on failure.
+
+    ``ip_hash`` is the same HMAC as the free-lesson cap. A null code, including
+    legacy rows that only have an address, does not match. A saved-lesson hit is
+    a successful row with no lesson JSON, so it is not counted. A failed call is.
+    The purge keeps the code for at least an hour, so rows from this window are
+    still present.
+    """
+    if not ip_hash:
         return 0
-    cache_key = (ip, endpoints)
+    cache_key = (ip_hash, endpoints)
     now = time.time()
     cached = _IP_RATE_CACHE.get(cache_key)
     if cached is not None and now - cached[0] < _IP_RATE_CACHE_TTL_S:
@@ -812,11 +827,13 @@ def ip_calls_last_hour(ip: str | None, endpoints: tuple[str, ...]) -> int:
                 """
                 SELECT COUNT(*)
                 FROM api_calls
-                WHERE ip_address = %s
+                WHERE ip_hash = %s
+                  AND ip_hash IS NOT NULL
                   AND endpoint = ANY(%s)
+                  AND (lesson IS NOT NULL OR success = false)
                   AND created_at > NOW() - INTERVAL '1 hour'
                 """,
-                (ip, list(endpoints)),
+                (ip_hash, list(endpoints)),
             )
             row = cur.fetchone()
             count = int(row[0]) if row else 0
@@ -873,6 +890,8 @@ def _exclude_admin_ip_sql() -> tuple[str, list]:
     params: list = []
 
     if ADMIN_EXCLUDE_CITIES:
+        # A null city stays in the charts. New rows no longer record a city, so
+        # this only drops older rows whose city is one of the named places.
         clauses.append("(city IS NULL OR city != ALL(%s))")
         params.append(ADMIN_EXCLUDE_CITIES)
 
@@ -924,8 +943,9 @@ def _safe_query(default, fn):
             pass
 
 
-# A "real lesson" = a successful generation that produced a lesson JSON. This
-# excludes cache-hit rows (which are recorded with model='cache' and lesson=NULL).
+# A "real lesson" = a successful generation that stored lesson JSON.
+# A saved-lesson hit is success with lesson NULL. Its model is the lesson's own
+# model name, not a separate cache label.
 _REAL_LESSON_FILTER = "success = true AND endpoint = ANY(%s) AND lesson IS NOT NULL"
 
 _ADMIN_DEFAULTS = {
@@ -946,7 +966,6 @@ _ADMIN_DEFAULTS = {
     "slowest_lessons": [],
     "recent_errors": [],
     "lessons_by_country": [],
-    "lessons_by_region": [],
     "feedback": {"total": 0, "up": 0, "down": 0, "comments": 0, "last_30d": 0, "rows": [], "available": False},
     "askers": {"total": 0, "new_today": 0, "new_7d": 0, "subscribed": 0, "on_free_month": 0, "waitlist": {"subscribe": 0, "browsing": 0, "price": 0}, "more_requests": 0, "at_limit": 0,
                "questions": 0, "rows": [], "available": False},
@@ -1033,13 +1052,13 @@ def _admin_feedback(cur, limit: int) -> dict[str, Any]:
     total, up, down, comments, last_30d = (int(v or 0) for v in cur.fetchone())
     cur.execute(f"""
         SELECT to_char(created_at AT TIME ZONE '{ADMIN_TZ}', 'YYYY-MM-DD HH24:MI'),
-               rating, question, comment, region, country
+               rating, question, comment, country
         FROM feedback {where}
         ORDER BY created_at DESC
         LIMIT %s
     """, (*xip_params, limit))
     rows = [{"created_at": r[0], "rating": r[1], "question": r[2], "comment": r[3],
-             "place": ", ".join(part for part in (r[4], r[5]) if part) or "—"} for r in cur.fetchall()]
+             "place": location_bucket(r[4])} for r in cur.fetchall()]
     return {"total": total, "up": up, "down": down, "comments": comments, "last_30d": last_30d,
             "rows": rows, "available": True}
 
@@ -1057,24 +1076,21 @@ def location_bucket(value: object) -> str:
 
 
 def aggregate_lessons_by_location(rows: Iterable[Mapping[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    """Count lessons by country and by region.
+    """Count lessons by country.
 
     Each row is one lesson, or a group with a ``count``. A missing key, null, or
-    blank place is Unknown. Named places stay in descending count; Unknown is last.
-    The counts in each list sum to the number of lessons.
+    blank country is Unknown. Named countries stay in descending count; Unknown
+    is last. City and region on a row are ignored. The counts sum to the number
+    of lessons.
     """
     country_counts: dict[str, int] = {}
-    region_counts: dict[tuple[str, str], int] = {}
     for row in rows:
         if "count" in row and row["count"] is not None:
             count = int(row["count"])
         else:
             count = 1
         country = location_bucket(row.get("country"))
-        region = location_bucket(row.get("region"))
         country_counts[country] = country_counts.get(country, 0) + count
-        key = (country, region)
-        region_counts[key] = region_counts.get(key, 0) + count
 
     named_countries = [(name, n) for name, n in country_counts.items() if name != UNKNOWN_LOCATION]
     named_countries.sort(key=lambda item: (-item[1], item[0]))
@@ -1082,27 +1098,12 @@ def aggregate_lessons_by_location(rows: Iterable[Mapping[str, Any]]) -> dict[str
     unknown_countries = country_counts.get(UNKNOWN_LOCATION, 0)
     if unknown_countries:
         lessons_by_country.append({"country": UNKNOWN_LOCATION, "count": unknown_countries})
-
-    named_regions: list[tuple[str, str, int]] = []
-    unknown_regions: list[tuple[str, str, int]] = []
-    for (country, region), n in region_counts.items():
-        bucket = unknown_regions if region == UNKNOWN_LOCATION else named_regions
-        bucket.append((country, region, n))
-    named_regions.sort(key=lambda item: (-item[2], item[1], item[0]))
-    unknown_regions.sort(key=lambda item: (-item[2], item[0], item[1]))
-    lessons_by_region = [
-        {"country": country, "region": region, "count": n}
-        for country, region, n in named_regions + unknown_regions
-    ]
-    return {
-        "lessons_by_country": lessons_by_country,
-        "lessons_by_region": lessons_by_region,
-    }
+    return {"lessons_by_country": lessons_by_country}
 
 
 def _location_filter_clause(column: str, value: str | None) -> tuple[str, list[Any]] | None:
-    """Match one chart bucket. Unknown also matches null and blank stored places."""
-    if column not in {"country", "region"}:
+    """Match one country bucket. Unknown also matches null and blank stored countries."""
+    if column != "country":
         raise ValueError(column)
     if not value:
         return None
@@ -1115,16 +1116,16 @@ def _location_filter_clause(column: str, value: str | None) -> tuple[str, list[A
 
 
 def _admin_location_charts(cur, endpoints: list[str], xip_sql: str, xip_params: list) -> dict[str, list[dict[str, Any]]]:
-    """All-time lesson counts by country and region, including places that were never recorded."""
+    """All-time lesson counts by country, including lessons whose country was never recorded."""
     cur.execute(f"""
-        SELECT country, region, COUNT(*) AS n
+        SELECT country, COUNT(*) AS n
         FROM api_calls
         WHERE {_REAL_LESSON_FILTER} {xip_sql}
-        GROUP BY country, region
+        GROUP BY country
     """, (endpoints, *xip_params))
     rows = [
-        {"country": country, "region": region, "count": int(count)}
-        for country, region, count in cur.fetchall()
+        {"country": country, "count": int(count)}
+        for country, count in cur.fetchall()
     ]
     return aggregate_lessons_by_location(rows)
 
@@ -1407,12 +1408,10 @@ def admin_load_all(
                           "error": r[3]}
                          for r in cur.fetchall()]
 
-        # ── Lessons by country and region (all time) ──────────────────────────
-        # Blank places stay in the result and are counted as Unknown. The old
-        # queries required country/region IS NOT NULL, so those lessons vanished.
+        # ── Lessons by country (all time) ─────────────────────────────────────
+        # A blank country stays in the result and is counted as Unknown.
         location_charts = _admin_location_charts(cur, endpoints, xip_sql, xip_params)
         lessons_by_country = location_charts["lessons_by_country"]
-        lessons_by_region = location_charts["lessons_by_region"]
 
         try:
             feedback_summary = _admin_feedback(cur, 100)
@@ -1441,7 +1440,6 @@ def admin_load_all(
             "slowest_lessons": slowest_lessons,
             "recent_errors": recent_errors,
             "lessons_by_country": lessons_by_country,
-            "lessons_by_region": lessons_by_region,
         }
 
     return _safe_query(defaults, _run)
@@ -1450,21 +1448,22 @@ def admin_load_all(
 def admin_lessons_filtered(
     *,
     country: str | None = None,
-    region: str | None = None,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
-    """Return recent lessons filtered by country and/or region. One pool checkout."""
+    """Return recent lessons filtered by country. One pool checkout.
+
+    A null country is labeled Unknown. City and region are not selected.
+    """
     endpoints = list(_LESSON_GEN_ENDPOINTS)
 
     def _run(cur):
         xip_sql, xip_params = _exclude_admin_ip_sql()
         clauses = [_REAL_LESSON_FILTER]
         params: list[Any] = [endpoints]
-        for column, selected in (("country", country), ("region", region)):
-            match = _location_filter_clause(column, selected)
-            if match:
-                clauses.append(match[0])
-                params.extend(match[1])
+        match = _location_filter_clause("country", country)
+        if match:
+            clauses.append(match[0])
+            params.extend(match[1])
         if xip_sql:
             clauses.append(xip_sql[4:])  # strip leading "AND "
             params.extend(xip_params)
@@ -1472,7 +1471,7 @@ def admin_lessons_filtered(
         cur.execute(f"""
             SELECT
               to_char(created_at AT TIME ZONE '{ADMIN_TZ}', 'YYYY-MM-DD HH24:MI'),
-              question, country, region, city, cost_usd, duration_ms, user_agent
+              question, country, cost_usd, duration_ms, user_agent
             FROM api_calls
             WHERE {' AND '.join(clauses)}
             ORDER BY created_at DESC
@@ -1480,15 +1479,13 @@ def admin_lessons_filtered(
         """, params)
         out = []
         for r in cur.fetchall():
-            created_local, question, ctry, rgn, city, cost, dur_ms, ua = r
+            created_local, question, ctry, cost, dur_ms, ua = r
             ua_l = (ua or "").lower()
             device = "mobile" if any(k in ua_l for k in ("iphone", "android", "mobile", "ipad")) else "desktop"
             out.append({
                 "created_at": created_local,
                 "question": question,
                 "country": location_bucket(ctry),
-                "region": location_bucket(rgn),
-                "city": city or "—",
                 "cost": round(float(cost or 0), 5),
                 "duration_ms": int(dur_ms or 0),
                 "device": device,
