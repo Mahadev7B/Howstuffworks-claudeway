@@ -90,11 +90,26 @@ curl -sS -H "X-Admin-Secret: $ADMIN_SECRET" https://www.asklilowl.com/debug/stat
 
 The JSON field `git_commit` is the deployed commit. `POST /admin/clear-cache` uses the same header and deletes saved lessons.
 
+When `SITE_PASSWORD` is set, `/debug/status` and `/admin/clear-cache` also require the site-password session. `/healthz` does not, so Render's health check keeps working.
+
+## Site password
+
+Set `SITE_PASSWORD` on the Render service to ask for one shared password before any page or API route. Leave it unset, or empty, and the site stays public — existing routes behave as they do today.
+
+While it is set:
+
+- Visitors enter the password at `/login`. A correct password is stored in the signed session cookie for 30 days. `/logout` clears that flag.
+- `/healthz` stays open for Render's health check. `/static/...` stays open so the login page can load its files.
+- `/robots.txt` answers `Disallow: /`, and responses include `X-Robots-Tag: noindex, nofollow`.
+- `/admin` keeps its own login as a second step behind this gate.
+
+Failed tries are limited to 10 per 15 minutes for each visitor. The limit is kept in memory and the address is stored only as a one-way hash.
+
 ## Deploying to Render
 
 - Build command: `pip install -r requirements.txt`
 - Start command: `gunicorn app:app --bind 0.0.0.0:$PORT --timeout 180`
-- Environment variables: `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (optional), `FLASK_SECRET_KEY`
+- Environment variables: `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (optional), `FLASK_SECRET_KEY`, `SITE_PASSWORD` (optional)
 
 ## Roadmap ideas
 

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Enter the site password — Ask Lil Owl</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+  <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+      background: #141414;
+      color: #F1EFE8;
+      font-family: Nunito, system-ui, sans-serif;
+    }
+    .gate {
+      width: min(100%, 380px);
+      background: #2C2C2A;
+      border-radius: 14px;
+      padding: 1.75rem 1.5rem 1.5rem;
+    }
+    .brand { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 1.25rem; }
+    .brand img:first-child { width: 52px; height: 53px; }
+    .brand img:last-child { width: 132px; height: 27px; background: #fff; border-radius: 10px; padding: 6px 10px; box-sizing: content-box; }
+    h1 { font-family: "Baloo 2", sans-serif; font-size: 1.7rem; line-height: 1.15; text-align: center; margin: 0 0 0.35rem; }
+    .lede { color: #D3D1C7; text-align: center; margin: 0 0 1.25rem; }
+    label { display: block; font-weight: 700; margin-bottom: 0.4rem; }
+    input[type="password"] {
+      width: 100%;
+      min-height: 44px;
+      padding: 0.6rem 0.75rem;
+      border: 1px solid #5F5E5A;
+      border-radius: 8px;
+      background: #141414;
+      color: #F1EFE8;
+      font: inherit;
+    }
+    input[type="password"]:focus-visible, button:focus-visible { outline: 3px solid #FAC775; outline-offset: 2px; }
+    .error { background: rgba(239, 159, 39, 0.16); color: #FAC775; border-radius: 8px; padding: 0.65rem 0.75rem; margin-bottom: 1rem; font-weight: 700; }
+    button {
+      width: 100%;
+      margin-top: 1rem;
+      min-height: 44px;
+      border: 0;
+      border-radius: 8px;
+      background: #EF9F27;
+      color: #412402;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button:hover { background: #FAC775; }
+  </style>
+</head>
+<body>
+  <main class="gate">
+    <div class="brand">
+      <img src="{{ url_for('static', filename='brand/owl-cutout.png') }}" alt="">
+      <img src="{{ url_for('static', filename='brand/wordmark.png') }}" alt="Ask Lil Owl">
+    </div>
+    <h1>Enter the site password</h1>
+    <p class="lede">This site is private for now. Ask a grown-up for the password.</p>
+    {% if error %}
+      <p class="error" role="alert">{{ error }}</p>
+    {% endif %}
+    <form method="post" action="{{ url_for('site_login') }}">
+      <input type="hidden" name="next" value="{{ next_path }}">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autocomplete="current-password" autofocus required>
+      <button type="submit">Continue</button>
+    </form>
+  </main>
+</body>
+</html>

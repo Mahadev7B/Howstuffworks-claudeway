@@ -9,12 +9,16 @@ Voiceover: browser Web Speech API (free).
 """
 import base64
 import hashlib
+import hmac
 import logging
 import os
 import re
+import threading
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta, timezone
+from urllib.parse import quote, urlsplit
 
 import secrets
 
@@ -32,6 +36,7 @@ from flask import (
     session,
     url_for,
 )
+from flask.sessions import SecureCookieSessionInterface
 from itsdangerous import BadSignature, URLSafeSerializer
 
 from lesson_platform import (
@@ -77,14 +82,12 @@ from lesson_platform.cube_lesson import private_cube_animation
 load_dotenv()
 
 app = Flask(__name__)
-register_private_api(app)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 settings = load_settings()
 app.secret_key = settings.flask_secret_key
-from datetime import timedelta as _td
-app.permanent_session_lifetime = _td(days=7)
+app.permanent_session_lifetime = timedelta(days=7)
 # HttpOnly and SameSite=Lax are explicit so a cross-site form cannot use the admin cookie.
 # Render sets RENDER=true; the cookie is Secure there and stays usable over http in local tests.
 app.config.update(
@@ -92,7 +95,276 @@ app.config.update(
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.getenv("RENDER", "").strip().lower() == "true",
 )
+
+# Site-wide password. Enabled only when SITE_PASSWORD is set and non-empty.
+# Leave it unset and every existing route behaves as before. /healthz stays
+# open so Render's health check still passes while the gate is on.
+_SITE_SESSION_KEY = "site_ok"
+_SITE_SESSION_MAX_AGE_S = 30 * 24 * 3600
+_SITE_LOGIN_WINDOW_S = 15 * 60
+_SITE_LOGIN_LIMIT = 10
+_SITE_LOGIN_WRONG = "That password isn't right. Please try again."
+_SITE_LOGIN_LIMITED = "Too many tries. Please wait a few minutes and try again."
+_SITE_JSON_PATHS = {
+    "/stripe/webhook",
+    "/debug/status",
+    "/admin/clear-cache",
+    "/admin/delete-cached-lesson",
+    "/admin/cached-lessons",
+    "/admin/lessons-by-location",
+}
+_site_login_failures: dict[str, deque] = {}
+_site_login_lock = threading.Lock()
+
+
+def _load_signed_session(serializer, raw: str, max_age: int):
+    try:
+        return serializer.loads(raw, max_age=max_age)
+    except BadSignature:
+        return None
+
+
+class _SiteGateSessionInterface(SecureCookieSessionInterface):
+    """30-day cookie for the site password. Other sessions keep the 7-day lifetime."""
+
+    def get_expiration_time(self, app, session):
+        if session.get(_SITE_SESSION_KEY) is True:
+            return datetime.now(timezone.utc) + timedelta(seconds=_SITE_SESSION_MAX_AGE_S)
+        return super().get_expiration_time(app, session)
+
+    def open_session(self, app, request):
+        serializer = self.get_signing_serializer(app)
+        if serializer is None:
+            return None
+        raw = request.cookies.get(self.get_cookie_name(app))
+        if not raw:
+            return self.session_class()
+        # A site-password cookie is signed for 30 days. Load that window first,
+        # then re-check every other session against the existing 7-day lifetime
+        # so an admin-only cookie does not live longer when the gate is off.
+        data = _load_signed_session(serializer, raw, _SITE_SESSION_MAX_AGE_S)
+        if isinstance(data, dict) and data.get(_SITE_SESSION_KEY) is True:
+            return self.session_class(data)
+        shorter = _load_signed_session(
+            serializer, raw, int(app.permanent_session_lifetime.total_seconds())
+        )
+        if not isinstance(shorter, dict):
+            return self.session_class()
+        return self.session_class(shorter)
+
+    def save_session(self, app, session, response):
+        if session.get(_SITE_SESSION_KEY) is not True:
+            return super().save_session(app, session, response)
+        name = self.get_cookie_name(app)
+        domain = self.get_cookie_domain(app)
+        path = self.get_cookie_path(app)
+        secure = self.get_cookie_secure(app)
+        samesite = self.get_cookie_samesite(app)
+        httponly = self.get_cookie_httponly(app)
+        if session.accessed:
+            response.vary.add("Cookie")
+        if not session:
+            if session.modified:
+                response.delete_cookie(
+                    name, domain=domain, path=path, secure=secure,
+                    samesite=samesite, httponly=httponly,
+                )
+                response.vary.add("Cookie")
+            return
+        if not self.should_set_cookie(app, session):
+            return
+        expires = self.get_expiration_time(app, session)
+        val = self.get_signing_serializer(app).dumps(dict(session))
+        response.set_cookie(
+            name,
+            val,
+            max_age=_SITE_SESSION_MAX_AGE_S,
+            expires=expires,
+            httponly=httponly,
+            domain=domain,
+            path=path,
+            secure=secure,
+            samesite=samesite,
+        )
+        response.vary.add("Cookie")
+
+
+app.session_interface = _SiteGateSessionInterface()
+
+
+def _site_password() -> str:
+    return os.getenv("SITE_PASSWORD", "").strip()
+
+
+def _site_gate_enabled() -> bool:
+    return bool(_site_password())
+
+
+def _site_authed() -> bool:
+    return session.get(_SITE_SESSION_KEY) is True
+
+
+def _safe_next(raw: str | None) -> str:
+    """Same-site relative path only. Anything else goes home, never off-site."""
+    candidate = (raw or "").strip()
+    if not candidate.startswith("/") or candidate.startswith("//"):
+        return "/"
+    if any(char in candidate for char in ("\\", "\r", "\n", "\t", "\x00", " ")):
+        return "/"
+    parts = urlsplit(candidate)
+    if parts.scheme or parts.netloc or "://" in parts.path:
+        return "/"
+    path = parts.path or "/"
+    if path.rstrip("/") in {"/login", "/logout"}:
+        return "/"
+    return candidate
+
+
+def _current_target() -> str:
+    target = request.path or "/"
+    if request.query_string:
+        target += "?" + request.query_string.decode("ascii", "ignore")
+    return _safe_next(target)
+
+
+def _request_wants_json() -> bool:
+    path = request.path or ""
+    if path == "/api" or path.startswith("/api/") or path in _SITE_JSON_PATHS:
+        return True
+    if request.is_json:
+        return True
+    # Prefer HTML when the client accepts both, so a normal page visit redirects.
+    best = request.accept_mimetypes.best_match(["text/html", "application/json"])
+    return best == "application/json"
+
+
+def _login_redirect():
+    return redirect("/login?next=" + quote(_current_target(), safe="/"))
+
+
+def _site_login_bucket() -> str:
+    """One-way code for this client. The address itself is never the key."""
+    return askers.ip_hash(_client_ip()) or "missing"
+
+
+def _prune_site_login(hits: deque, now: float) -> None:
+    while hits and now - hits[0] > _SITE_LOGIN_WINDOW_S:
+        hits.popleft()
+
+
+def _note_site_login_failure(bucket: str) -> bool:
+    """Remember one failed password. True when this IP is already over the limit.
+
+    The submitted password and the raw address are not logged.
+    """
+    now = time.time()
+    with _site_login_lock:
+        hits = _site_login_failures.setdefault(bucket, deque())
+        _prune_site_login(hits, now)
+        if len(hits) >= _SITE_LOGIN_LIMIT:
+            if not hits:
+                _site_login_failures.pop(bucket, None)
+            return True
+        hits.append(now)
+        if len(_site_login_failures) > 50_000:
+            stale = [key for key, values in _site_login_failures.items()
+                     if not values or now - values[-1] > _SITE_LOGIN_WINDOW_S]
+            for key in stale:
+                _site_login_failures.pop(key, None)
+        return False
+
+
+def _clear_site_login_failures(bucket: str) -> None:
+    with _site_login_lock:
+        _site_login_failures.pop(bucket, None)
+
+
+def reset_site_login_limits() -> None:
+    """Test helper. Drops in-memory failed-login counts."""
+    with _site_login_lock:
+        _site_login_failures.clear()
+
+
+def _replace_session(extra: dict | None = None, *, permanent: bool = False) -> None:
+    """Start a fresh session, keeping the site-password flag when it is valid."""
+    keep_gate = session.get(_SITE_SESSION_KEY) is True
+    session.clear()
+    if keep_gate:
+        session[_SITE_SESSION_KEY] = True
+    if extra:
+        session.update(extra)
+    if permanent or keep_gate:
+        session.permanent = True
+
+
+def _require_site_password():
+    if not _site_gate_enabled():
+        return None
+    path = request.path or "/"
+    if path in {"/login", "/healthz", "/robots.txt"} or path.startswith("/static/"):
+        return None
+    if _site_authed():
+        return None
+    if _request_wants_json():
+        return jsonify({"ok": False, "error": "password required"}), 401
+    return _login_redirect()
+
+
+app.before_request(_require_site_password)
+register_private_api(app)
 db_enabled = init_db()
+
+
+@app.route("/login", methods=["GET", "POST"])
+def site_login():
+    raw_next = request.form.get("next") if request.method == "POST" else request.args.get("next")
+    nxt = _safe_next(raw_next)
+    if not _site_gate_enabled() or _site_authed():
+        return redirect(nxt)
+    error = None
+    status = 200
+    if request.method == "POST":
+        # No global CSRF middleware. The session cookie is SameSite=Lax, which
+        # is the same protection the admin password form uses.
+        provided = request.form.get("password", "")
+        bucket = _site_login_bucket()
+        try:
+            # Compare bytes so a different length or encoding is a mismatch.
+            # Do not log `provided` — a traceback would keep the password.
+            password_ok = hmac.compare_digest(
+                provided.encode("utf-8"), _site_password().encode("utf-8")
+            )
+        except UnicodeError:
+            password_ok = False
+        if password_ok:
+            _clear_site_login_failures(bucket)
+            session.clear()
+            session[_SITE_SESSION_KEY] = True
+            session.permanent = True
+            return redirect(nxt)
+        if _note_site_login_failure(bucket):
+            error = _SITE_LOGIN_LIMITED
+            status = 429
+        else:
+            error = _SITE_LOGIN_WRONG
+            status = 401
+    return render_template("site_login.html", error=error, next_path=nxt), status
+
+
+@app.route("/logout", methods=["GET", "POST"])
+def site_logout():
+    """Clear the site-password flag. An admin session, if there is one, stays."""
+    keep_admin = session.get("admin") is True
+    csrf = session.get("library_csrf")
+    session.clear()
+    if keep_admin:
+        session["admin"] = True
+        if isinstance(csrf, str):
+            session["library_csrf"] = csrf
+        session.permanent = True
+    if _site_gate_enabled():
+        return redirect("/login")
+    return redirect(url_for("home"))
 
 # App startup time, used by /debug/status to report uptime.
 _STARTED_AT = time.time()
@@ -738,6 +1010,8 @@ def privacy():
 
 @app.get("/robots.txt")
 def robots():
+    if _site_gate_enabled():
+        return Response("User-agent: *\nDisallow: /\n", mimetype="text/plain")
     return Response("User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /debug\n"
                     "Sitemap: https://www.asklilowl.com/sitemap.xml\n",
                     mimetype="text/plain")
@@ -832,6 +1106,8 @@ def _security_headers(response):
     https = request.is_secure or request.headers.get("X-Forwarded-Proto", "").split(",")[0].strip().lower() == "https"
     if https or os.getenv("RENDER", "").strip().lower() == "true":
         response.headers.setdefault("Strict-Transport-Security", "max-age=15552000")
+    if _site_gate_enabled():
+        response.headers["X-Robots-Tag"] = "noindex, nofollow"
     return response
 
 
@@ -1886,9 +2162,9 @@ def admin_login():
             return render_template("admin_login.html",
                                    error="Admin not configured (ADMIN_PASSWORD missing)."), 503
         if provided and secrets.compare_digest(provided.encode(), expected.encode()):
-            session.clear()  # Drop any pre-login cookie before starting the admin session.
-            session["admin"] = True
-            session.permanent = True
+            # Drop any pre-login cookie before starting the admin session.
+            # Keep the site-password flag so admin login stays a second layer behind that gate.
+            _replace_session({"admin": True}, permanent=True)
             return redirect(url_for("admin_dashboard"))
         if not ratelimit.allow("admin-login-fail", _client_ip(), 10):
             return render_template("admin_login.html",
@@ -1901,7 +2177,7 @@ def admin_login():
 
 @app.post("/admin/logout")
 def admin_logout():
-    session.clear()
+    _replace_session()
     return redirect(url_for("admin_login"))
 
 
