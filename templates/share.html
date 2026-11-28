@@ -4,11 +4,35 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ publication.title if published else lesson.title }} — Ask Lil Owl</title>
-  <meta name="description" content="{{ publication.summary if published else question }}">
-  <meta property="og:title" content="{{ publication.title if published else lesson.title }}">
-  <meta property="og:description" content="{{ publication.summary if published else question }}">
-  {% if published and not editorial_preview|default(false) %}<link rel="canonical" href="{{ canonical_url }}">{% endif %}
-  <meta property="og:image" content="{{ url_for('admin_publication_thumbnail_preview', slug=slug, _external=True) if editorial_preview|default(false) else (url_for('explore_thumbnail', slug=slug, _external=True) if published else url_for('static', filename='favicon.svg', _external=True)) }}">
+  {% if published and publication.summary %}
+    {% set share_description = publication.summary %}
+  {% elif lesson.summary is defined and lesson.summary %}
+    {% set share_description = lesson.summary %}
+  {% else %}
+    {% set share_description = brand_description %}
+  {% endif %}
+  {% set share_title = publication.title if published else lesson.title %}
+  <meta name="description" content="{{ share_description }}">
+  <meta property="og:title" content="{{ share_title }}">
+  <meta property="og:description" content="{{ share_description }}">
+  {% if editorial_preview|default(false) %}
+    {% set share_image = url_for('admin_publication_thumbnail_preview', slug=slug, _external=True) %}
+  {% elif published %}
+    {% set share_image = public_base_url ~ '/explore/' ~ slug ~ '/thumbnail.webp' %}
+  {% else %}
+    {% set share_image = public_base_url ~ '/static/brand/owl-cutout.png' %}
+  {% endif %}
+  {% if published and not editorial_preview|default(false) %}
+  <link rel="canonical" href="{{ canonical_url }}">
+  <meta property="og:url" content="{{ canonical_url }}">
+  {% elif not editorial_preview|default(false) %}
+  <meta property="og:url" content="{{ public_base_url }}/s/{{ slug }}">
+  {% endif %}
+  <meta property="og:image" content="{{ share_image }}">
+  <meta property="og:type" content="article">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ share_title }}">
+  <meta name="twitter:description" content="{{ share_description }}">
   <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   {% if cube_animation_data|default(none) %}<link rel="stylesheet" href="{{ url_for('static', filename='cube-player.css') }}">{% endif %}

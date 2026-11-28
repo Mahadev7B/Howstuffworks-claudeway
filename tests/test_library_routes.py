@@ -101,7 +101,10 @@ def test_saved_media_and_sitemap(site):
     sitemap = site.get("/sitemap.xml")
     assert thumb.mimetype == "image/webp" and b"webp" == thumb.data
     assert voice.mimetype == "audio/mpeg" and b"mp3" == voice.data
-    assert "no-store" in thumb.headers["Cache-Control"]
+    cache = thumb.headers["Cache-Control"]
+    assert "public" in cache and "no-store" not in cache
+    assert int(cache.split("max-age=")[1].split(",")[0]) >= 86400
+    assert thumb.headers["ETag"]
     assert "no-store" in voice.headers["Cache-Control"]
     assert b"/explore/sky-blue" in sitemap.data
     assert b"/explore/hidden" not in sitemap.data
@@ -122,7 +125,7 @@ def test_home_shows_every_lesson_in_topic_rows_behind_the_owl(site, monkeypatch)
     panel = html.split('id="askPanel"', 1)[1].split(">", 1)[0]
     assert "hidden" in panel
     assert html.index('id="askForm"') > html.index('id="askPanel"')
-    assert "Jupiter</h1>" in html
+    assert "Jupiter</h2>" in html
     assert "fetch('/api" not in html.split('<div class="loading"')[0]
 
 

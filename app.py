@@ -16,6 +16,7 @@ import re
 import sys
 import threading
 import time
+from html import escape as html_escape
 from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
@@ -79,6 +80,7 @@ from lesson_platform import library_audio
 from lesson_platform import library_import
 from lesson_platform.private_api import import_bearer_ok, register_private_api
 from lesson_platform.cube_lesson import private_cube_animation
+from lesson_platform.site_copy import BRAND_IMAGE_PATH, HOME_DESCRIPTION, HOME_H1, HOME_TITLE
 
 load_dotenv()
 
@@ -194,6 +196,51 @@ class _SiteGateSessionInterface(SecureCookieSessionInterface):
 
 
 app.session_interface = _SiteGateSessionInterface()
+
+
+def public_base_url() -> str:
+    """Origin for canonical and social URLs. Never the incoming request host."""
+    raw = os.getenv("PUBLIC_BASE_URL", "").strip() or "https://www.asklilowl.com"
+    if "://" not in raw:
+        raw = "https://" + raw
+    parts = urlsplit(raw)
+    if parts.scheme not in {"http", "https"} or not parts.hostname or "@" in parts.netloc:
+        return "https://www.asklilowl.com"
+    return f"{parts.scheme}://{parts.netloc}".rstrip("/")
+
+
+def deploy_lastmod() -> str:
+    """W3C date when a page or lesson has no updated or created timestamp.
+
+    Active lessons use published_at. The privacy page uses its updated date.
+    published_lessons has no updated_at column, and /, /explore, and /lesson
+    have no content timestamp. Those fall back to this file's modification
+    time, which is the deploy or build copy on disk.
+    """
+    modified = datetime.fromtimestamp(os.path.getmtime(__file__), timezone.utc)
+    return modified.strftime("%Y-%m-%d")
+
+
+def w3c_timestamp(value) -> str:
+    """Format a real timestamp as a W3C datetime, or the deploy date when it is missing."""
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return deploy_lastmod()
+
+
+@app.context_processor
+def inject_public_site():
+    base = public_base_url()
+    return {
+        "public_base_url": base,
+        "home_title": HOME_TITLE,
+        "home_description": HOME_DESCRIPTION,
+        "home_h1": HOME_H1,
+        "brand_description": HOME_DESCRIPTION,
+        "brand_image_url": base + BRAND_IMAGE_PATH,
+    }
 
 
 def _site_password() -> str:
@@ -1091,7 +1138,7 @@ def explore_lesson(slug: str):
                            question=publication["summary"], slug=slug,
                            published=True, publication=publication,
                            cube_animation_data=private_cube_animation(slug, publication["lesson"]),
-                           canonical_url="https://www.asklilowl.com/explore/" + slug)
+                           canonical_url=public_base_url() + "/explore/" + slug)
 
 
 @app.get("/explore/<slug>/thumbnail.webp")
@@ -1099,8 +1146,13 @@ def explore_thumbnail(slug: str):
     result = library.get_published_thumbnail(slug)
     if result is None:
         abort(404)
-    return Response(result[0], mimetype=result[1],
-                    headers={"Cache-Control": "no-store"})
+    body, mime = result
+    response = Response(body, mimetype=mime)
+    # Social crawlers need a cacheable image. Audio stays no-store.
+    response.cache_control.public = True
+    response.cache_control.max_age = 86400
+    response.set_etag(hashlib.sha256(body).hexdigest())
+    return response.make_conditional(request)
 
 
 @app.get("/explore/<slug>/audio/<int:slide_index>.mp3")
@@ -1112,6 +1164,42 @@ def explore_audio(slug: str, slide_index: int):
                     headers={"Cache-Control": "no-store"})
 
 
+_SITEMAP_SKIP = frozenset({
+    "/login", "/logout", "/healthz", "/favicon.ico", "/robots.txt", "/sitemap.xml",
+    # No question redirects home. ?q= is a private custom lesson, not a public page.
+    "/lesson",
+})
+_SITEMAP_SKIP_PREFIXES = ("/admin", "/api", "/debug", "/stripe")
+_SITEMAP_SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+def public_sitemap_paths() -> list[str]:
+    """Public content pages: GET routes that are not admin, API, login, or logout.
+
+    Health checks, robots, the favicon, and this sitemap are not documents.
+    /lesson is skipped: with no question it redirects home, and with ?q= it is
+    a private custom lesson. Parameterized routes are omitted here; active
+    library lessons are added from the catalog.
+    """
+    found = []
+    for rule in app.url_map.iter_rules():
+        if "GET" not in (rule.methods or ()):
+            continue
+        if rule.arguments:
+            continue
+        path = rule.rule or "/"
+        if path in _SITEMAP_SKIP or path.startswith(_SITEMAP_SKIP_PREFIXES):
+            continue
+        found.append(path)
+    return sorted(set(found), key=lambda path: (path != "/", path))
+
+
+def _sitemap_lastmod(path: str) -> str:
+    if path == "/privacy":
+        return datetime.strptime(PRIVACY_UPDATED, "%B %d, %Y").date().isoformat()
+    return deploy_lastmod()
+
+
 @app.get("/sitemap.xml")
 def sitemap():
     from xml.sax.saxutils import escape
@@ -1119,11 +1207,20 @@ def sitemap():
         cards = library.list_published_cards()
     except RuntimeError:
         cards = []
-    urls = ["https://www.asklilowl.com/", "https://www.asklilowl.com/explore", "https://www.asklilowl.com/privacy"]
-    urls.extend("https://www.asklilowl.com/explore/" + card["slug"] for card in cards)
-    body = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
-    body += "".join("<url><loc>" + escape(url) + "</loc></url>" for url in urls) + "</urlset>"
-    return Response(body, mimetype="application/xml")
+    base = public_base_url()
+    entries = [(base + (path if path != "/" else "/"), _sitemap_lastmod(path))
+               for path in public_sitemap_paths()]
+    for card in cards:
+        slug = card.get("slug") or ""
+        if not _SITEMAP_SLUG.fullmatch(slug):
+            continue
+        entries.append((base + "/explore/" + slug, w3c_timestamp(card.get("published_at"))))
+    body = ['<?xml version="1.0" encoding="UTF-8"?>',
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
+    for loc, lastmod in entries:
+        body.append("<url><loc>" + escape(loc) + "</loc><lastmod>" + escape(lastmod) + "</lastmod></url>")
+    body.append("</urlset>")
+    return Response("".join(body), mimetype="application/xml")
 
 
 @app.get("/privacy")
@@ -1138,7 +1235,7 @@ def robots():
     if _site_gate_enabled():
         return Response("User-agent: *\nDisallow: /\n", mimetype="text/plain")
     return Response("User-agent: *\nAllow: /\nDisallow: /admin\nDisallow: /debug\n"
-                    "Sitemap: https://www.asklilowl.com/sitemap.xml\n",
+                    "Sitemap: " + public_base_url() + "/sitemap.xml\n",
                     mimetype="text/plain")
 
 
@@ -1715,6 +1812,46 @@ def api_tts():
     return Response(audio_bytes, mimetype="audio/mpeg")
 
 
+def _lesson_share_text(lesson: dict) -> tuple[str, str]:
+    """Title and description for a share preview. The asker's question is not used."""
+    title = lesson.get("title") if isinstance(lesson, dict) else None
+    title = title.strip() if isinstance(title, str) else ""
+    if not title:
+        title = "Ask Lil Owl"
+    description = ""
+    if isinstance(lesson, dict):
+        summary = lesson.get("summary")
+        if isinstance(summary, str):
+            description = summary.strip()
+        if not description:
+            slides = lesson.get("slides") or []
+            first = slides[0] if slides and isinstance(slides[0], dict) else {}
+            explanation = first.get("explanation") if isinstance(first, dict) else None
+            if isinstance(explanation, str):
+                description = explanation.strip()
+    if not description:
+        description = "An illustrated lesson from Ask Lil Owl."
+    return title[:200], description[:500]
+
+
+def _social_meta(*, title: str, description: str, url: str, image: str, og_type: str) -> str:
+    def attr(value: str) -> str:
+        return html_escape(value, quote=True)
+
+    return "\n".join((
+        f"<title>{attr(title)}</title>",
+        f'<meta name="description" content="{attr(description)}">',
+        f'<meta property="og:title" content="{attr(title)}">',
+        f'<meta property="og:description" content="{attr(description)}">',
+        f'<meta property="og:type" content="{attr(og_type)}">',
+        f'<meta property="og:url" content="{attr(url)}">',
+        f'<meta property="og:image" content="{attr(image)}">',
+        '<meta name="twitter:card" content="summary_large_image">',
+        f'<meta name="twitter:title" content="{attr(title)}">',
+        f'<meta name="twitter:description" content="{attr(description)}">',
+    ))
+
+
 # ── Video export ──────────────────────────────────────────────────────────────
 # In-memory job store: job_id -> {status, path, error, created_at}
 # Jobs expire after 1 hour; temp files are deleted after serving.
@@ -1826,7 +1963,13 @@ def api_export_video():
 
     _video_job_gc()
     job_id = secrets.token_urlsafe(12)
-    _VIDEO_JOBS[job_id] = {"status": "pending", "created_at": time.time()}
+    share_title, share_description = _lesson_share_text(lesson_for_export)
+    _VIDEO_JOBS[job_id] = {
+        "status": "pending",
+        "created_at": time.time(),
+        "share_title": share_title,
+        "share_description": share_description,
+    }
 
     import threading
     threading.Thread(
@@ -1899,26 +2042,38 @@ def api_export_video_stream(job_id: str):
     if not path or not os.path.exists(path):
         return "Video file missing — go back and export again.", 500
     video_url = f"/api/export-video/{job_id}/file"
-    return Response(f"""<!DOCTYPE html>
+    share_title = job.get("share_title") or "Ask Lil Owl"
+    share_description = job.get("share_description") or "An illustrated lesson from Ask Lil Owl."
+    meta = _social_meta(
+        title=f"{share_title} — Ask Lil Owl",
+        description=share_description,
+        url=public_base_url() + f"/api/export-video/{job_id}/stream",
+        image=public_base_url() + BRAND_IMAGE_PATH,
+        og_type="article",
+    )
+    page = """<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Your Lil Owl Reel</title>
-  <style>
-    * {{ margin:0; padding:0; box-sizing:border-box; }}
-    body {{ background:#000; min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; font-family:sans-serif; padding:1rem; }}
-    video {{ max-width:100%; max-height:70vh; border-radius:12px; display:block; }}
-    .save-btn {{ margin-top:1.5rem; background:#FF6B35; color:#fff; border:none; border-radius:50px; padding:1rem 2rem; font-size:1.2rem; font-weight:700; cursor:pointer; text-decoration:none; display:inline-block; }}
-    .hint {{ margin-top:1rem; color:#aaa; font-size:0.9rem; text-align:center; line-height:1.5; }}
+  META
+  <style>"""
+    page = page.replace("META", meta).replace("VIDEO_URL", html_escape(video_url, quote=True))
+    # The rest of the page is appended below; VIDEO_URL is substituted there.
+    return Response(page + """
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { background:#000; min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; font-family:sans-serif; padding:1rem; }
+    video { max-width:100%; max-height:70vh; border-radius:12px; display:block; }
+    .save-btn { margin-top:1.5rem; background:#FF6B35; color:#fff; border:none; border-radius:50px; padding:1rem 2rem; font-size:1.2rem; font-weight:700; cursor:pointer; text-decoration:none; display:inline-block; }
+    .hint { margin-top:1rem; color:#aaa; font-size:0.9rem; text-align:center; line-height:1.5; }
   </style>
 </head>
 <body>
-  <video src="{video_url}" controls autoplay playsinline loop></video>
-  <a href="{video_url}" download="lil-owl-lesson.mp4" class="save-btn">⬇ Save Video</a>
+  <video src="VIDEO_URL" controls autoplay playsinline loop></video>
+  <a href="VIDEO_URL" download="lil-owl-lesson.mp4" class="save-btn">⬇ Save Video</a>
   <p class="hint">On iPhone: tap ⬇ Save Video above<br>or tap the share icon ↑ → Save to Photos</p>
 </body>
-</html>""", mimetype="text/html")
+</html>""".replace("VIDEO_URL", html_escape(video_url, quote=True)), mimetype="text/html")
 
 
 @app.route("/api/export-video/<job_id>/file", methods=["GET"])

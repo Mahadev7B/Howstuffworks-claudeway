@@ -304,10 +304,10 @@ def set_publication_approved(slug: str, approved: bool) -> bool:
 def list_published_cards() -> list[dict]:
     with _connect() as conn, conn.cursor() as cur:
         cur.execute(
-            """SELECT slug, title, summary, category, sort_order, featured_rank
+            """SELECT slug, title, summary, category, sort_order, featured_rank, published_at
                FROM published_lessons WHERE active = true
                ORDER BY sort_order, slug""")
-        return [dict(zip(("slug", "title", "summary", "category", "sort_order", "featured_rank"), row))
+        return [dict(zip(("slug", "title", "summary", "category", "sort_order", "featured_rank", "published_at"), row))
                 for row in cur.fetchall()]
 
 

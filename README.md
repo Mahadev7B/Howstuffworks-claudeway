@@ -109,7 +109,7 @@ Failed tries are limited to 10 per 15 minutes for each visitor. A visitor who is
 
 - Build command: `pip install -r requirements.txt`
 - Start command: `gunicorn app:app --bind 0.0.0.0:$PORT --timeout 180`
-- Environment variables: `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (optional), `FLASK_SECRET_KEY`, `SITE_PASSWORD` (optional)
+- Environment variables: `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (optional), `FLASK_SECRET_KEY`, `SITE_PASSWORD` (optional), `PUBLIC_BASE_URL` (optional). Canonical and social URLs use `PUBLIC_BASE_URL`, which defaults to `https://www.asklilowl.com`, and do not use the request host.
 
 ## Roadmap ideas
 
