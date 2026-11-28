@@ -1240,7 +1240,7 @@ def robots():
 
 
 PRIVACY_CONTACT_EMAIL = "Asklilowl@gmail.com"
-PRIVACY_UPDATED = "November 26, 2026"
+PRIVACY_UPDATED = "November 27, 2026"
 app.jinja_env.globals["privacy_contact_email"] = PRIVACY_CONTACT_EMAIL
 app.jinja_env.globals["billing_portal_url"] = billing.portal_url
 
@@ -2475,11 +2475,10 @@ def admin_dashboard():
         limit_questions=15, limit_recent=50,
         limit_slowest=10, limit_errors=30,
     )
-    from lesson_platform.db import ADMIN_EXCLUDE_CITIES, ADMIN_TZ
+    from lesson_platform.db import ADMIN_TZ
     return render_template("admin.html", db_enabled=True, data=data, refused=spam_log.summary(ADMIN_TZ),
                            daily_budget=settings.daily_budget_usd,
                            admin_tz=ADMIN_TZ, free_questions=askers.FREE_QUESTIONS,
-                           excluded_cities=ADMIN_EXCLUDE_CITIES,
                            csrf_token=_library_csrf_token(), asker_result=request.args.get("asker"),
                            mail_enabled=mailer.enabled(),
 )

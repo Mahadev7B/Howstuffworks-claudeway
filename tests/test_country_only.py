@@ -2,9 +2,11 @@
 
 import copy
 import importlib
+import inspect
 import logging
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from lesson_platform import askers, db, spam_log, verification
@@ -115,8 +117,27 @@ def _no_city_or_region(sql: str) -> None:
     assert re.search(r"\bregion\b", sql, re.IGNORECASE) is None
 
 
+def _insert_columns(sql: str) -> list[str]:
+    match = re.search(r"INSERT INTO \w+\s*\((.*?)\)\s*VALUES", sql, re.IGNORECASE | re.DOTALL)
+    assert match, sql
+    return [part.strip() for part in match.group(1).split(",")]
+
+
+def _schema_column(table: str, column: str) -> str:
+    """The CREATE TABLE line for a column. Omitted nullable columns with no default stay NULL."""
+    match = re.search(rf"CREATE TABLE IF NOT EXISTS {table} \((.*?)\);", db.SCHEMA, re.DOTALL)
+    assert match, table
+    for line in match.group(1).splitlines():
+        if re.search(rf"^\s*{column}\s+", line):
+            return line
+    raise AssertionError(f"{table}.{column} missing from CREATE TABLE")
+
+
 def test_feedback_and_api_calls_never_write_city_or_region(monkeypatch):
-    """api_calls is the activity record. There is no separate activity table."""
+    """New feedback and api_calls rows store NULL for city and region.
+
+    api_calls is the activity record. There is no separate activity table.
+    """
     executed = []
 
     class Cur:
@@ -137,19 +158,31 @@ def test_feedback_and_api_calls_never_write_city_or_region(monkeypatch):
     monkeypatch.setattr(db, "_pool", object())
     monkeypatch.setattr(db, "_direct_connect", direct)
     monkeypatch.setattr(db, "_bg", lambda fn, params: fn(params))
+    for fn in (db.save_feedback, db.record_api_call):
+        names = inspect.signature(fn).parameters
+        assert "city" not in names and "region" not in names
     db.save_feedback("Why?", "up", "Thanks", client_id="visit-0001",
-                     city="Austin", region="Texas", country="Canada", user_agent="test")
+                     country="Canada", user_agent="test")
     db.record_api_call(endpoint="/api/lesson", question="Why?", model="m", success=True,
-                       city="Austin", region="Texas", country="Canada", user_agent="test")
+                       country="Canada", user_agent="test")
     assert len(executed) == 2
     tables = []
     for sql, params in executed:
         _no_city_or_region(sql)
-        assert "country" in sql
-        assert sql.count("%s") == len(params)
-        assert "Austin" not in repr(params) and "Texas" not in repr(params)
-        assert "Canada" in params
-        tables.append("feedback" if "INTO feedback" in sql else "api_calls" if "INTO api_calls" in sql else sql)
+        columns = _insert_columns(sql)
+        assert "city" not in columns and "region" not in columns
+        assert "country" in columns
+        assert sql.count("%s") == len(params) == len(columns)
+        written = dict(zip(columns, params, strict=True))
+        assert written["country"] == "Canada"
+        table = "feedback" if "INTO feedback" in sql else "api_calls" if "INTO api_calls" in sql else sql
+        assert table in ("feedback", "api_calls")
+        for column in ("city", "region"):
+            spec = _schema_column(table, column)
+            assert re.search(rf"\b{column}\s+TEXT\b", spec)
+            assert "NOT NULL" not in spec.upper()
+            assert "DEFAULT" not in spec.upper()
+        tables.append(table)
     assert tables == ["feedback", "api_calls"]
 
 
@@ -240,3 +273,8 @@ def test_privacy_page_estimates_country_only():
     assert "estimated city, region and country" not in page
     assert "to estimate country, region and city" not in page
     assert "country, region and city" not in page
+    assert "Older feedback and activity records may still hold a city and a region until we remove them." in page
+    assert "may still hold a raw IP address" not in page
+    assert "November 27, 2026" in page
+    source = Path(__file__).resolve().parents[1].joinpath("templates", "privacy.html").read_text(encoding="utf-8")
+    assert "{# Removed only after the legacy city/region wipe is approved and verified. #}" in source

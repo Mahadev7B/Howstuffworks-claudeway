@@ -49,8 +49,7 @@ def _is_public(ip: str) -> bool:
 def lookup(ip: str | None) -> Optional[str]:
     """Fresh lookup every call — returns the country, or None.
 
-    The request asks ipwho.is for success and country only. City and region are
-    not requested and are ignored if a response includes them.
+    The request asks ipwho.is for success and country only.
     """
     if not ip or not _is_public(ip):
         return None
@@ -72,6 +71,6 @@ def lookup(ip: str | None) -> Optional[str]:
 def extract_and_lookup(
     forwarded_for: str | None, remote_addr: str | None, cf_connecting_ip: str | None = None,
 ) -> tuple[Optional[str], Optional[str]]:
-    """Returns (ip, country). City and region are not looked up."""
+    """Returns (ip, country)."""
     ip = _client_ip(forwarded_for, remote_addr, cf_connecting_ip)
     return (ip, lookup(ip))
